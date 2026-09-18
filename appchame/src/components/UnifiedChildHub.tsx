@@ -38,6 +38,8 @@ import { PairChildDeviceModal } from './PairChildDeviceModal';
 import { CloudSettingsModal } from './CloudSettingsModal';
 import { FamilyChatModal } from '../../../shared/components/FamilyChatModal';
 import { subscribeCloudChatMessages } from '../../../shared/firebase/cloudSyncService';
+import { Kids360ScreenTimeGauge } from './Kids360ScreenTimeGauge';
+import { Kids360DayTimeline } from './Kids360DayTimeline';
 
 const REWARD_PRESET_ICONS = [
   '🎁', '🎮', '🍦', '📚', '🍕', '🎡', '🧸', '🎟️', '🚲', '🎧', '🎨', '⚽', '👗', '🛹', '🎸', '📱', '🏊', '🍔', '🎬', '🏸', '🚀', '🏎️'
@@ -735,46 +737,43 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
           })}
         </div>
 
-        {/* 4. Minimalist Screen Time Progress Bar */}
-        <div className="mt-3 bg-white rounded-xl p-2.5 border border-slate-100/90 shadow-2xs space-y-1.5">
-          <div className="flex items-center justify-between text-xs font-semibold">
-            <span className="text-slate-600 flex items-center gap-1.5">
-              <Clock size={13} className="text-blue-500" />
-              <span>Thời gian sử dụng:</span>
-            </span>
-            <div className="flex items-center space-x-1">
-              <span className="text-slate-900 font-bold">
-                {Math.floor(usedMins / 60)}h{usedMins % 60 > 0 ? `${usedMins % 60}p` : ''} / {Math.floor(limitMins / 60)}h{limitMins % 60 > 0 ? `${limitMins % 60}p` : ''}
-              </span>
-              <span className="text-slate-400">({progressPercent}%)</span>
-            </div>
-          </div>
-
-          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                progressPercent > 90
-                  ? 'bg-rose-500'
-                  : 'bg-blue-600'
-              }`}
-              style={{ width: `${progressPercent}%` }}
+        {/* 4. Kids360 Signature Circular Radial Gauge & 4 Quick Action Modes */}
+        {activeChild && (
+          <div className="mt-3">
+            <Kids360ScreenTimeGauge
+              childId={activeChild.id}
+              childName={activeChild.name}
+              usedMinutes={usedMins}
+              limitMinutes={limitMins}
+              isLocked={activeChildSettings?.lockChallenge?.isLocked ?? lockChallenge?.isLocked ?? false}
+              isStudyMode={studyModeOnly}
+              battery={activeChild.battery}
+              onNavigate={onNavigate}
             />
           </div>
+        )}
 
-          <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-            <span>Còn lại hôm nay: <strong className="text-blue-600">{Math.max(0, limitMins - usedMins)} phút</strong></span>
-            {onNavigate && (
-              <button
-                onClick={() => onNavigate('screentime')}
-                className="text-blue-600 font-semibold hover:underline"
-              >
-                Tùy chỉnh &gt;
-              </button>
-            )}
+        {/* 5. Kids360 Visual 24-Hour Day-Planner Timeline */}
+        {activeChild && (
+          <div className="mt-3">
+            <Kids360DayTimeline
+              childName={activeChild.name}
+              onNavigate={onNavigate}
+            />
+          </div>
+        )}
+
+        {/* 6. Quick Gamification / Star, Task, Rewards & Chat Actions */}
+        <div className="mt-3 bg-white rounded-2xl p-3 border border-slate-200/80 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between text-xs font-black text-slate-800 pb-1.5 border-b border-slate-100">
+            <span className="flex items-center gap-1.5">
+              <Sparkles size={14} className="text-amber-500" />
+              <span>Nhiệm Vụ Rèn Luyện & Đổi Thưởng</span>
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Phong cách Kids360</span>
           </div>
 
-          {/* Quick Gamification / Star, Task, Rewards & Chat Actions */}
-          <div className="grid grid-cols-4 gap-1.5 pt-2 border-t border-slate-100">
+          <div className="grid grid-cols-4 gap-1.5">
             <button
               onClick={(e) => {
                 e.stopPropagation();

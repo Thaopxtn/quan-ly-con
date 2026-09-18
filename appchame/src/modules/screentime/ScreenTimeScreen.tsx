@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, TrendingDown, Clock, Sliders, Check, Sparkles, Hourglass } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { ChildSwitcherBar } from '../../components/ChildSwitcherBar';
+import { Kids360ScreenTimeGauge } from '../../components/Kids360ScreenTimeGauge';
+import { Kids360DayTimeline } from '../../components/Kids360DayTimeline';
 
 interface ScreenTimeScreenProps {
   onBack: () => void;
@@ -111,52 +113,58 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
         </div>
       </div>
 
-      {/* Total Screen Time Card & Bar Chart */}
+      {/* Kids360 Radial Screen Time Gauge */}
       <div className="px-4 pt-2">
-        <div className="bg-white rounded-3xl p-5 shadow-soft border border-slate-100">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="text-[11px] text-slate-400 font-medium">
-                Đã dùng hôm nay ({child.name})
-              </span>
-              <div className="flex items-baseline space-x-2 mt-0.5">
-                <h1 className="text-3xl font-extrabold text-slate-900">{timeUsedStr}</h1>
-                <span className="text-xs text-slate-400 font-semibold">/ Giới hạn: {limitStr}</span>
-              </div>
-              <div className="flex items-center space-x-1.5 text-emerald-600 text-xs font-semibold mt-1">
-                <TrendingDown size={15} />
-                <span>Giảm {Math.abs(screenTime.percentChangeVsYesterday)}% so với hôm qua</span>
-              </div>
-            </div>
+        <Kids360ScreenTimeGauge
+          childId={child.id}
+          childName={child.name}
+          usedMinutes={screenTime.todayTotalMinutes}
+          limitMinutes={savedLimitMinutes}
+          isLocked={state.childSettings?.[child.id]?.lockChallenge?.isLocked ?? state.lockChallenge?.isLocked ?? false}
+          isStudyMode={state.studyModeOnly}
+          battery={child.battery}
+          onOpenLimitModal={() => setShowLimitModal(true)}
+        />
+      </div>
 
-            <button
-              onClick={() => setShowLimitModal(true)}
-              className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold flex items-center space-x-1 border border-blue-200 transition"
-            >
-              <Sliders size={13} />
-              <span>Đổi giờ</span>
-            </button>
+      {/* Hourly Bar Chart Visualization Card */}
+      <div className="px-4 pt-3">
+        <div className="bg-white rounded-3xl p-4 shadow-xs border border-slate-200/80 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">Biểu đồ dùng theo giờ</h4>
+              <p className="text-[10px] text-slate-400 font-medium">Hôm nay ({child.name})</p>
+            </div>
+            <div className="flex items-center space-x-1.5 text-emerald-600 text-xs font-semibold">
+              <TrendingDown size={14} />
+              <span>Giảm {Math.abs(screenTime.percentChangeVsYesterday)}%</span>
+            </div>
           </div>
 
-          {/* Bar Chart Visualization */}
-          <div className="mt-6 pt-4 border-t border-slate-100">
-            <div className="h-28 flex items-end justify-between gap-2.5 px-2">
-              {sampleHeights.map((h, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group">
-                  <div className="w-full bg-slate-100 rounded-t-lg relative flex items-end h-24 overflow-hidden">
-                    <div
-                      className={`w-full rounded-t-lg transition-all duration-500 ${
-                        i === 2 ? 'bg-blue-600' : 'bg-blue-400 hover:bg-blue-500'
-                      }`}
-                      style={{ height: `${h}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-medium">{hourlyLabels[i]}</span>
+          <div className="h-28 flex items-end justify-between gap-2.5 px-2 pt-2">
+            {sampleHeights.map((h, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group">
+                <div className="w-full bg-slate-100 rounded-t-lg relative flex items-end h-24 overflow-hidden">
+                  <div
+                    className={`w-full rounded-t-lg transition-all duration-500 ${
+                      i === 2 ? 'bg-blue-600' : 'bg-blue-400 hover:bg-blue-500'
+                    }`}
+                    style={{ height: `${h}%` }}
+                  />
                 </div>
-              ))}
-            </div>
+                <span className="text-[10px] text-slate-400 font-medium">{hourlyLabels[i]}</span>
+              </div>
+            ))}
           </div>
         </div>
+      </div>
+
+      {/* Kids360 24-Hour Visual Day-Planner Timeline */}
+      <div className="px-4 pt-3">
+        <Kids360DayTimeline
+          childName={child.name}
+          onNavigate={onNavigate}
+        />
       </div>
 
       {/* App Breakdown Details */}

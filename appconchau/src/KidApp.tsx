@@ -1936,49 +1936,87 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                         ? 'bg-slate-900 bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-800 shadow-slate-900/30'
                         : isWarning
                         ? 'bg-amber-600 bg-gradient-to-tr from-amber-600 via-orange-600 to-amber-500 shadow-amber-600/30'
-                        : 'bg-blue-600 bg-gradient-to-tr from-indigo-600 via-blue-600 to-sky-500 shadow-blue-500/20'
+                        : 'bg-gradient-to-tr from-indigo-600 via-blue-600 to-sky-500 shadow-blue-500/25'
                     }`}
                   >
                     <div className="absolute right-0 bottom-0 opacity-15 translate-x-3 translate-y-3 pointer-events-none">
-                      <Clock size={120} />
+                      <Clock size={130} />
                     </div>
 
+                    {/* Top Row: Title and Status Badge */}
                     <div className="flex items-center justify-between relative z-10">
-                      <span className="text-[11px] font-bold text-blue-100 flex items-center gap-1.5">
-                        <Clock size={14} />
-                        Thời gian dùng máy còn lại hôm nay
+                      <span className="text-xs font-bold text-blue-100 flex items-center gap-1.5">
+                        <Clock size={15} />
+                        <span>Thời gian giải trí tự do hôm nay</span>
                       </span>
-                      <span className="text-[10px] bg-white/20 backdrop-blur-md px-2.5 py-0.5 rounded-full font-bold">
-                        {isExhausted ? 'Đã khóa máy' : isWarning ? 'Sắp hết giờ' : 'Khóa lúc 21:00'}
+                      <span className="text-[10px] bg-white/20 backdrop-blur-md px-2.5 py-0.5 rounded-full font-bold shadow-xs">
+                        {isExhausted ? '🛑 Đã hết giờ' : isWarning ? '⚠️ Sắp hết giờ' : '✅ Đang mở'}
                       </span>
                     </div>
 
-                    <div className="relative z-10">
-                      <div className="my-2 flex items-baseline justify-between">
-                        <h1 className="text-3xl font-black tracking-tight">{remText}</h1>
-                        {isExhausted && (
+                    {/* Middle Row: Big Remaining Time & Dual Alli360 Action Buttons */}
+                    <div className="relative z-10 my-3">
+                      <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+                        <div>
+                          <span className="text-[10.5px] text-blue-100/90 font-medium block">Con còn lại:</span>
+                          <h1 className="text-3xl font-black tracking-tight">{remText}</h1>
+                        </div>
+
+                        {/* Quick Interactive Alli360 Action Buttons */}
+                        <div className="flex items-center gap-1.5 mt-2 sm:mt-0">
                           <button
                             type="button"
-                            onClick={() => setShowChatModal(true)}
-                            className="px-3 py-1 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-xl text-xs font-bold text-white transition active:scale-95 cursor-pointer"
+                            onClick={() => {
+                              haptics.light();
+                              setShowChatModal(true);
+                            }}
+                            className="px-3 py-1.5 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-xl text-xs font-bold text-white transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1"
                           >
-                            Xin thêm giờ 🙋
+                            <span>Xin thêm giờ</span>
+                            <span>🙋</span>
                           </button>
-                        )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptics.selection();
+                              setActiveTab('tasks');
+                            }}
+                            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-amber-950 font-black rounded-xl text-xs transition active:scale-95 cursor-pointer shadow-md flex items-center gap-1 border border-amber-300"
+                          >
+                            <span>Làm việc nhận giờ</span>
+                            <span>🎯</span>
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="w-full bg-black/20 h-2.5 rounded-full overflow-hidden p-0.5">
+                      {/* Visual Progress Bar */}
+                      <div className="w-full bg-black/25 h-3 rounded-full overflow-hidden p-0.5 mt-3 border border-white/10">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${
-                            percentLeft > 40 ? 'bg-emerald-400' : percentLeft > 15 ? 'bg-amber-400' : 'bg-rose-400'
+                            percentLeft > 40 ? 'bg-emerald-400 shadow-sm' : percentLeft > 15 ? 'bg-amber-400' : 'bg-rose-400 animate-pulse'
                           }`}
                           style={{ width: `${percentLeft}%` }}
                         />
                       </div>
-                      <p className="text-[10.5px] text-blue-100 mt-1.5 font-medium flex items-center justify-between">
-                        <span>Đã dùng {usedText} • Giới hạn: {Math.floor(totalLimit / 60)}h {totalLimit % 60}p</span>
-                        <span>{percentLeft}% còn lại</span>
-                      </p>
+
+                      {/* Bottom Footer Info */}
+                      <div className="text-[10.5px] text-blue-100 mt-2 font-medium flex items-center justify-between">
+                        <span>Đã dùng {usedText} / Giới hạn {Math.floor(totalLimit / 60)}h {totalLimit % 60}p</span>
+                        <span className="font-bold bg-white/10 px-1.5 py-0.2 rounded-md">{percentLeft}% còn lại</span>
+                      </div>
+                    </div>
+
+                    {/* Alli360 Category Transparency Banner */}
+                    <div className="relative z-10 pt-2 border-t border-white/15 flex items-center justify-between text-[10px] text-blue-100/90 font-medium">
+                      <span className="flex items-center gap-1">
+                        <span>📚</span>
+                        <span>Học tập & Gọi điện: Luôn mở</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span>🎮</span>
+                        <span>Game & Video: Đếm giờ</span>
+                      </span>
                     </div>
                   </div>
                 );
