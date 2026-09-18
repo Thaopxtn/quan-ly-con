@@ -25,8 +25,9 @@ import { acceptShareCode } from "@shared/firebase/sharingService";
 import { getCurrentParentAccount, getFirebaseInstance } from "@shared/firebase/firebaseService";
 import { isFirebaseConfigured } from "@shared/firebase/firebaseConfig";
 import { getActiveParentId, useAppState } from "@shared/store";
+import { parentProEventBus } from "@shared/eventBus";
 import { doc, onSnapshot } from "firebase/firestore";
-import { ref as rtdbRef, onValue as rtdbOnValue } from "firebase/database";
+import { ref as rtdbRef, onValue as rtdbOnValue, get as rtdbGet } from "firebase/database";
 import confetti from "canvas-confetti";
 
 interface PairChildDeviceModalProps {
@@ -241,7 +242,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       setKidError("Bé đã bấm 'Từ chối' trên máy con. Vui lòng tạo mã mới trên máy con nếu muốn kết nối lại.");
     };
 
-    // 1. RTDB listener
+    // 1. RTDB streaming listener
     let unsubRtdb: (() => void) | null = null;
     if (isFirebaseConfigured() && rtdb) {
       try {
@@ -260,7 +261,39 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       }
     }
 
-    // 2. Firestore listener
+    // 2. Chủ động thăm dò RTDB mỗi 1.2s đề phòng rớt kết nối WebSocket
+    const rtdbTimer = setInterval(async () => {
+      if (typeof window === "undefined" || isCompleted) return;
+      if (isFirebaseConfigured() && rtdb) {
+        try {
+          const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${cleanCode}`));
+          if (snap.exists()) {
+            const val = snap.val();
+            if (val.status === "paired") {
+              finalizeSuccess(val);
+            } else if (val.status === "rejected") {
+              handleRejected();
+            }
+          }
+        } catch (_) {}
+      }
+    }, 1200);
+
+    // 3. Lắng nghe EventBus tức thì (< 1ms khi test cục bộ trên cùng máy)
+    const unsubEventBus = parentProEventBus.subscribe<any>('PAIRING_APPROVED', (payload) => {
+      if (payload?.code === cleanCode) {
+        console.log('[PairModal] ⚡ Bé đã duyệt kết nối qua EventBus:', payload);
+        finalizeSuccess(payload);
+      }
+    });
+
+    const unsubRejected = parentProEventBus.subscribe<any>('PAIRING_REJECTED', (payload) => {
+      if (payload?.code === cleanCode) {
+        handleRejected();
+      }
+    });
+
+    // 4. Firestore listener (bảo vệ lỗi nếu API chưa kích hoạt)
     let unsubFirestore: (() => void) | null = null;
     if (isFirebaseConfigured() && db) {
       try {
@@ -273,13 +306,11 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
               handleRejected();
             }
           }
-        });
-      } catch (e) {
-        console.warn("Firestore pair listener error:", e);
-      }
+        }, () => {});
+      } catch (_) {}
     }
 
-    // 3. LocalStorage polling fallback (same device / offline demo)
+    // 5. LocalStorage polling fallback (same device / offline demo)
     const localTimer = setInterval(() => {
       if (typeof window === "undefined" || isCompleted) return;
       const raw = localStorage.getItem("parent_pro_pairing_sessions");
@@ -294,12 +325,15 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
           }
         } catch (_) {}
       }
-    }, 1500);
+    }, 1200);
 
     return () => {
       if (unsubRtdb) unsubRtdb();
       if (unsubFirestore) unsubFirestore();
+      clearInterval(rtdbTimer);
       clearInterval(localTimer);
+      unsubEventBus();
+      unsubRejected();
     };
   }, [isWaitingApproval, pendingSession, currentParent?.uid, addChild, onSuccess, onClose]);
 

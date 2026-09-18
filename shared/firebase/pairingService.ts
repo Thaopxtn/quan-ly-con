@@ -7,10 +7,35 @@ import {
   get as rtdbGet,
   update as rtdbUpdate,
 } from "firebase/database";
-import { getFirebaseInstance } from "./firebaseService";
+import { getFirebaseInstance, ensureKidAnonymousAuth } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
+import { parentProEventBus } from "../eventBus";
 
 import { ChildDeviceInfo } from "../types";
+
+/**
+ * Recursively removes undefined values from an object or replaces them with defaults/null
+ * to prevent Firebase Realtime Database and Firestore from throwing:
+ * "set failed: value argument contains undefined in property ..."
+ */
+export function sanitizeForFirebase<T>(data: T): T {
+  if (data === null || data === undefined) return null as unknown as T;
+  if (typeof data !== "object") return data;
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeForFirebase(item)) as unknown as T;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    if (value !== undefined) {
+      if (typeof value === "object" && value !== null) {
+        result[key] = sanitizeForFirebase(value);
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result as T;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -511,6 +536,9 @@ export async function createKidInitiatedPairingCode(
   profile: KidProfileSetup,
   deviceMeta: Partial<ChildDeviceInfo> & { model: string; osVersion: string }
 ): Promise<PairingSession> {
+  // Đảm bảo xác thực ẩn danh nếu chưa đăng nhập
+  ensureKidAnonymousAuth().catch(() => {});
+
   const code = generateRandomPin();
   const now = Date.now();
   const childId = "child_" + now;
@@ -538,9 +566,9 @@ export async function createKidInitiatedPairingCode(
     code,
     childId,
     childName: profile.name.trim() || "Bé yêu",
-    childAge: profile.age,
-    childBirthYear: profile.birthYear,
-    childAvatar: profile.avatar,
+    childAge: profile.age || 8,
+    childBirthYear: profile.birthYear || (new Date().getFullYear() - (profile.age || 8)),
+    childAvatar: profile.avatar || "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150",
     childGender: profile.gender || "boy",
     status: "waiting_parent",
     initiator: "child",
@@ -552,7 +580,7 @@ export async function createKidInitiatedPairingCode(
     childDeviceInfo: fullDeviceInfo,
   };
 
-  // 1. Save to localStorage FIRST — ensures mã always works even if Firebase blocked
+  // 1. Lưu LocalStorage ngay lập tức
   if (typeof window !== "undefined") {
     try {
       localStorage.setItem(LOCAL_KID_PENDING_PAIRING_KEY, JSON.stringify(session));
@@ -565,18 +593,24 @@ export async function createKidInitiatedPairingCode(
     }
   }
 
-  const { db, rtdb } = getFirebaseInstance();
+  // 2. Phát EventBus cho môi trường tab/trình giả lập cục bộ
+  parentProEventBus.emit("PAIRING_SESSION_CREATED", session, "child");
 
-  // 2. Non-blocking Firebase writes (kid may not be authenticated)
+  // 3. Chuẩn hóa dữ liệu chống lỗi undefined và ghi lên Firebase Realtime Database
+  const { db, rtdb } = getFirebaseInstance();
+  const sanitizedSession = sanitizeForFirebase({ ...session, timestamp: now });
+
   if (isFirebaseConfigured() && rtdb) {
-    rtdbSet(rtdbRef(rtdb, `pairings/${code}`), { ...session, timestamp: now }).catch((e: any) =>
-      console.warn("RTDB kid pairing write (check Rules for pairings/*):", e?.code || e?.message)
-    );
+    try {
+      await rtdbSet(rtdbRef(rtdb, `pairings/${code}`), sanitizedSession);
+      console.log(`[Pairing] ✅ Mã ghép đôi ${code} đã sẵn sàng trên Realtime Database!`);
+    } catch (e: any) {
+      console.warn("RTDB kid pairing write warning:", e?.code || e?.message);
+    }
   }
+
   if (isFirebaseConfigured() && db) {
-    setDoc(doc(db, "pairings", code), { ...session, timestamp: serverTimestamp() }).catch((e: any) =>
-      console.warn("Firestore kid pairing write (check Rules):", e?.code || e?.message)
-    );
+    setDoc(doc(db, "pairings", code), sanitizedSession).catch(() => {});
   }
 
   return session;
@@ -674,29 +708,41 @@ export async function requestPairingWithKidCode(
   clearRateLimit();
 
   // 9. Update status to pending_approval waiting for kid's confirmation
+  const effectiveParentId = parentId || "family_primary";
+  const effectiveParentName = parentName || "Bố/Mẹ";
+
   session.status = "pending_approval";
-  session.parentId = parentId;
-  session.parentName = parentName || "Bố/Mẹ";
+  session.parentId = effectiveParentId;
+  session.parentName = effectiveParentName;
   session.approvalRequestedAt = Date.now();
 
-  const updates = {
+  const updates = sanitizeForFirebase({
     status: "pending_approval",
-    parentId,
-    parentName: session.parentName,
+    parentId: effectiveParentId,
+    parentName: effectiveParentName,
     approvalRequestedAt: session.approvalRequestedAt,
-  };
+  });
 
   if (isFirebaseConfigured() && rtdb) {
-    rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), updates).catch((e) =>
-      console.warn("RTDB update pairing error:", e?.code)
-    );
+    try {
+      await rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), updates);
+      console.log(`[Pairing] ✅ Đã gửi yêu cầu ghép đôi mã ${cleanCode} lên Realtime Database thành công!`);
+    } catch (e: any) {
+      console.warn("RTDB update pairing error:", e?.code || e?.message);
+    }
   }
 
   if (isFirebaseConfigured() && db) {
-    updateDoc(doc(db, "pairings", cleanCode), updates).catch((e) =>
-      console.warn("Firestore update pairing error:", e?.code)
-    );
+    updateDoc(doc(db, "pairings", cleanCode), updates).catch(() => {});
   }
+
+  // Phát tín hiệu EventBus ngay lập tức (cho trình duyệt/giả lập cùng thiết bị)
+  parentProEventBus.emit("PAIRING_REQUESTED", {
+    code: cleanCode,
+    parentId: effectiveParentId,
+    parentName: effectiveParentName,
+    approvalRequestedAt: session.approvalRequestedAt,
+  }, "parent");
 
   if (typeof window !== "undefined") {
     const existingStr = localStorage.getItem(LOCAL_PAIRING_SESSIONS_KEY);
@@ -789,34 +835,44 @@ export async function approveParentPairing(
   };
 
   const parentId = session.parentId || "family_primary";
+  const sanitizedChildData = sanitizeForFirebase(childProfileData);
+  const sanitizedPairingUpdate = sanitizeForFirebase({
+    status: "paired",
+    used: true,
+    pairedAt: Date.now(),
+    sessionToken,
+  });
 
   if (isFirebaseConfigured() && rtdb) {
-    Promise.all([
-      rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), {
-        status: "paired",
-        used: true,
-        pairedAt: Date.now(),
-        sessionToken,
-      }),
-      rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${session.childId}`), childProfileData),
-    ]).catch((e) => console.warn("RTDB update pairing error:", e?.code));
+    try {
+      await Promise.all([
+        rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), sanitizedPairingUpdate),
+        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${session.childId}`), sanitizedChildData),
+      ]);
+      console.log(`[Pairing] ✅ Bé đã chấp nhận kết nối mã ${cleanCode} trên Realtime Database thành công!`);
+    } catch (e: any) {
+      console.warn("RTDB update pairing error:", e?.code || e?.message);
+    }
   }
 
   if (isFirebaseConfigured() && db) {
     Promise.all([
-      updateDoc(doc(db, "pairings", cleanCode), {
-        status: "paired",
-        used: true,
-        pairedAt: serverTimestamp(),
-        sessionToken,
-      }),
+      updateDoc(doc(db, "pairings", cleanCode), sanitizedPairingUpdate),
       setDoc(
         doc(db, "users", parentId, "children", session.childId),
-        { ...childProfileData, lastSeen: serverTimestamp(), updatedAt: serverTimestamp() },
+        { ...sanitizedChildData, lastSeen: serverTimestamp(), updatedAt: serverTimestamp() },
         { merge: true }
       ),
-    ]).catch((e) => console.warn("Firestore update pairing error:", e?.code));
+    ]).catch(() => {});
   }
+
+  // Phát tín hiệu EventBus
+  parentProEventBus.emit("PAIRING_APPROVED", {
+    code: cleanCode,
+    parentId,
+    childId: session.childId,
+    sessionToken,
+  }, "child");
 
   if (typeof window !== "undefined") {
     const existingStr = localStorage.getItem(LOCAL_PAIRING_SESSIONS_KEY);
@@ -862,10 +918,10 @@ export async function rejectParentPairing(
   const cleanCode = code.replace(/\s+/g, "").trim();
   const { db, rtdb } = getFirebaseInstance();
 
-  const updates = {
+  const updates = sanitizeForFirebase({
     status: "rejected",
     rejectedAt: Date.now(),
-  };
+  });
 
   if (isFirebaseConfigured() && rtdb) {
     rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), updates).catch((e) =>
@@ -874,10 +930,11 @@ export async function rejectParentPairing(
   }
 
   if (isFirebaseConfigured() && db) {
-    updateDoc(doc(db, "pairings", cleanCode), updates).catch((e) =>
-      console.warn("Firestore update pairing error:", e?.code)
-    );
+    updateDoc(doc(db, "pairings", cleanCode), updates).catch(() => {});
   }
+
+  // Phát tín hiệu EventBus
+  parentProEventBus.emit("PAIRING_REJECTED", { code: cleanCode }, "child");
 
   if (typeof window !== "undefined") {
     const existingStr = localStorage.getItem(LOCAL_PAIRING_SESSIONS_KEY);

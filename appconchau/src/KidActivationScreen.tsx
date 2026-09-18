@@ -44,14 +44,16 @@ import {
   getCurrentKidLoggedUser,
   logoutKidAccount,
   getFirebaseInstance,
+  ensureKidAnonymousAuth,
   ParentAccount,
 } from '@shared/firebase/firebaseService';
 import { registerChildDeviceInCloud } from '@shared/firebase/cloudSyncService';
 import { ChildDeviceInfo } from '@shared/types';
 import { isSimulatorMode } from '@shared/store';
 import { isFirebaseConfigured } from '@shared/firebase/firebaseConfig';
+import { parentProEventBus } from '@shared/eventBus';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { ref as rtdbRef, onValue as rtdbOnValue } from 'firebase/database';
+import { ref as rtdbRef, onValue as rtdbOnValue, get as rtdbGet } from 'firebase/database';
 import confetti from 'canvas-confetti';
 
 interface KidActivationScreenProps {
@@ -415,12 +417,27 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     const handleDataUpdate = (data: any) => {
       if (!data) return;
       if (data.status === 'pending_approval') {
-        setPendingParentName(data.parentName || 'Bố/Mẹ');
+        const pName = data.parentName || 'Bố/Mẹ';
+        setPendingParentName(pName);
         setShowApprovalModal(true);
+
+        // Phát âm báo chuông kết nối và rung nhẹ
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+          osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.15); // A5
+          gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.4);
+        } catch (_) {}
       } else if (data.status === 'paired') {
         setShowApprovalModal(false);
-        // ✅ FIX BUG #1: Save paired info BEFORE calling onActivationComplete
-        // Without this, getKidDevicePairedInfo() returns null and app stays stuck on ActivationScreen
         try {
           const pairedData: KidPairedInfo = {
             isPaired: true,
@@ -452,6 +469,7 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       }
     };
 
+    // 1. RTDB WebSocket Stream Listener
     let unsubRtdb: (() => void) | null = null;
     if (isFirebaseConfigured() && rtdb) {
       try {
@@ -465,6 +483,41 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       }
     }
 
+    // 2. Chủ động thăm dò RTDB mỗi 1.2s đề phòng rớt kết nối WebSocket
+    const rtdbPollTimer = setInterval(async () => {
+      if (isFirebaseConfigured() && rtdb && session?.code) {
+        try {
+          const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${session.code}`));
+          if (snap.exists()) {
+            handleDataUpdate(snap.val());
+          }
+        } catch (_) {}
+      }
+    }, 1200);
+
+    // 3. Lắng nghe qua EventBus (nhận tức thì < 1ms khi test song song trên trình duyệt/web)
+    const unsubEventBus = parentProEventBus.subscribe<any>('PAIRING_REQUESTED', (payload) => {
+      if (payload?.code === session.code) {
+        console.log('[KidActivation] ⚡ Nhận được tín hiệu ghép đôi qua EventBus:', payload);
+        handleDataUpdate({
+          status: 'pending_approval',
+          parentName: payload.parentName || 'Bố/Mẹ',
+          parentId: payload.parentId,
+        });
+      }
+    });
+
+    const unsubApproved = parentProEventBus.subscribe<any>('PAIRING_APPROVED', (payload) => {
+      if (payload?.code === session.code) {
+        handleDataUpdate({
+          status: 'paired',
+          parentId: payload.parentId,
+          sessionToken: payload.sessionToken,
+        });
+      }
+    });
+
+    // 4. Firestore listener (bảo vệ bằng try/catch)
     let unsubFirestore: (() => void) | null = null;
     if (isFirebaseConfigured() && db) {
       try {
@@ -472,15 +525,13 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
           if (snap.exists()) {
             handleDataUpdate(snap.data());
           }
-        }, (error) => {
-          console.warn('Firestore pairing snapshot error:', error?.message || error);
+        }, () => {
+          // Bỏ qua lỗi Firestore nếu API chưa kích hoạt
         });
-      } catch (e) {
-        console.warn('Firestore listener error:', e);
-      }
+      } catch (_) {}
     }
 
-    // LocalStorage polling fallback for demo/offline test on same device
+    // 5. LocalStorage polling fallback cho kiểm thử offline
     const pollTimer = setInterval(() => {
       if (typeof window === 'undefined') return;
       const raw = localStorage.getItem('parent_pro_pairing_sessions');
@@ -491,12 +542,15 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
           if (s) handleDataUpdate(s);
         } catch (_) {}
       }
-    }, 1500);
+    }, 1200);
 
     return () => {
       if (unsubRtdb) unsubRtdb();
       if (unsubFirestore) unsubFirestore();
+      clearInterval(rtdbPollTimer);
       clearInterval(pollTimer);
+      unsubEventBus();
+      unsubApproved();
     };
   }, [mode, session?.code, onActivationComplete]);
 

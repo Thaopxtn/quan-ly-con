@@ -47,7 +47,11 @@ export type EventType =
   | 'ALARM_UPDATED'
   | 'TIMER_UPDATED'
   | 'SCHEDULE_UPDATED'
-  | 'TRACKING_CONFIG_CHANGED';
+  | 'TRACKING_CONFIG_CHANGED'
+  | 'PAIRING_REQUESTED'
+  | 'PAIRING_APPROVED'
+  | 'PAIRING_REJECTED'
+  | 'PAIRING_SESSION_CREATED';
 
 export interface BusEvent<T = any> {
   id?: string;
@@ -133,6 +137,10 @@ class ParentProEventBus {
     }
   }
 
+  public emit<T>(type: EventType, payload: T, sender: 'parent' | 'child' | 'system' = 'parent') {
+    this.publish(type, payload, sender);
+  }
+
   public subscribe<T>(type: EventType, callback: (payload: T) => void): () => void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
@@ -160,3 +168,4 @@ class ParentProEventBus {
 }
 
 export const eventBus = new ParentProEventBus();
+export const parentProEventBus = eventBus;
