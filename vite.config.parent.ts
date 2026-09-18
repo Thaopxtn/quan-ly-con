@@ -4,6 +4,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { resolve } from 'node:path';
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {
