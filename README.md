@@ -4,6 +4,16 @@ Hệ thống phần mềm bảo vệ và quản lý con cái thông minh, tái h
 
 ---
 
+## 🌐 Trải Nghiệm Website Online & Mã Nguồn GitHub
+
+- **Mã nguồn GitHub**: [https://github.com/Thaopxtn/quan-ly-con](https://github.com/Thaopxtn/quan-ly-con)
+- **Website Trực Tuyến (GitHub Pages)**:
+  - 🖥️ **Bảng Điều Khiển & Trình Giả Lập Song Song**: [https://thaopxtn.github.io/quan-ly-con/](https://thaopxtn.github.io/quan-ly-con/)
+  - 👨‍👩‍👧 **Ứng Dụng Cha Mẹ (ParentPro)**: [https://thaopxtn.github.io/quan-ly-con/parent.html](https://thaopxtn.github.io/quan-ly-con/parent.html)
+  - 🧒 **Ứng Dụng Con Cái (KidCare)**: [https://thaopxtn.github.io/quan-ly-con/kid.html](https://thaopxtn.github.io/quan-ly-con/kid.html)
+
+---
+
 ## 🌟 Điểm Nổi Bật & Tùy Biến Nhu Cầu Thực Tế
 
 1. **Kiến Trúc Mô-đun (Pluggable Architecture)**:
