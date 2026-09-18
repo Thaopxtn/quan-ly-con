@@ -28,6 +28,11 @@ Hệ thống phần mềm bảo vệ và quản lý con cái thông minh, tái h
    - Bản đồ hiển thị vị trí bé, vòng tròn vùng an toàn (Nhà 500m, Trường học 200m), hoạt họa xe di chuyển theo lộ trình từng chặng trong ngày (07:15 -> 07:45 -> 15:20).
 5. **Trình Giả Lập Dual-Device Live Simulator**:
    - Cho phép xem song song cả 2 chiếc điện thoại (Cha Mẹ và Con) trên cùng 1 màn hình để trải nghiệm tương tác trực tiếp.
+6. **Giao Diện Chuẩn Quốc Tế Theo Phong Cách Kids360 & Alli360**:
+   - **Đồng hồ thời gian vòng tròn Radial SVG**: Đếm ngược thời gian còn lại trực quan, đổi màu sinh động (Emerald -> Amber -> Rose).
+   - **Bộ 4 nút tác vụ nhanh Kids360**: Khóa ngay, +15 Phút thưởng nhanh, Chế độ học tập, Chuông báo tìm máy.
+   - **Thanh lịch biểu 24 giờ trực quan (Day-Planner Timeline)**: Phân bổ màu sắc cho Giờ ngủ, Giờ học, Giải trí với kim thời gian thực đang chạy.
+   - **Thẻ đồng hành Alli360 trên máy con**: Tích cực, tự giác, tích hợp xin thêm giờ 1 chạm và làm nhiệm vụ nhận giờ giải trí.
 
 ---
 
