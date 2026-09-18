@@ -18,6 +18,11 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        parent: fileURLToPath(new URL('./parent.html', import.meta.url)),
+        kid: fileURLToPath(new URL('./kid.html', import.meta.url)),
+      },
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
