@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "594726838584",
+    "firebase_url": "https://qlconcai-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "qlconcai",
+    "storage_bucket": "qlconcai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:594726838584:android:7a124bb24cfd34c83221cd",
+        "android_client_info": {
+          "package_name": "com.parentpro.kidcare"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "594726838584-i3ioq2tqs06bdapauarqfe612ahgjqmn.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.parentpro.kidcare",
+            "certificate_hash": "5fa989485e2a428416612d759766bf3adf1640ad"
+          }
+        },
+        {
+          "client_id": "594726838584-9ql6l3beeem58q0d41akjj5hct0pqlp4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAkD0WZhm3uyLQ4Xlskuxndx0pGdz2jqHk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "594726838584-9ql6l3beeem58q0d41akjj5hct0pqlp4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

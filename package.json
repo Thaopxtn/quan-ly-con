@@ -1,0 +1,49 @@
+{
+  "name": "quan-ly-con",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:web": "tsc && vite build",
+    "preview": "vite preview",
+    "preview:web": "vite preview --host 0.0.0.0 --port 3000",
+    "deploy:web": "npm run build:web && npx firebase deploy --only hosting",
+    "studio": "powershell -Command \"Start-Process 'C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe' -ArgumentList 'D:\\luufilelaptrinh\\quan ly con\\android'\"",
+    "studio:parent": "powershell -Command \"Start-Process 'C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe' -ArgumentList 'D:\\luufilelaptrinh\\quan ly con\\android-parent'\"",
+    "studio:kid": "powershell -Command \"Start-Process 'C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe' -ArgumentList 'D:\\luufilelaptrinh\\quan ly con\\android-kid'\"",
+    "build:parent": "vite build --config vite.config.parent.ts && node scripts/sync-assets.js parent",
+    "build:kid": "vite build --config vite.config.kid.ts && node scripts/sync-assets.js kid",
+    "build:all": "npm run build:parent && npm run build:kid",
+    "build:apk:parent": "npm run build:parent && cmd.exe /c \"cd /d D:\\luufilelaptrinh\\quan ly con\\android-parent && gradlew.bat assembleDebug\" && node scripts/copy-apk.js parent",
+    "build:apk:kid": "npm run build:kid && cmd.exe /c \"cd /d D:\\luufilelaptrinh\\quan ly con\\android-kid && gradlew.bat assembleDebug\" && node scripts/copy-apk.js kid",
+    "build:apk:all": "npm run build:apk:parent && npm run build:apk:kid",
+    "open:android": "npx cap open android",
+    "build:apk": "npm run build:apk:all"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.0",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "@capacitor-firebase/authentication": "^8.5.1",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "canvas-confetti": "^1.9.4",
+    "firebase": "^12.19.0",
+    "lucide-react": "^1.46.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

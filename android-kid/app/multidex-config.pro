@@ -1,0 +1,4 @@
+-keep class com.parentpro.kidcare.MainActivity { *; }
+-keep class com.parentpro.kidcare.KidPermissionsPlugin { *; }
+-keep class com.getcapacitor.BridgeActivity { *; }
+-keep class com.getcapacitor.Bridge { *; }

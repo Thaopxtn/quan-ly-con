@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KidCare Con Cái</string>
+    <string name="title_activity_main">KidCare Con Cái</string>
+    <string name="package_name">com.parentpro.kidcare</string>
+    <string name="custom_url_scheme">com.parentpro.kidcare</string>
+    <string name="accessibility_service_description">Dịch vụ hỗ trợ giám sát và bảo vệ con cái KidCare: ngăn chặn ứng dụng độc hại, khóa máy giờ học và bảo vệ trẻ em an toàn trên không gian mạng.</string>
+</resources>

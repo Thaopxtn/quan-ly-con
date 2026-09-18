@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "594726838584",
+    "project_id": "qlconcai",
+    "storage_bucket": "qlconcai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:594726838584:android:7a124bb24cfd34c83221cd",
+        "android_client_info": {
+          "package_name": "com.parentpro.kidcare"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAkD0WZhm3uyLQ4Xlskuxndx0pGdz2jqHk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
