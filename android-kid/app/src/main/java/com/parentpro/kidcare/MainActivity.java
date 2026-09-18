@@ -3,6 +3,7 @@ package com.parentpro.kidcare;
 import android.os.Bundle;
 import android.util.Log;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.WebViewListener;
@@ -17,6 +18,12 @@ public class MainActivity extends BridgeActivity {
 
         if (bridge != null) {
             WebView.setWebContentsDebuggingEnabled(true);
+            if (bridge.getWebView() != null) {
+                WebSettings settings = bridge.getWebView().getSettings();
+                settings.setDomStorageEnabled(true);
+                settings.setDatabaseEnabled(true);
+                settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+            }
             bridge.addWebViewListener(new WebViewListener() {
                 @Override
                 public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {

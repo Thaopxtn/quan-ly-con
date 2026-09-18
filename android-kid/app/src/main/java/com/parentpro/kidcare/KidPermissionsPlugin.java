@@ -105,81 +105,83 @@ public class KidPermissionsPlugin extends Plugin {
 
     @PluginMethod
     public void getInstalledApps(PluginCall call) {
-        try {
-            Context context = getContext();
-            PackageManager pm = context.getPackageManager();
-            JSArray appList = new JSArray();
+        new Thread(() -> {
+            try {
+                Context context = getContext();
+                PackageManager pm = context.getPackageManager();
+                JSArray appList = new JSArray();
 
-            Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
-            mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
-            List<ResolveInfo> pkgAppsList = pm.queryIntentActivities(mainIntent, 0);
+                Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
+                mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+                List<ResolveInfo> pkgAppsList = pm.queryIntentActivities(mainIntent, 0);
 
-            String myPackage = context.getPackageName();
-            int iconLimit = 50; // Convert real icon thumbnail for first 50 apps
-            int iconCount = 0;
+                String myPackage = context.getPackageName();
+                int iconLimit = 32; // Optimized: Convert real icon thumbnail for top 32 apps only to reduce launch latency
+                int iconCount = 0;
 
-            for (ResolveInfo resolveInfo : pkgAppsList) {
-                try {
-                    if (resolveInfo.activityInfo == null) continue;
-                    String pkgName = resolveInfo.activityInfo.packageName;
-                    if (pkgName == null || pkgName.equals(myPackage)) continue; // Skip KidCare itself
+                for (ResolveInfo resolveInfo : pkgAppsList) {
+                    try {
+                        if (resolveInfo.activityInfo == null) continue;
+                        String pkgName = resolveInfo.activityInfo.packageName;
+                        if (pkgName == null || pkgName.equals(myPackage)) continue; // Skip KidCare itself
 
-                    String appName = resolveInfo.loadLabel(pm).toString();
-                    if (appName == null || appName.isEmpty()) {
-                        appName = pkgName;
-                    }
+                        String appName = resolveInfo.loadLabel(pm).toString();
+                        if (appName == null || appName.isEmpty()) {
+                            appName = pkgName;
+                        }
 
-                    boolean isSystem = false;
-                    if (resolveInfo.activityInfo.applicationInfo != null) {
-                        isSystem = (resolveInfo.activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-                    }
+                        boolean isSystem = false;
+                        if (resolveInfo.activityInfo.applicationInfo != null) {
+                            isSystem = (resolveInfo.activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                        }
 
-                    JSObject appObj = new JSObject();
-                    appObj.put("id", "app_" + pkgName.replace(".", "_"));
-                    appObj.put("packageName", pkgName);
-                    appObj.put("name", appName);
-                    appObj.put("isSystem", isSystem);
+                        JSObject appObj = new JSObject();
+                        appObj.put("id", "app_" + pkgName.replace(".", "_"));
+                        appObj.put("packageName", pkgName);
+                        appObj.put("name", appName);
+                        appObj.put("isSystem", isSystem);
 
-                    // Categorize heuristically
-                    String cat = "other";
-                    String lowerName = appName.toLowerCase();
-                    String lowerPkg = pkgName.toLowerCase();
-                    if (lowerPkg.contains("youtube") || lowerPkg.contains("video") || lowerPkg.contains("vlc") || lowerPkg.contains("netflix") || lowerPkg.contains("tiktok")) {
-                        cat = "video";
-                    } else if (lowerPkg.contains("game") || lowerPkg.contains("roblox") || lowerPkg.contains("freefire") || lowerPkg.contains("pubg") || lowerPkg.contains("play")) {
-                        cat = "game";
-                    } else if (lowerPkg.contains("zalo") || lowerPkg.contains("facebook") || lowerPkg.contains("messenger") || lowerPkg.contains("instagram") || lowerPkg.contains("viber") || lowerPkg.contains("tele")) {
-                        cat = "social";
-                    } else if (lowerPkg.contains("browser") || lowerPkg.contains("chrome") || lowerPkg.contains("firefox") || lowerPkg.contains("opera")) {
-                        cat = "browser";
-                    } else if (lowerName.contains("học") || lowerName.contains("toán") || lowerName.contains("anh") || lowerName.contains("sách") || lowerPkg.contains("duolingo") || lowerPkg.contains("study") || lowerPkg.contains("class") || lowerPkg.contains("zoom") || lowerPkg.contains("meet") || lowerPkg.contains("monkey") || lowerPkg.contains("edu") || lowerPkg.contains("camera") || lowerPkg.contains("calculator") || lowerPkg.contains("deskclock") || lowerPkg.contains("gallery")) {
-                        cat = "study";
-                    }
-                    appObj.put("category", cat);
+                        // Categorize heuristically
+                        String cat = "other";
+                        String lowerName = appName.toLowerCase();
+                        String lowerPkg = pkgName.toLowerCase();
+                        if (lowerPkg.contains("youtube") || lowerPkg.contains("video") || lowerPkg.contains("vlc") || lowerPkg.contains("netflix") || lowerPkg.contains("tiktok")) {
+                            cat = "video";
+                        } else if (lowerPkg.contains("game") || lowerPkg.contains("roblox") || lowerPkg.contains("freefire") || lowerPkg.contains("pubg") || lowerPkg.contains("play")) {
+                            cat = "game";
+                        } else if (lowerPkg.contains("zalo") || lowerPkg.contains("facebook") || lowerPkg.contains("messenger") || lowerPkg.contains("instagram") || lowerPkg.contains("viber") || lowerPkg.contains("tele")) {
+                            cat = "social";
+                        } else if (lowerPkg.contains("browser") || lowerPkg.contains("chrome") || lowerPkg.contains("firefox") || lowerPkg.contains("opera")) {
+                            cat = "browser";
+                        } else if (lowerName.contains("học") || lowerName.contains("toán") || lowerName.contains("anh") || lowerName.contains("sách") || lowerPkg.contains("duolingo") || lowerPkg.contains("study") || lowerPkg.contains("class") || lowerPkg.contains("zoom") || lowerPkg.contains("meet") || lowerPkg.contains("monkey") || lowerPkg.contains("edu") || lowerPkg.contains("camera") || lowerPkg.contains("calculator") || lowerPkg.contains("deskclock") || lowerPkg.contains("gallery")) {
+                            cat = "study";
+                        }
+                        appObj.put("category", cat);
 
-                    if (iconCount < iconLimit) {
-                        try {
-                            Drawable iconDrawable = resolveInfo.loadIcon(pm);
-                            String iconBase64 = drawableToBase64(iconDrawable);
-                            if (iconBase64 != null) {
-                                appObj.put("icon", iconBase64);
-                                iconCount++;
-                            }
-                        } catch (Throwable ignored) {}
-                    }
+                        if (iconCount < iconLimit) {
+                            try {
+                                Drawable iconDrawable = resolveInfo.loadIcon(pm);
+                                String iconBase64 = drawableToBase64(iconDrawable);
+                                if (iconBase64 != null) {
+                                    appObj.put("icon", iconBase64);
+                                    iconCount++;
+                                }
+                            } catch (Throwable ignored) {}
+                        }
 
-                    appList.put(appObj);
-                } catch (Exception ignored) {}
+                        appList.put(appObj);
+                    } catch (Exception ignored) {}
+                }
+
+                JSObject ret = new JSObject();
+                ret.put("apps", appList);
+                ret.put("count", appList.length());
+                call.resolve(ret);
+            } catch (Exception e) {
+                Log.e(TAG, "Error getting installed apps", e);
+                call.reject("Failed to get installed apps: " + e.getMessage());
             }
-
-            JSObject ret = new JSObject();
-            ret.put("apps", appList);
-            ret.put("count", appList.length());
-            call.resolve(ret);
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting installed apps", e);
-            call.reject("Failed to get installed apps: " + e.getMessage());
-        }
+        }).start();
     }
 
     @PluginMethod
@@ -216,16 +218,16 @@ public class KidPermissionsPlugin extends Plugin {
             int width = drawable.getIntrinsicWidth();
             int height = drawable.getIntrinsicHeight();
             if (width <= 0 || height <= 0) {
-                width = 64;
-                height = 64;
+                width = 48;
+                height = 48;
             }
-            width = Math.min(width, 72);
-            height = Math.min(height, 72);
+            width = Math.min(width, 56);
+            height = Math.min(height, 56);
 
             if (drawable instanceof BitmapDrawable) {
                 Bitmap bmp = ((BitmapDrawable) drawable).getBitmap();
                 if (bmp != null) {
-                    bitmap = Bitmap.createScaledBitmap(bmp, 64, 64, true);
+                    bitmap = Bitmap.createScaledBitmap(bmp, 48, 48, false);
                 } else {
                     bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
                     Canvas canvas = new Canvas(bitmap);
@@ -241,7 +243,7 @@ public class KidPermissionsPlugin extends Plugin {
 
             if (bitmap != null) {
                 ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.PNG, 85, stream);
+                bitmap.compress(Bitmap.CompressFormat.PNG, 65, stream);
                 byte[] byteArray = stream.toByteArray();
                 return "data:image/png;base64," + Base64.encodeToString(byteArray, Base64.NO_WRAP);
             }

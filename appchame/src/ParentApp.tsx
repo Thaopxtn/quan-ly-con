@@ -1,18 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useAppState, syncWithCloudForChild, syncAllChildrenFromCloud, isSimulatorMode } from '@shared/store';
 import { ParentBottomNav, ParentTab } from './components/ParentBottomNav';
 import { WelcomeAuthScreen } from './modules/auth/WelcomeAuthScreen';
 import { DashboardScreen } from './modules/dashboard/DashboardScreen';
-import { TrackingHubScreen, TrackingTab } from './modules/tracking/TrackingHubScreen';
-import { UsageControlHubScreen, UsageControlTab } from './modules/screentime/UsageControlHubScreen';
-import { ReportsHubScreen, ReportsTab } from './modules/reports/ReportsHubScreen';
-import { FamilyHubScreen, FamilyTab } from './modules/family/FamilyHubScreen';
-import { AlertsScreen } from './modules/alerts/AlertsScreen';
-import { AIAssistantScreen } from './modules/ai/AIAssistantScreen';
-import { SosMonitorScreen } from './modules/sos/SosMonitorScreen';
-import { PremiumScreen } from './modules/premium/PremiumScreen';
-import { SettingsScreen } from './modules/settings/SettingsScreen';
-import { RemoteControlCenter } from './modules/remote/RemoteControlCenter';
+
+// Lazy load heavy hub modules to achieve instant cold start and minimal memory footprint
+import type { TrackingTab } from './modules/tracking/TrackingHubScreen';
+import type { UsageControlTab } from './modules/screentime/UsageControlHubScreen';
+import type { ReportsTab } from './modules/reports/ReportsHubScreen';
+import type { FamilyTab } from './modules/family/FamilyHubScreen';
+
+const TrackingHubScreen = lazy(() => import('./modules/tracking/TrackingHubScreen').then((m) => ({ default: m.TrackingHubScreen })));
+const UsageControlHubScreen = lazy(() => import('./modules/screentime/UsageControlHubScreen').then((m) => ({ default: m.UsageControlHubScreen })));
+const ReportsHubScreen = lazy(() => import('./modules/reports/ReportsHubScreen').then((m) => ({ default: m.ReportsHubScreen })));
+const FamilyHubScreen = lazy(() => import('./modules/family/FamilyHubScreen').then((m) => ({ default: m.FamilyHubScreen })));
+const AlertsScreen = lazy(() => import('./modules/alerts/AlertsScreen').then((m) => ({ default: m.AlertsScreen })));
+const AIAssistantScreen = lazy(() => import('./modules/ai/AIAssistantScreen').then((m) => ({ default: m.AIAssistantScreen })));
+const SosMonitorScreen = lazy(() => import('./modules/sos/SosMonitorScreen').then((m) => ({ default: m.SosMonitorScreen })));
+const PremiumScreen = lazy(() => import('./modules/premium/PremiumScreen').then((m) => ({ default: m.PremiumScreen })));
+const SettingsScreen = lazy(() => import('./modules/settings/SettingsScreen').then((m) => ({ default: m.SettingsScreen })));
+const RemoteControlCenter = lazy(() => import('./modules/remote/RemoteControlCenter').then((m) => ({ default: m.RemoteControlCenter })));
+
 import { SystemNotificationBanner } from './components/SystemNotificationBanner';
 import { notifyEmergencyAlert, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
@@ -34,6 +42,16 @@ export type ScreenId =
   | 'premium'
   | 'settings'
   | 'remote';
+
+export const ScreenShimmer: React.FC = () => (
+  <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4 animate-pulse">
+    <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center shadow-sm">
+      <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    </div>
+    <div className="h-4 bg-slate-200 rounded-full w-36" />
+    <div className="h-3 bg-slate-100 rounded-full w-52" />
+  </div>
+);
 
 export interface ParentAppProps {
   initialScreen?: ScreenId;
@@ -68,13 +86,17 @@ export const ParentApp: React.FC<ParentAppProps> = ({
   const currentChild = children?.find((c) => c.id === selectedChildId) || child;
   const [isSosBannerDismissed, setIsSosBannerDismissed] = useState(false);
 
-  // Sync with Cloud for active parent and children
+  // Sync with Cloud for active parent and children (deferred 300ms to free up launch thread)
   useEffect(() => {
     const parentAccount = getCurrentParentAccount();
     const parentId = parentAccount?.uid || 'family_primary';
+    
+    let timer: any = null;
     if (parentId) {
-      syncWithCloudForChild(parentId, selectedChildId);
-      syncAllChildrenFromCloud(parentId);
+      timer = setTimeout(() => {
+        syncWithCloudForChild(parentId, selectedChildId);
+        syncAllChildrenFromCloud(parentId);
+      }, 300);
     }
 
     // Auto re-sync when app resumes or gains focus
@@ -87,6 +109,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     document.addEventListener('visibilitychange', handleFocus);
 
     return () => {
+      if (timer) clearTimeout(timer);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleFocus);
     };
@@ -303,86 +326,88 @@ export const ParentApp: React.FC<ParentAppProps> = ({
         </div>
       )}
 
-      {/* Screen Views - Clean Unified Hubs */}
+      {/* Screen Views - Clean Unified Hubs with Code-Splitting */}
       <div className={`flex-1 flex flex-col overflow-y-auto ${isDesktopWeb ? 'pb-6' : 'pb-[max(84px,calc(68px+env(safe-area-inset-bottom)))]'}`}>
-        {(currentScreen === 'welcome' || currentScreen === 'dashboard') && (
-          <DashboardScreen onNavigate={handleNavigate} />
-        )}
+        <Suspense fallback={<ScreenShimmer />}>
+          {(currentScreen === 'welcome' || currentScreen === 'dashboard') && (
+            <DashboardScreen onNavigate={handleNavigate} />
+          )}
 
-        {/* 1. Location & Safety Hub */}
-        {currentScreen === 'tracking' && (
-          <TrackingHubScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            initialTab={trackingTab}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {/* 1. Location & Safety Hub */}
+          {currentScreen === 'tracking' && (
+            <TrackingHubScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              initialTab={trackingTab}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {/* 2. Screen Time & App Usage Control Hub */}
-        {currentScreen === 'screentime' && (
-          <UsageControlHubScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            initialTab={usageTab}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {/* 2. Screen Time & App Usage Control Hub */}
+          {currentScreen === 'screentime' && (
+            <UsageControlHubScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              initialTab={usageTab}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {/* 3. Reports, Learning & Health Hub */}
-        {currentScreen === 'reports' && (
-          <ReportsHubScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            initialTab={reportsTab}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {/* 3. Reports, Learning & Health Hub */}
+          {currentScreen === 'reports' && (
+            <ReportsHubScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              initialTab={reportsTab}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {/* 4. Family Members & Smart Devices Hub */}
-        {currentScreen === 'family' && (
-          <FamilyHubScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            initialTab={familyTab}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {/* 4. Family Members & Smart Devices Hub */}
+          {currentScreen === 'family' && (
+            <FamilyHubScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              initialTab={familyTab}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {/* 5. Alerts & Notifications */}
-        {currentScreen === 'alerts' && (
-          <AlertsScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {/* 5. Alerts & Notifications */}
+          {currentScreen === 'alerts' && (
+            <AlertsScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {/* 6. Remote Control & Live Inspection Center */}
-        {currentScreen === 'remote' && (
-          <RemoteControlCenter onBack={() => setCurrentScreen('dashboard')} />
-        )}
+          {/* 6. Remote Control & Live Inspection Center */}
+          {currentScreen === 'remote' && (
+            <RemoteControlCenter onBack={() => setCurrentScreen('dashboard')} />
+          )}
 
-        {/* 7. AI Assistant */}
-        {currentScreen === 'ai' && (
-          <AIAssistantScreen onBack={() => setCurrentScreen('dashboard')} />
-        )}
+          {/* 7. AI Assistant */}
+          {currentScreen === 'ai' && (
+            <AIAssistantScreen onBack={() => setCurrentScreen('dashboard')} />
+          )}
 
-        {/* 8. Emergency SOS Screen */}
-        {currentScreen === 'sos' && (
-          <SosMonitorScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {/* 8. Emergency SOS Screen */}
+          {currentScreen === 'sos' && (
+            <SosMonitorScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {/* 9. Premium Membership */}
-        {currentScreen === 'premium' && (
-          <PremiumScreen onBack={() => setCurrentScreen('dashboard')} />
-        )}
+          {/* 9. Premium Membership */}
+          {currentScreen === 'premium' && (
+            <PremiumScreen onBack={() => setCurrentScreen('dashboard')} />
+          )}
 
-        {/* 10. Settings & Account */}
-        {currentScreen === 'settings' && (
-          <SettingsScreen
-            onBack={() => setCurrentScreen('dashboard')}
-            onLogout={handleLogout}
-          />
-        )}
+          {/* 10. Settings & Account */}
+          {currentScreen === 'settings' && (
+            <SettingsScreen
+              onBack={() => setCurrentScreen('dashboard')}
+              onLogout={handleLogout}
+            />
+          )}
+        </Suspense>
       </div>
 
       {/* Bottom Navigation (Visible on main screens for mobile, hidden on desktop web) */}

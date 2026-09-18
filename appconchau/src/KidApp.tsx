@@ -348,8 +348,19 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     activeTab,
   ]);
 
-  // Launcher App List States & Data
-  const [realInstalledApps, setRealInstalledApps] = useState<RealInstalledApp[]>([]);
+  // Launcher App List States & Data (Instant 0ms launch from cached apps)
+  const [realInstalledApps, setRealInstalledApps] = useState<RealInstalledApp[]>(() => {
+    try {
+      const cached = localStorage.getItem('kidcare_cached_apps_v2');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
   const [isScanningApps, setIsScanningApps] = useState<boolean>(false);
   const [appSearchQuery, setAppSearchQuery] = useState<string>('');
   const [appCategoryFilter, setAppCategoryFilter] = useState<'all' | 'study' | 'allowed' | 'blocked'>('all');
@@ -361,6 +372,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const scanned = await fetchRealInstalledApps();
       if (scanned && scanned.length > 0) {
         setRealInstalledApps(scanned);
+        try {
+          localStorage.setItem('kidcare_cached_apps_v2', JSON.stringify(scanned));
+        } catch (e) {}
       }
     } catch (e) {
       console.warn('Load installed apps error:', e);
@@ -370,7 +384,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   }, []);
 
   useEffect(() => {
-    loadInstalledApps();
+    // Launch load optimization: delay real app scan by 1200ms so initial frame paints immediately
+    const timer = setTimeout(() => {
+      loadInstalledApps();
+    }, 1200);
+    return () => clearTimeout(timer);
   }, [loadInstalledApps]);
 
   const getPackageNameForApp = (id: string, name: string): string => {
@@ -1293,134 +1311,138 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       return;
     }
 
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator && activeParentId) {
-      try {
-        const inForeground = isAppInForeground;
-        const screenOn = isScreenOn;
+    // Launch optimization: Defer GPS hardware lock and battery query by 800ms so initial UI renders instantly
+    const startTimer = setTimeout(() => {
+      if (typeof navigator !== 'undefined' && 'geolocation' in navigator && activeParentId) {
+        try {
+          const inForeground = isAppInForeground;
+          const screenOn = isScreenOn;
 
-        // Tùy chỉnh tham số GPS theo trạng thái:
-        // Khi con mở app: độ chính xác cao nhất, maximumAge thấp (2s)
-        // Khi tắt màn hình: maximumAge cao (60s) để chip GPS ngủ tiết kiệm pin
-        const geoOptions: PositionOptions = (inForeground && screenOn)
-          ? { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
-          : screenOn
-          ? { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 }
-          : { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 };
+          // Tùy chỉnh tham số GPS theo trạng thái:
+          // Khi con mở app: độ chính xác cao nhất, maximumAge thấp (2s)
+          // Khi tắt màn hình: maximumAge cao (60s) để chip GPS ngủ tiết kiệm pin
+          const geoOptions: PositionOptions = (inForeground && screenOn)
+            ? { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
+            : screenOn
+            ? { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 }
+            : { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 };
 
-        watchId = navigator.geolocation.watchPosition(
-          (pos) => {
-            const { latitude, longitude, speed } = pos.coords;
-            const currentSpeedKmH = speed ? Math.round(speed * 3.6) : 0;
-            const distMoved = calculateDistanceMeters(
-              lastTelemetryRef.current.lat,
-              lastTelemetryRef.current.lng,
-              latitude,
-              longitude
-            );
+          watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+              const { latitude, longitude, speed } = pos.coords;
+              const currentSpeedKmH = speed ? Math.round(speed * 3.6) : 0;
+              const distMoved = calculateDistanceMeters(
+                lastTelemetryRef.current.lat,
+                lastTelemetryRef.current.lng,
+                latitude,
+                longitude
+              );
 
-            lastTelemetryRef.current.lat = latitude;
-            lastTelemetryRef.current.lng = longitude;
-            lastTelemetryRef.current.speed = currentSpeedKmH;
+              lastTelemetryRef.current.lat = latitude;
+              lastTelemetryRef.current.lng = longitude;
+              lastTelemetryRef.current.speed = currentSpeedKmH;
 
-            const timeSinceLastSent = Date.now() - lastTelemetryRef.current.lastSent;
-            const isCurInFg = lastTelemetryRef.current.isAppInForeground;
-            const isCurScreenOn = lastTelemetryRef.current.isScreenOn;
+              const timeSinceLastSent = Date.now() - lastTelemetryRef.current.lastSent;
+              const isCurInFg = lastTelemetryRef.current.isAppInForeground;
+              const isCurScreenOn = lastTelemetryRef.current.isScreenOn;
 
-            // Ngưỡng phát hiện di chuyển thích ứng:
-            // 1. Khi con mở app: chỉ cần di chuyển 5m hoặc qua 5s là cập nhật ngay!
-            // 2. Khi dùng app khác: 20m hoặc 15s-30s
-            // 3. Khi tắt màn hình: 80m hoặc 150s (tiết kiệm pin & 4G/máy chủ)
-            let distThreshold = 20;
-            let timeThreshold = 30000;
+              // Ngưỡng phát hiện di chuyển thích ứng:
+              // 1. Khi con mở app: chỉ cần di chuyển 5m hoặc qua 5s là cập nhật ngay!
+              // 2. Khi dùng app khác: 20m hoặc 15s-30s
+              // 3. Khi tắt màn hình: 80m hoặc 150s (tiết kiệm pin & 4G/máy chủ)
+              let distThreshold = 20;
+              let timeThreshold = 30000;
 
-            if (isCurInFg && isCurScreenOn) {
-              distThreshold = 5;
-              timeThreshold = currentSpeedKmH >= 3 ? 3000 : 5000;
-            } else if (!isCurScreenOn) {
-              distThreshold = 80;
-              timeThreshold = lastTelemetryRef.current.battery < 20 ? 300000 : 150000;
-            } else {
-              distThreshold = 20;
-              timeThreshold = currentSpeedKmH >= 5 ? 15000 : 30000;
-            }
-
-            const shouldSendNow = distMoved >= distThreshold || timeSinceLastSent >= timeThreshold;
-
-            if (shouldSendNow) {
-              uploadCurrentTelemetrySnapshot('movement_or_elapsed').catch(() => {});
-
-              // Chỉ ghi log lộ trình (Route History) khi di chuyển thật sự
-              // Tránh spam ghi điểm lộ trình lên Firestore khi máy nằm yên tắt màn hình
-              const shouldLogRoute = distMoved >= (isCurInFg ? 15 : 60) || (currentSpeedKmH > 3 && timeSinceLastSent >= (isCurInFg ? 5000 : 45000));
-
-              if (shouldLogRoute) {
-                const ptId = `rpt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-                logChildRoutePointToCloud(
-                  activeParentId,
-                  targetChildId,
-                  {
-                    id: ptId,
-                    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-                    title: currentSpeedKmH > 20 ? 'Di chuyển ô tô/xe buýt' : currentSpeedKmH > 5 ? 'Đang đi xe máy/xe đạp' : currentSpeedKmH > 1 ? 'Đang đi bộ' : 'Dừng chân',
-                    address: `Vị trí (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
-                    lat: latitude,
-                    lng: longitude,
-                    speed: currentSpeedKmH,
-                    battery: lastTelemetryRef.current.battery,
-                    type: distMoved > 60 ? 'stop' : 'start',
-                    transport: currentSpeedKmH > 25 ? 'car' : currentSpeedKmH > 10 ? 'bike' : currentSpeedKmH > 2 ? 'walk' : 'stay',
-                  },
-                  child.name
-                ).catch(() => {});
+              if (isCurInFg && isCurScreenOn) {
+                distThreshold = 5;
+                timeThreshold = currentSpeedKmH >= 3 ? 3000 : 5000;
+              } else if (!isCurScreenOn) {
+                distThreshold = 80;
+                timeThreshold = lastTelemetryRef.current.battery < 20 ? 300000 : 150000;
+              } else {
+                distThreshold = 20;
+                timeThreshold = currentSpeedKmH >= 5 ? 15000 : 30000;
               }
 
-              // Real-time Geofence Evaluation against synced safeZones
-              const activeZones = state.safeZones?.filter((z) => z.isActive) || [];
-              activeZones.forEach((zone) => {
-                const d = calculateDistanceMeters(latitude, longitude, zone.lat, zone.lng);
-                const wasInside = geofenceStateRef.current[zone.id] ?? true;
-                const isInside = d <= zone.radius;
+              const shouldSendNow = distMoved >= distThreshold || timeSinceLastSent >= timeThreshold;
 
-                if (wasInside && !isInside) {
-                  geofenceStateRef.current[zone.id] = false;
-                  showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
-                  haptics.warning();
-                  if (zone.notifyOnExit !== false) {
-                    triggerCloudSOS(activeParentId, targetChildId, {
+              if (shouldSendNow) {
+                uploadCurrentTelemetrySnapshot('movement_or_elapsed').catch(() => {});
+
+                // Chỉ ghi log lộ trình (Route History) khi di chuyển thật sự
+                // Tránh spam ghi điểm lộ trình lên Firestore khi máy nằm yên tắt màn hình
+                const shouldLogRoute = distMoved >= (isCurInFg ? 15 : 60) || (currentSpeedKmH > 3 && timeSinceLastSent >= (isCurInFg ? 5000 : 45000));
+
+                if (shouldLogRoute) {
+                  const ptId = `rpt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                  logChildRoutePointToCloud(
+                    activeParentId,
+                    targetChildId,
+                    {
+                      id: ptId,
                       time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                      title: currentSpeedKmH > 20 ? 'Di chuyển ô tô/xe buýt' : currentSpeedKmH > 5 ? 'Đang đi xe máy/xe đạp' : currentSpeedKmH > 1 ? 'Đang đi bộ' : 'Dừng chân',
+                      address: `Vị trí (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
                       lat: latitude,
                       lng: longitude,
-                      address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
-                      childName: child.name,
-                    }, child.name).catch(() => {});
-                  }
-                } else if (!wasInside && isInside) {
-                  geofenceStateRef.current[zone.id] = true;
-                  showToast(`🏡 Bé đã vào vùng an toàn: ${zone.name}!`);
-                  haptics.light();
+                      speed: currentSpeedKmH,
+                      battery: lastTelemetryRef.current.battery,
+                      type: distMoved > 60 ? 'stop' : 'start',
+                      transport: currentSpeedKmH > 25 ? 'car' : currentSpeedKmH > 10 ? 'bike' : currentSpeedKmH > 2 ? 'walk' : 'stay',
+                    },
+                    child.name
+                  ).catch(() => {});
                 }
-              });
-            }
-          },
-          (err) => {},
-          geoOptions
-        );
-      } catch (e) {}
-    }
 
-    // Native Battery monitoring
-    if (typeof navigator !== 'undefined' && (navigator as any).getBattery && activeParentId) {
-      (navigator as any).getBattery().then((battery: any) => {
-        const updateBattery = () => {
-          const level = Math.round(battery.level * 100);
-          lastTelemetryRef.current.battery = level;
-          uploadCurrentTelemetrySnapshot('battery_level_change').catch(() => {});
-        };
-        battery.addEventListener('levelchange', updateBattery);
-      }).catch(() => {});
-    }
+                // Real-time Geofence Evaluation against synced safeZones
+                const activeZones = state.safeZones?.filter((z) => z.isActive) || [];
+                activeZones.forEach((zone) => {
+                  const d = calculateDistanceMeters(latitude, longitude, zone.lat, zone.lng);
+                  const wasInside = geofenceStateRef.current[zone.id] ?? true;
+                  const isInside = d <= zone.radius;
+
+                  if (wasInside && !isInside) {
+                    geofenceStateRef.current[zone.id] = false;
+                    showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
+                    haptics.warning();
+                    if (zone.notifyOnExit !== false) {
+                      triggerCloudSOS(activeParentId, targetChildId, {
+                        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                        lat: latitude,
+                        lng: longitude,
+                        address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
+                        childName: child.name,
+                      }, child.name).catch(() => {});
+                    }
+                  } else if (!wasInside && isInside) {
+                    geofenceStateRef.current[zone.id] = true;
+                    showToast(`🏡 Bé đã vào vùng an toàn: ${zone.name}!`);
+                    haptics.light();
+                  }
+                });
+              }
+            },
+            (err) => {},
+            geoOptions
+          );
+        } catch (e) {}
+      }
+
+      // Native Battery monitoring
+      if (typeof navigator !== 'undefined' && (navigator as any).getBattery && activeParentId) {
+        (navigator as any).getBattery().then((battery: any) => {
+          const updateBattery = () => {
+            const level = Math.round(battery.level * 100);
+            lastTelemetryRef.current.battery = level;
+            uploadCurrentTelemetrySnapshot('battery_level_change').catch(() => {});
+          };
+          battery.addEventListener('levelchange', updateBattery);
+        }).catch(() => {});
+      }
+    }, 800);
 
     return () => {
+      clearTimeout(startTimer);
       if (watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchId);
       }
