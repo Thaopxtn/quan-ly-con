@@ -136,10 +136,12 @@ npm run build
 ```
 Kết quả biên dịch tối ưu hóa sẵn sàng triển khai tại thư mục `dist/`.
 
-### 3. Đóng gói thành Mobile App (Android / iOS):
-Nhờ cấu trúc chia tách rõ ràng giữa `appchame` và `appconchau`, bạn có thể dễ dàng bọc bằng **Capacitor** hoặc chuyển đổi sang **React Native**:
-```bash
-npx cap init ParentPro com.parentpro.app
-npx cap add android
-npx cap add ios
-```
+### 3. Đóng gói & Phát hành Mobile App (Android - Google Play):
+- 📱 **ParentPro (Cha Mẹ)**: Package `com.lethao.parentpro`
+- 🧒 **KidCare (Con Cái)**: Package `com.lethao.kidcare`
+
+### 4. Trạng Thái Xác Thực Google (Google Sign-In Native):
+- ✅ **Đã hoàn thiện đăng nhập bằng Google trên cả 2 ứng dụng**:
+  - Máy Cha Mẹ (**ParentPro**): Hỗ trợ đăng nhập Google Native một chạm, đồng bộ tức thì với đám mây Firebase Cloud Realtime.
+  - Máy Con (**KidCare**): Tích hợp trực tiếp `FirebaseAuthenticationPlugin` native và Google Play Services, cho phép liên kết tài khoản gia đình qua Google Sign-In hoặc ghép đôi bằng mã PIN 6 số.
+
