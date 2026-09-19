@@ -341,98 +341,47 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
         </div>
       )}
 
-      {/* 1. Header: Family Overview & Actions */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2.5">
-          <div className="w-9 h-9 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold border border-blue-100/50 shrink-0">
-            <Users size={18} />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 tracking-tight leading-tight">
-              Hồ sơ các con
-            </h3>
-            {/* Status Icons Row - Clean & Compact */}
-            <div className="flex items-center space-x-1.5 mt-0.5">
-              <span
-                className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded-md border border-emerald-100/80"
-                title={`${stats.onlineCount} bé đang Online`}
+      {/* 1. Sleek Child Switcher Pills (If multiple kids) */}
+      {children.length > 1 && (
+        <div className="flex items-center space-x-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar select-none">
+          {children.map((c) => {
+            const isCur = c.id === selectedChildId;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  if (!isCur) switchChild(c.id);
+                }}
+                className={`px-3 py-1.5 rounded-2xl flex items-center gap-2 border transition shrink-0 cursor-pointer ${
+                  isCur
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
+                }`}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span>{stats.onlineCount}</span>
-              </span>
-
-              <span
-                className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded-md border border-indigo-100/80"
-                title={`${stats.studyingCount} bé đang Học bài`}
-              >
-                <BookOpen size={10} className="text-indigo-600" />
-                <span>{stats.studyingCount}</span>
-              </span>
-
-              <span
-                className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded-md border border-blue-100/80"
-                title="Bảo vệ an toàn 100%"
-              >
-                <ShieldCheck size={11} className="text-blue-600" />
-                <span>100%</span>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Icon Action Buttons */}
-        <div className="flex items-center space-x-1.5 shrink-0">
-          {/* Trò chuyện với bé */}
-          <button
-            type="button"
-            onClick={() => {
-              markChatAlertsAsRead(activeChild?.id);
-              setUnreadParentChatCount(0);
-              setShowChatModal(true);
-            }}
-            className="relative w-8 h-8 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 flex items-center justify-center transition active:scale-95 border border-blue-100 shadow-2xs cursor-pointer"
-            title={`Nhắn tin trò chuyện với ${activeChild?.name || 'con'}`}
-          >
-            <MessageCircle size={15} />
-            {unreadParentChatCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center ring-1 ring-white animate-bounce">
-                {unreadParentChatCount > 9 ? '9+' : unreadParentChatCount}
-              </span>
-            )}
-          </button>
-
-          {/* Ghép đôi thiết bị (1 nút duy nhất thay vì 2 nút trùng) */}
+                <img
+                  src={c.avatar}
+                  alt={c.name}
+                  className="w-5 h-5 rounded-full object-cover ring-1 ring-white"
+                />
+                <span className="text-xs font-black">{c.name}</span>
+                {isCur && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                )}
+              </button>
+            );
+          })}
           <button
             type="button"
             onClick={() => setShowPairModal(true)}
-            className="w-8 h-8 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-600 flex items-center justify-center transition active:scale-95 border border-purple-100 shadow-2xs cursor-pointer"
-            title="Ghép đôi thiết bị con (Mã 6 số / QR)"
+            className="px-2.5 py-1.5 rounded-2xl border-2 border-dashed border-slate-200 hover:border-blue-400 text-slate-500 hover:text-blue-600 text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer"
+            title="Thêm bé mới hoặc kết nối thêm máy"
           >
-            <KeyRound size={15} />
+            <Plus size={13} />
+            <span>Thêm con</span>
           </button>
-
-          {/* Cài đặt Cloud */}
-          <button
-            type="button"
-            onClick={() => setShowCloudModal(true)}
-            className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center transition active:scale-95 border border-slate-100 shadow-2xs cursor-pointer"
-            title="Hạ tầng Cloud Backend & SaaS"
-          >
-            <Cloud size={15} />
-          </button>
-
-          {onNavigate && (
-            <button
-              type="button"
-              onClick={() => onNavigate('family')}
-              className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition active:scale-95 border border-slate-100 shadow-2xs cursor-pointer"
-              title="Xem tất cả thiết bị gia đình"
-            >
-              <ChevronRight size={16} />
-            </button>
-          )}
         </div>
-      </div>
+      )}
 
       {/* 2. MINIMALIST CIRCULAR AVATAR CAROUSEL or EMPTY STATE */}
       {totalChildren === 0 ? (

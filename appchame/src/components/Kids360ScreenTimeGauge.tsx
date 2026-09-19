@@ -254,79 +254,70 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
         </div>
       </div>
 
-      {/* 4 KIDS360 SIGNATURE QUICK ACTION MODE PILLS */}
-      <div className="grid grid-cols-4 gap-2 pt-2 border-t border-slate-100">
-        {/* Button 1: Tạm dừng / Khóa tức thì */}
-        <button
-          type="button"
-          onClick={handleToggleLock}
-          className={`flex flex-col items-center justify-center p-2 rounded-2xl border transition-all active:scale-95 cursor-pointer shadow-2xs group ${
-            isLocked
-              ? 'bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100'
-              : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-          }`}
-          title={isLocked ? 'Bấm để mở khóa cho con' : 'Khóa dừng thiết bị ngay'}
-        >
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center mb-1 transition group-hover:scale-110 ${
-            isLocked ? 'bg-rose-500 text-white shadow-xs' : 'bg-rose-50 text-rose-600'
-          }`}>
-            {isLocked ? <Unlock size={16} /> : <Lock size={16} />}
-          </div>
-          <span className="text-[10px] font-black leading-tight text-center">
-            {isLocked ? 'Mở khóa' : 'Khóa ngay'}
-          </span>
-        </button>
+      {/* 4 SIGNATURE ACTION BUTTONS (TIERED FOR EASE OF USE) */}
+      <div className="space-y-2 pt-3 border-t border-slate-100">
+        {/* Row 1: 2 Primary Hero Action Buttons */}
+        <div className="grid grid-cols-2 gap-2.5">
+          {/* Button 1: Khóa máy ngay / Mở khóa */}
+          <button
+            type="button"
+            onClick={handleToggleLock}
+            className={`py-3 px-3 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center gap-2 border ${
+              isLocked
+                ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white border-rose-600 shadow-rose-500/25'
+                : 'bg-slate-900 hover:bg-slate-800 text-white border-slate-900 shadow-slate-900/20'
+            }`}
+          >
+            {isLocked ? (
+              <>
+                <Unlock size={17} strokeWidth={2.5} />
+                <span>Mở Khóa Máy</span>
+              </>
+            ) : (
+              <>
+                <Lock size={17} strokeWidth={2.5} />
+                <span>Khóa Máy Ngay</span>
+              </>
+            )}
+          </button>
 
-        {/* Button 2: Thưởng thêm 15 phút (+15m) */}
-        <button
-          type="button"
-          onClick={handleBonus15Mins}
-          className="flex flex-col items-center justify-center p-2 rounded-2xl bg-white hover:bg-amber-50/80 border border-slate-200 hover:border-amber-300 text-slate-700 hover:text-amber-800 transition-all active:scale-95 cursor-pointer shadow-2xs group"
-          title="Tặng nhanh 15 phút giải trí cho con"
-        >
-          <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-1 transition group-hover:scale-110">
-            <PlusCircle size={16} />
-          </div>
-          <span className="text-[10px] font-black leading-tight text-center">
-            +15 Phút
-          </span>
-        </button>
+          {/* Button 2: Thưởng thêm 15 phút (+15m) */}
+          <button
+            type="button"
+            onClick={handleBonus15Mins}
+            className="py-3 px-3 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-amber-600 shadow-amber-500/25 hover:from-amber-600 hover:to-orange-600"
+          >
+            <PlusCircle size={17} strokeWidth={2.5} />
+            <span>+15 Phút Thưởng</span>
+          </button>
+        </div>
 
-        {/* Button 3: Chế độ giờ học (Study Mode) */}
-        <button
-          type="button"
-          onClick={handleToggleStudyMode}
-          className={`flex flex-col items-center justify-center p-2 rounded-2xl border transition-all active:scale-95 cursor-pointer shadow-2xs group ${
-            isStudyMode
-              ? 'bg-indigo-50 border-indigo-300 text-indigo-700 hover:bg-indigo-100'
-              : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-          }`}
-          title="Bật/Tắt chế độ học tập (Chỉ mở app học & gọi điện)"
-        >
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center mb-1 transition group-hover:scale-110 ${
-            isStudyMode ? 'bg-indigo-600 text-white shadow-xs' : 'bg-indigo-50 text-indigo-600'
-          }`}>
-            <BookOpen size={16} />
-          </div>
-          <span className="text-[10px] font-black leading-tight text-center">
-            Giờ học
-          </span>
-        </button>
+        {/* Row 2: 2 Secondary Quick Toggles */}
+        <div className="grid grid-cols-2 gap-2.5">
+          {/* Button 3: Chế độ giờ học */}
+          <button
+            type="button"
+            onClick={handleToggleStudyMode}
+            className={`py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border flex items-center justify-center gap-1.5 ${
+              isStudyMode
+                ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-extrabold shadow-2xs'
+                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+            }`}
+          >
+            <BookOpen size={14} className={isStudyMode ? 'text-indigo-600' : 'text-slate-400'} />
+            <span>{isStudyMode ? '📚 Đang Giờ Học' : 'Giờ Học Bài'}</span>
+          </button>
 
-        {/* Button 4: Phát chuông lớn tìm kiếm (Loud Signal) */}
-        <button
-          type="button"
-          onClick={handleLoudSignal}
-          className="flex flex-col items-center justify-center p-2 rounded-2xl bg-white hover:bg-sky-50/80 border border-slate-200 hover:border-sky-300 text-slate-700 hover:text-sky-800 transition-all active:scale-95 cursor-pointer shadow-2xs group"
-          title="Phát chuông lớn tìm máy hoặc nhắc nhở con"
-        >
-          <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mb-1 transition group-hover:scale-110">
-            <Volume2 size={16} />
-          </div>
-          <span className="text-[10px] font-black leading-tight text-center">
-            Chuông báo
-          </span>
-        </button>
+          {/* Button 4: Đổ chuông tìm máy */}
+          <button
+            type="button"
+            onClick={handleLoudSignal}
+            className="py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border bg-white hover:bg-sky-50 border-slate-200 hover:border-sky-300 text-slate-600 hover:text-sky-700 flex items-center justify-center gap-1.5"
+          >
+            <Volume2 size={14} className="text-sky-500" />
+            <span>Chuông Tìm Máy</span>
+          </button>
+        </div>
       </div>
     </div>
   );

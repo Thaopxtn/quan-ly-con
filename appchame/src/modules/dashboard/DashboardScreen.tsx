@@ -150,76 +150,109 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
       {/* Unified Modern Family & Multi-Child Hub */}
       <UnifiedChildHub onNavigate={onNavigate} />
 
-      {/* Remote Control & Live Monitor Special Quick Launcher Banner */}
-      <div
-        onClick={() => onNavigate('remote')}
-        className="bg-blue-600 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 rounded-3xl p-4 text-white shadow-lg shadow-blue-500/20 flex items-center justify-between cursor-pointer hover:shadow-xl transition-all active:scale-[0.985] group"
-      >
-        <div className="flex items-center space-x-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center font-bold text-xl group-hover:scale-110 transition duration-200 shadow-inner">
-            🎛️
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h4 className="text-xs font-black tracking-tight text-white">Trung Tâm Điều Khiển & Giám Sát</h4>
-              <span className="px-1.5 py-0.5 bg-amber-400 text-amber-950 font-black text-[9px] rounded-md uppercase tracking-wider shadow-xs">
-                Realtime
+      {/* 4 Clean Strategic Feature Hub Cards (2x2 Grid) */}
+      <div className="space-y-2 pt-1">
+        <div className="flex items-center justify-between px-0.5">
+          <h4 className="text-xs font-black text-slate-800 tracking-tight uppercase">
+            Tính Năng Quản Lý Nổi Bật
+          </h4>
+          <span className="text-[10px] text-slate-400 font-semibold">Chạm để mở</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          {/* Card 1: Vị trí GPS & Vùng an toàn */}
+          <div
+            onClick={() => onNavigate('tracking')}
+            className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-blue-200 transition-all cursor-pointer active:scale-98 group flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:scale-105 transition">
+                <MapPin size={20} />
+              </div>
+              <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Trực tiếp
               </span>
             </div>
-            <p className="text-[10.5px] text-blue-100 font-medium mt-0.5">
-              Khóa tức thì, Kiosk, Âm lượng, Báo thức, Chế độ giờ học
-            </p>
+            <div>
+              <h5 className="text-xs font-black text-slate-900 group-hover:text-blue-600 transition">
+                Định Vị & Bản Đồ
+              </h5>
+              <p className="text-[10.5px] text-slate-500 line-clamp-2 mt-0.5">
+                Vị trí GPS thời gian thực, vùng an toàn trường học & nhà
+              </p>
+            </div>
           </div>
-        </div>
-        <ChevronRight size={18} className="text-white/80 group-hover:translate-x-1 transition" />
-      </div>
 
-      {/* 8 Quick Action Buttons - Executive Grid */}
-      <div className="grid grid-cols-4 gap-2.5">
-        {quickShortcuts.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              onClick={() => {
-                haptics.light();
-                onNavigate(item.id);
-              }}
-              className="flex flex-col items-center p-2.5 rounded-2xl bg-white border border-slate-200/70 shadow-xs hover:shadow-md hover:border-blue-200 transition-all active:scale-92 text-center group cursor-pointer btn-press"
-            >
-              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center mb-1.5 border shadow-2xs ${item.color} group-hover:scale-108 transition-all duration-200`}>
-                <Icon size={20} strokeWidth={2} />
+          {/* Card 2: Quản lý ứng dụng & Web */}
+          <div
+            onClick={() => onNavigate('apps')}
+            className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-purple-200 transition-all cursor-pointer active:scale-98 group flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100 group-hover:scale-105 transition">
+                <LayoutGrid size={20} />
               </div>
-              <span className="text-[10.5px] font-bold text-slate-800 leading-tight line-clamp-2">
-                {item.label}
+              <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                Bảo vệ
               </span>
-            </button>
-          );
-        })}
-      </div>
+            </div>
+            <div>
+              <h5 className="text-xs font-black text-slate-900 group-hover:text-purple-600 transition">
+                Ứng Dụng & Web
+              </h5>
+              <p className="text-[10.5px] text-slate-500 line-clamp-2 mt-0.5">
+                Giới hạn TikTok, Youtube, game & lọc nội dung độc hại
+              </p>
+            </div>
+          </div>
 
-      {/* Motivation or Welcome Card */}
-      {state.children.length === 0 ? (
-        <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-blue-50/90 border border-blue-200/80 rounded-3xl p-3.5 flex items-center space-x-3 shadow-xs">
-          <div className="w-10 h-10 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0 shadow-inner">
-            <Sparkles size={20} className="fill-blue-400/30" />
+          {/* Card 3: Lịch trình 24H & Giờ ngủ */}
+          <div
+            onClick={() => onNavigate('screentime')}
+            className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer active:scale-98 group flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 group-hover:scale-105 transition">
+                <Clock size={20} />
+              </div>
+              <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                Tự động
+              </span>
+            </div>
+            <div>
+              <h5 className="text-xs font-black text-slate-900 group-hover:text-indigo-600 transition">
+                Lịch Biểu & Giờ Ngủ
+              </h5>
+              <p className="text-[10.5px] text-slate-500 line-clamp-2 mt-0.5">
+                Tự động khóa máy giờ ăn cơm và khóa màn hình khi đi ngủ
+              </p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <h4 className="text-xs font-bold text-blue-950">Chào mừng bạn đến với ParentPro! 🎉</h4>
-            <p className="text-[11px] text-blue-800/80 mt-0.5 font-medium">Bắt đầu bằng cách ghép đôi thiết bị của con để bảo vệ gia đình.</p>
+
+          {/* Card 4: Trợ lý AI Gia Đình */}
+          <div
+            onClick={() => onNavigate('ai')}
+            className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer active:scale-98 group flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-105 transition">
+                <Bot size={20} />
+              </div>
+              <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                AI Smart
+              </span>
+            </div>
+            <div>
+              <h5 className="text-xs font-black text-slate-900 group-hover:text-emerald-600 transition">
+                Trợ Lý AI Gia Đình
+              </h5>
+              <p className="text-[10.5px] text-slate-500 line-clamp-2 mt-0.5">
+                Tư vấn phương pháp nuôi dạy con & gợi ý an toàn số
+              </p>
+            </div>
           </div>
         </div>
-      ) : (
-        <div className="bg-gradient-to-r from-amber-50/90 via-orange-50/70 to-amber-50/90 border border-amber-200/80 rounded-3xl p-3.5 flex items-center space-x-3 shadow-xs">
-          <div className="w-10 h-10 rounded-2xl bg-amber-400/20 text-amber-600 flex items-center justify-center shrink-0 shadow-inner">
-            <Sparkles size={20} className="animate-spin-slow fill-amber-400/30" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h4 className="text-xs font-bold text-amber-950">Hôm nay con hoàn thành mục tiêu rất tốt! 🎉</h4>
-            <p className="text-[11px] text-amber-800/80 mt-0.5 font-medium">Bố mẹ nhớ khen ngợi và thưởng sao động viên con nhé!</p>
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* Recent Activities Section */}
       <div className="space-y-2">
