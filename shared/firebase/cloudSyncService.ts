@@ -76,6 +76,7 @@ export interface RemoteCommandData {
   timestamp: number;
   payload?: any;
   childId?: string;
+  parentId?: string;
   childName?: string;
 }
 
@@ -89,6 +90,21 @@ export function normalizeChildSlug(name?: string): string {
     .replace(/[^a-z0-9]/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "");
+}
+
+/**
+ * Returns a collision-free, strictly partitioned channel key for Realtime Database.
+ * Guarantees that data for (Parent A, Child 1) never collides with (Parent B, Child 1),
+ * and never mixes up with Child 2 of the same parent.
+ */
+export function getPartitionedSyncKey(parentId?: string, childId?: string): string {
+  const cleanParent = (parentId || 'fam_default').trim().replace(/[\/\.\#\$\[\]]/g, '_');
+  const cleanChild = (childId || 'child_default').trim().replace(/[\/\.\#\$\[\]]/g, '_');
+  return `${cleanParent}_${cleanChild}`;
+}
+
+export function getPartitionedParentKey(parentId?: string): string {
+  return (parentId || 'fam_default').trim().replace(/[\/\.\#\$\[\]]/g, '_');
 }
 
 export function sanitizeForRtdb(obj: any): any {
@@ -107,7 +123,7 @@ export function sanitizeForRtdb(obj: any): any {
   return result;
 }
 
-// 1. Sync settings from Parent to Cloud (RTDB pairings/sync + users)
+// 1. Sync settings from Parent to Cloud (strictly partitioned by parentId + childId)
 export async function syncChildSettingsToCloud(
   parentId: string,
   childId: string,
@@ -118,9 +134,11 @@ export async function syncChildSettingsToCloud(
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const payload = sanitizeForRtdb({
     ...settings,
+    childId,
+    parentId,
     updatedAt: now,
   });
 
@@ -128,33 +146,26 @@ export async function syncChildSettingsToCloud(
   let syncError: any = null;
 
   try {
-    // RTDB sync
+    // RTDB sync to strictly partitioned channel
     if (rtdb) {
-      // Open sync channels (always accessible without parent auth barrier)
-      rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/settings`), payload).catch((e) => {
+      rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/settings`), payload).catch((e) => {
         debugLogService.log({
           direction: 'parent->cloud',
           category: 'settings',
           action: 'sync_settings_rtdb_error',
           status: 'warning',
-          summary: `Lỗi cập nhật RTDB channel pairings/sync/${childId}/settings: ${e?.message || e}`,
+          summary: `Lỗi cập nhật RTDB channel pairings/sync/${syncKey}/settings: ${e?.message || e}`,
           childId,
           childName,
           error: e,
         });
       });
-      if (slug && slug !== childId) {
-        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${slug}/settings`), payload).catch(() => {});
-      }
 
-      if (parentId && parentId !== "family_primary") {
-        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/settings`), payload).catch(() => {});
-        if (auth?.currentUser && auth.currentUser.uid === parentId) {
-          try {
-            await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/settings`), payload);
-          } catch (err) {
-            // Can fail if non-auth, open channels above already succeeded
-          }
+      if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
+        try {
+          await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/settings`), payload);
+        } catch (err) {
+          // Can fail if non-auth, partitioned channel above already succeeded
         }
       }
       syncSuccess = true;
@@ -210,7 +221,7 @@ export async function syncChildSettingsToCloud(
   }
 }
 
-// 1b. Fast Dedicated Stars Sync Channel (Real-time 2-way sync for stars and rewards)
+// 1b. Fast Dedicated Stars Sync Channel (strictly partitioned by parentId + childId)
 export async function syncChildStarsToCloud(
   parentId: string,
   childId: string,
@@ -222,23 +233,19 @@ export async function syncChildStarsToCloud(
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const payload = sanitizeForRtdb({
     stars,
     transaction: transaction || null,
+    childId,
+    parentId,
     updatedAt: now,
   });
 
   if (rtdb) {
-    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/stars`), payload).catch(() => {});
-    if (slug && slug !== childId) {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${slug}/stars`), payload).catch(() => {});
-    }
-    if (parentId && parentId !== "family_primary") {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/stars`), payload).catch(() => {});
-      if (auth?.currentUser && auth.currentUser.uid === parentId) {
-        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/stars`), payload).catch(() => {});
-      }
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/stars`), payload).catch(() => {});
+    if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
+      rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/stars`), payload).catch(() => {});
     }
   }
 
@@ -271,15 +278,18 @@ export function subscribeChildStarsFromCloud(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  let lastSeenStarsTime = 0;
 
   if (rtdb) {
-    // 1. By childId
     try {
-      const u1 = rtdbOnValue(rtdbRef(rtdb, `pairings/sync/${childId}/stars`), (snap) => {
+      const u1 = rtdbOnValue(rtdbRef(rtdb, `pairings/sync/${syncKey}/stars`), (snap) => {
         if (snap.exists()) {
           const val = snap.val();
           if (val && typeof val.stars === 'number') {
+            const updTime = typeof val.updatedAt === 'number' ? val.updatedAt : 0;
+            if (updTime && updTime < lastSeenStarsTime) return;
+            if (updTime) lastSeenStarsTime = updTime;
             onUpdate(val);
           }
         }
@@ -287,43 +297,15 @@ export function subscribeChildStarsFromCloud(
       unsubs.push(u1);
     } catch (_) {}
 
-    // 2. By combined parent_child
-    if (parentId && parentId !== "family_primary") {
-      try {
-        const uPair = rtdbOnValue(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/stars`), (snap) => {
-          if (snap.exists()) {
-            const val = snap.val();
-            if (val && typeof val.stars === 'number') {
-              onUpdate(val);
-            }
-          }
-        }, () => {});
-        unsubs.push(uPair);
-      } catch (_) {}
-    }
-
-    // 3. By slug
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(rtdbRef(rtdb, `pairings/sync/${slug}/stars`), (snap) => {
-          if (snap.exists()) {
-            const val = snap.val();
-            if (val && typeof val.stars === 'number') {
-              onUpdate(val);
-            }
-          }
-        }, () => {});
-        unsubs.push(u2);
-      } catch (_) {}
-    }
-
-    // 4. Authenticated parent user path
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         const u3 = rtdbOnValue(rtdbRef(rtdb, `users/${parentId}/children/${childId}/stars`), (snap) => {
           if (snap.exists()) {
             const val = snap.val();
             if (val && typeof val.stars === 'number') {
+              const updTime = typeof val.updatedAt === 'number' ? val.updatedAt : 0;
+              if (updTime && updTime < lastSeenStarsTime) return;
+              if (updTime) lastSeenStarsTime = updTime;
               onUpdate(val);
             }
           }
@@ -340,7 +322,7 @@ export function subscribeChildStarsFromCloud(
   };
 }
 
-// 2. Subscribe to settings changes on Child Device
+// 2. Subscribe to settings changes (strictly partitioned by parentId + childId)
 export function subscribeChildSettingsFromCloud(
   parentId: string,
   childId: string,
@@ -351,17 +333,30 @@ export function subscribeChildSettingsFromCloud(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  let lastSeenSettingsTime = 0;
+
+  const handleSettingsUpdate = (rawVal: any) => {
+    if (!rawVal) return;
+    const updateTime = typeof rawVal.updatedAt === 'number' ? rawVal.updatedAt : 0;
+    if (updateTime && updateTime < lastSeenSettingsTime) {
+      return; // Discard older/stale settings update
+    }
+    if (updateTime) {
+      lastSeenSettingsTime = updateTime;
+    }
+    onUpdate(rawVal as Partial<ChildSpecificSettings>);
+  };
 
   // RTDB listeners
   if (rtdb) {
-    // 1. Open channel by childId
+    // 1. Authoritative partitioned channel
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/settings`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/settings`),
         (snap) => {
           if (snap.exists()) {
-            onUpdate(snap.val() as Partial<ChildSpecificSettings>);
+            handleSettingsUpdate(snap.val());
           }
         },
         () => {}
@@ -369,46 +364,14 @@ export function subscribeChildSettingsFromCloud(
       unsubs.push(u1);
     } catch (err) {}
 
-    // 1b. Open channel by parentId_childId
-    if (parentId && parentId !== "family_primary") {
-      try {
-        const uPair = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/settings`),
-          (snap) => {
-            if (snap.exists()) {
-              onUpdate(snap.val() as Partial<ChildSpecificSettings>);
-            }
-          },
-          () => {}
-        );
-        unsubs.push(uPair);
-      } catch (err) {}
-    }
-
-    // 2. Open channel by slug (e.g. 'bach')
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/settings`),
-          (snap) => {
-            if (snap.exists()) {
-              onUpdate(snap.val() as Partial<ChildSpecificSettings>);
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u2);
-      } catch (err) {}
-    }
-
-    // 3. Parent user path - only when authenticated to avoid permission_denied
+    // 2. Parent authenticated path fallback
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         const u3 = rtdbOnValue(
           rtdbRef(rtdb, `users/${parentId}/children/${childId}/settings`),
           (snap) => {
             if (snap.exists()) {
-              onUpdate(snap.val() as Partial<ChildSpecificSettings>);
+              handleSettingsUpdate(snap.val());
             }
           },
           () => {}
@@ -426,7 +389,7 @@ export function subscribeChildSettingsFromCloud(
         docRef,
         (snapshot) => {
           if (snapshot.exists()) {
-            onUpdate(snapshot.data() as Partial<ChildSpecificSettings>);
+            handleSettingsUpdate(snapshot.data() as Partial<ChildSpecificSettings>);
           }
         },
         () => {}
@@ -547,21 +510,20 @@ export async function registerChildDeviceInCloud(
   const { db, rtdb } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId || !device?.deviceId) return;
 
+  const cleanParent = getPartitionedParentKey(parentId);
   const now = Date.now();
   const deviceData = sanitizeForRtdb({
     ...device,
     childId,
-    parentId: parentId || 'family_primary',
+    parentId: cleanParent,
     updatedAt: now,
   });
 
   if (rtdb) {
     try {
-      // 1. Register in child's open sync channel devices
-      await rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/devices/${device.deviceId}`), deviceData);
-      // 2. Register in global active devices directory
-      await rtdbSet(rtdbRef(rtdb, `pairings/active_devices/${device.deviceId}`), deviceData);
-      // 3. Register under parent's child devices path
+      // 1. Register under family's child devices path
+      await rtdbSet(rtdbRef(rtdb, `pairings/families/${cleanParent}/children/${childId}/devices/${device.deviceId}`), deviceData);
+      // 2. Register under parent's child devices path
       if (parentId && parentId !== "family_primary") {
         await rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/devices/${device.deviceId}`), deviceData);
       }
@@ -642,10 +604,11 @@ export async function uploadChildTelemetryToCloud(
   }
 
   const now = Date.now();
-  const slug = normalizeChildSlug(effectiveChildName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const payload = sanitizeForRtdb({
     ...telemetry,
     childId,
+    parentId,
     childName: effectiveChildName,
     lastUpdated: now,
     isOnline: true,
@@ -653,17 +616,15 @@ export async function uploadChildTelemetryToCloud(
 
   let uploadSuccess = false;
 
-  // 1. Write to Realtime Database via Open Sync Channel (Always succeeds without auth issues)
+  // 1. Write to Realtime Database via strictly partitioned channel
   if (rtdb) {
     try {
-      await rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/telemetry`), payload);
-      if (slug && slug !== childId) {
-        await rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${slug}/telemetry`), payload);
-      }
+      await rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/telemetry`), payload);
       if (telemetry.deviceId) {
         const devPayload = sanitizeForRtdb({
           deviceId: telemetry.deviceId,
           childId,
+          parentId,
           childName: effectiveChildName,
           battery: telemetry.battery,
           lat: telemetry.lat,
@@ -677,12 +638,11 @@ export async function uploadChildTelemetryToCloud(
           lastActive: new Date().toISOString(),
           updatedAt: now,
         });
-        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/devices/${telemetry.deviceId}/telemetry`), devPayload).catch(() => {});
-        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/devices/${telemetry.deviceId}`), devPayload).catch(() => {});
+        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/devices/${telemetry.deviceId}`), devPayload).catch(() => {});
       }
       uploadSuccess = true;
     } catch (err) {
-      console.warn("RTDB open channel telemetry error:", err);
+      console.warn("RTDB partitioned channel telemetry error:", err);
     }
 
     // Try users/ path only when authenticated as parent
@@ -763,7 +723,7 @@ export async function uploadChildTelemetryToCloud(
   }
 }
 
-// 4. Subscribe to child telemetry in real-time
+// 4. Subscribe to child telemetry in real-time (strictly partitioned by parentId + childId)
 export function subscribeChildTelemetryFromCloud(
   parentId: string,
   childId: string,
@@ -774,16 +734,30 @@ export function subscribeChildTelemetryFromCloud(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  let lastFingerprint = '';
+  let lastTime = 0;
+
+  const handleTelemetryUpdate = (rawVal: any) => {
+    if (!rawVal) return;
+    const now = Date.now();
+    const fp = `${rawVal.lat}_${rawVal.lng}_${rawVal.battery}_${rawVal.screenTimeUsedMinutes}_${rawVal.activeOpenedApp}_${rawVal.speed}_${rawVal.isScreenOn}`;
+    if (fp === lastFingerprint && now - lastTime < 1500) {
+      return; // Ignore duplicate telemetry within 1.5 seconds
+    }
+    lastFingerprint = fp;
+    lastTime = now;
+    onUpdate(rawVal);
+  };
 
   if (rtdb) {
-    // 1. Listen on open channel by childId
+    // 1. Authoritative partitioned channel
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/telemetry`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/telemetry`),
         (snap) => {
           if (snap.exists()) {
-            onUpdate(snap.val());
+            handleTelemetryUpdate(snap.val());
           }
         },
         () => {}
@@ -791,30 +765,14 @@ export function subscribeChildTelemetryFromCloud(
       unsubs.push(u1);
     } catch (err) {}
 
-    // 2. Listen on open channel by slug (e.g. 'bach')
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/telemetry`),
-          (snap) => {
-            if (snap.exists()) {
-              onUpdate(snap.val());
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u2);
-      } catch (err) {}
-    }
-
-    // 3. Listen on users path - only when authenticated as parent
+    // 2. Parent authenticated path fallback
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         const u3 = rtdbOnValue(
           rtdbRef(rtdb, `users/${parentId}/children/${childId}/telemetry`),
           (snap) => {
             if (snap.exists()) {
-              onUpdate(snap.val());
+              handleTelemetryUpdate(snap.val());
             }
           },
           () => {}
@@ -831,7 +789,7 @@ export function subscribeChildTelemetryFromCloud(
         docRef,
         (snapshot) => {
           if (snapshot.exists()) {
-            onUpdate(snapshot.data());
+            handleTelemetryUpdate(snapshot.data());
           }
         },
         () => {}
@@ -882,7 +840,7 @@ export async function triggerCloudSOS(
 
   const now = Date.now();
   const effectiveName = childName || sosInfo.childName || "Bé Yêu";
-  const slug = normalizeChildSlug(effectiveName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const sosData = {
     active: true,
     time: sosInfo.time,
@@ -890,6 +848,7 @@ export async function triggerCloudSOS(
     lng: sosInfo.lng,
     address: sosInfo.address,
     childId,
+    parentId,
     childName: effectiveName,
     updatedAt: now,
   };
@@ -906,13 +865,10 @@ export async function triggerCloudSOS(
   });
 
   if (rtdb) {
-    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/sos`), sosData).catch(() => {});
-    if (slug && slug !== childId) {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${slug}/sos`), sosData).catch(() => {});
-    }
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/sos`), sosData).catch(() => {});
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
-        await rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/sos`), sosData);
+        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/sos`), sosData).catch(() => {});
       } catch (err) {}
     }
   }
@@ -925,13 +881,13 @@ export async function triggerCloudSOS(
   }
 }
 
-// 6. Emergency SOS: Parent or Child resolves SOS
+// 6. Emergency SOS: Parent or Child resolves SOS (strictly partitioned)
 export async function resolveCloudSOS(parentId: string, childId: string, childName?: string): Promise<void> {
   const { db, rtdb } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const resolveData = {
     active: false,
     resolvedAt: now,
@@ -949,13 +905,8 @@ export async function resolveCloudSOS(parentId: string, childId: string, childNa
 
   if (rtdb) {
     try {
-      await rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/sos`), resolveData);
+      await rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/sos`), resolveData);
     } catch (_) {}
-    if (slug && slug !== childId) {
-      try {
-        await rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${slug}/sos`), resolveData);
-      } catch (_) {}
-    }
     if (parentId && parentId !== "family_primary") {
       try {
         await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/sos`), resolveData);
@@ -981,7 +932,7 @@ export async function clearAllFamilySosInCloud(
   await Promise.allSettled(promises);
 }
 
-// 7. Subscribe to SOS alert from Cloud
+// 7. Subscribe to SOS alert from Cloud (strictly partitioned)
 export function subscribeCloudSOS(
   parentId: string,
   childId: string,
@@ -992,9 +943,9 @@ export function subscribeCloudSOS(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
 
-  // Deduplicate rapid successive updates from the 3-4 redundant listeners (RTDB + Firestore)
+  // Deduplicate rapid successive updates
   let lastForwardedFingerprint = '';
   let lastForwardedTime = 0;
 
@@ -1012,8 +963,7 @@ export function subscribeCloudSOS(
       : '';
     const fingerprint = `${isActive}_${updatedAtVal}_${sosData.time || ''}_${sosData.address || ''}_${sosData.lat || ''}_${sosData.lng || ''}`;
 
-    // If identical payload is received within 8 seconds, discard redundant callbacks from other listeners
-    if (fingerprint === lastForwardedFingerprint && now - lastForwardedTime < 8000) {
+    if (fingerprint === lastForwardedFingerprint && now - lastForwardedTime < 6000) {
       return;
     }
 
@@ -1023,9 +973,10 @@ export function subscribeCloudSOS(
   };
 
   if (rtdb) {
+    // 1. Authoritative partitioned channel
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/sos`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/sos`),
         (snap) => {
           if (snap.exists()) {
             handleSOSUpdate(snap.val());
@@ -1036,21 +987,7 @@ export function subscribeCloudSOS(
       unsubs.push(u1);
     } catch (err) {}
 
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/sos`),
-          (snap) => {
-            if (snap.exists()) {
-              handleSOSUpdate(snap.val());
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u2);
-      } catch (err) {}
-    }
-
+    // 2. Parent authenticated path fallback
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         const u3 = rtdbOnValue(
@@ -1098,12 +1035,11 @@ export async function sendRemoteCommandToKid(
   payload?: any,
   childName?: string
 ): Promise<void> {
-  const { db, rtdb, auth } = getFirebaseInstance();
+  const { rtdb } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
   const cmdId = `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
-  const slug = normalizeChildSlug(childName);
 
   const cmdData: RemoteCommandData = {
     id: cmdId,
@@ -1111,6 +1047,7 @@ export async function sendRemoteCommandToKid(
     timestamp: now,
     payload: payload || null,
     childId,
+    parentId,
     childName: childName || "",
   };
 
@@ -1125,9 +1062,11 @@ export async function sendRemoteCommandToKid(
     payload,
   });
 
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+
   if (rtdb) {
-    // 1. Open sync channel by childId
-    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/commands/active`), cmdData).catch((e) => {
+    // Partitioned authoritative sync channel
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/active`), cmdData).catch((e) => {
       debugLogService.log({
         direction: 'parent->cloud',
         category: 'command',
@@ -1139,56 +1078,58 @@ export async function sendRemoteCommandToKid(
         error: e,
       });
     });
-
-    // 2. Open sync channel by slug (e.g. 'bach')
-    if (slug && slug !== childId) {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${slug}/commands/active`), cmdData).catch(() => {});
-    }
-
-    // 3. Paired channel and user channel
-    if (parentId && parentId !== "family_primary") {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/commands/active`), cmdData).catch(() => {});
-      if (auth?.currentUser && auth.currentUser.uid === parentId) {
-        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/commands/active`), cmdData).catch(() => {});
-      }
-    }
-  }
-
-  if (db && parentId && parentId !== "family_primary") {
-    try {
-      const docRef = doc(db, "users", parentId, "children", childId, "commands", "active");
-      await setDoc(docRef, cmdData);
-    } catch (err) {}
   }
 }
 
-// 9. Subscribe to Remote Commands on Kid Device (Resilient: deduplicated by ID, no clock drift drops)
+// 9. Subscribe to Remote Commands on Kid Device (strictly partitioned by parentId + childId)
 export function subscribeRemoteCommandsOnKid(
   parentId: string,
   childId: string,
   onCommand: (cmd: RemoteCommandData) => void,
   childName?: string
 ): () => void {
-  const { db, rtdb, auth } = getFirebaseInstance();
+  const { rtdb } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   let lastHandledCmdId = "";
+  // Initialize to 3 seconds before subscription so that any old commands
+  // sitting in Firebase from previous sessions will NEVER be executed on boot/reconnect!
+  let lastHandledCmdTimestamp = Date.now() - 3000;
 
   const handleIncoming = (data: RemoteCommandData | null) => {
     if (!data || !data.command || data.command === "none") return;
-    const cmdId = data.id || `cmd_${data.timestamp}`;
+    const now = Date.now();
+    const cmdTimestamp = typeof data.timestamp === 'number' ? data.timestamp : 0;
+
+    // 1. Freshness Check (TTL 60s): Discard any command older than 60 seconds
+    if (cmdTimestamp > 0 && now - cmdTimestamp > 60000) {
+      clearRemoteCommand(parentId, childId, childName).catch(() => {});
+      return;
+    }
+
+    // 2. Monotonic sequence check: Discard any command with timestamp <= last handled
+    if (cmdTimestamp > 0 && cmdTimestamp <= lastHandledCmdTimestamp) {
+      return;
+    }
+
+    const cmdId = data.id || `cmd_${cmdTimestamp}`;
     if (cmdId === lastHandledCmdId) return; // Deduplicate
+
     lastHandledCmdId = cmdId;
+    if (cmdTimestamp > 0) {
+      lastHandledCmdTimestamp = cmdTimestamp;
+    }
+
     onCommand(data);
   };
 
   if (rtdb) {
-    // 1. Listen on open channel by childId
+    // Authoritative partitioned channel - single source of truth!
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/commands/active`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/active`),
         (snap) => {
           if (snap.exists()) {
             handleIncoming(snap.val() as RemoteCommandData);
@@ -1197,69 +1138,6 @@ export function subscribeRemoteCommandsOnKid(
         () => {}
       );
       unsubs.push(u1);
-    } catch (err) {}
-
-    // 2. Listen on open channel by slug (e.g. 'bach')
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/commands/active`),
-          (snap) => {
-            if (snap.exists()) {
-              handleIncoming(snap.val() as RemoteCommandData);
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u2);
-      } catch (err) {}
-    }
-
-    // 3. Paired channel and user path
-    if (parentId && parentId !== "family_primary") {
-      try {
-        const u3 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/commands/active`),
-          (snap) => {
-            if (snap.exists()) {
-              handleIncoming(snap.val() as RemoteCommandData);
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u3);
-      } catch (err) {}
-
-      if (auth?.currentUser && auth.currentUser.uid === parentId) {
-        try {
-          const u4 = rtdbOnValue(
-            rtdbRef(rtdb, `users/${parentId}/children/${childId}/commands/active`),
-            (snap) => {
-              if (snap.exists()) {
-                handleIncoming(snap.val() as RemoteCommandData);
-              }
-            },
-            () => {}
-          );
-          unsubs.push(u4);
-        } catch (err) {}
-      }
-    }
-  }
-
-  if (db && parentId && parentId !== "family_primary") {
-    try {
-      const docRef = doc(db, "users", parentId, "children", childId, "commands", "active");
-      const uFs = onSnapshot(
-        docRef,
-        (snapshot) => {
-          if (snapshot.exists()) {
-            handleIncoming(snapshot.data() as RemoteCommandData);
-          }
-        },
-        () => {}
-      );
-      unsubs.push(uFs);
     } catch (err) {}
   }
 
@@ -1270,17 +1148,17 @@ export function subscribeRemoteCommandsOnKid(
   };
 }
 
-// 10. Clear active remote command after execution
+// 10. Clear active remote command after execution (strictly partitioned)
 export async function clearRemoteCommand(
   parentId: string,
   childId: string,
   childName?: string
 ): Promise<void> {
-  const { db, rtdb, auth } = getFirebaseInstance();
+  const { rtdb } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const clearData: RemoteCommandData = {
     id: "none",
     command: "none",
@@ -1288,23 +1166,7 @@ export async function clearRemoteCommand(
   };
 
   if (rtdb) {
-    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/commands/active`), clearData).catch(() => {});
-    if (slug && slug !== childId) {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${slug}/commands/active`), clearData).catch(() => {});
-    }
-    if (parentId && parentId !== "family_primary") {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/commands/active`), clearData).catch(() => {});
-      if (auth?.currentUser && auth.currentUser.uid === parentId) {
-        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/commands/active`), clearData).catch(() => {});
-      }
-    }
-  }
-
-  if (db && parentId) {
-    try {
-      const docRef = doc(db, "users", parentId, "children", childId, "commands", "active");
-      await setDoc(docRef, clearData);
-    } catch (err) {}
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/active`), clearData).catch(() => {});
   }
 }
 
@@ -1331,6 +1193,8 @@ export async function sendCloudTimeRequest(
     createdAt: Date.now(),
   };
 
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+
   debugLogService.log({
     direction: 'kid->cloud',
     category: 'time_request',
@@ -1343,14 +1207,10 @@ export async function sendCloudTimeRequest(
   });
 
   if (rtdb) {
-    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/time_requests/${reqId}`), timeReqData).catch(() => {});
-    const slug = normalizeChildSlug(req.childName);
-    if (slug && slug !== childId) {
-      rtdbSet(rtdbRef(rtdb, `pairings/sync/${slug}/time_requests/${reqId}`), timeReqData).catch(() => {});
-    }
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/time_requests/${reqId}`), timeReqData).catch(() => {});
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
-        await rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/time_requests/${reqId}`), timeReqData);
+        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/time_requests/${reqId}`), timeReqData).catch(() => {});
       } catch (err) {}
     }
   }
@@ -1363,7 +1223,7 @@ export async function sendCloudTimeRequest(
   }
 }
 
-// 12. Time Extension: Parent subscribes to time requests
+// 12. Time Extension: Parent subscribes to time requests (strictly partitioned)
 export function subscribeCloudTimeRequests(
   parentId: string,
   childId: string,
@@ -1374,7 +1234,7 @@ export function subscribeCloudTimeRequests(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
 
   const enrichRequests = (items: any[]): TimeRequest[] => {
     return items.map((raw) => ({
@@ -1385,9 +1245,10 @@ export function subscribeCloudTimeRequests(
   };
 
   if (rtdb) {
+    // 1. Authoritative partitioned channel
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/time_requests`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/time_requests`),
         (snap) => {
           if (snap.exists()) {
             const val = snap.val();
@@ -1400,23 +1261,7 @@ export function subscribeCloudTimeRequests(
       unsubs.push(u1);
     } catch (err) {}
 
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/time_requests`),
-          (snap) => {
-            if (snap.exists()) {
-              const val = snap.val();
-              const list: TimeRequest[] = Object.values(val);
-              onRequests(enrichRequests(list.reverse().slice(0, 20)));
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u2);
-      } catch (err) {}
-    }
-
+    // 2. Parent authenticated path fallback
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         const u3 = rtdbOnValue(
@@ -1461,7 +1306,7 @@ export function subscribeCloudTimeRequests(
   };
 }
 
-// 13. Time Extension: Parent resolves time request
+// 13. Time Extension: Parent resolves time request (strictly partitioned)
 export async function resolveCloudTimeRequest(
   parentId: string,
   childId: string,
@@ -1473,7 +1318,7 @@ export async function resolveCloudTimeRequest(
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
 
   debugLogService.log({
     direction: 'parent->cloud',
@@ -1487,16 +1332,11 @@ export async function resolveCloudTimeRequest(
   });
 
   if (rtdb) {
-    rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/time_requests/${reqId}`), {
+    rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/time_requests/${reqId}`), {
       status,
       resolvedAt: now,
     }).catch(() => {});
-    if (slug && slug !== childId) {
-      rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${slug}/time_requests/${reqId}`), {
-        status,
-        resolvedAt: now,
-      }).catch(() => {});
-    }
+
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/time_requests/${reqId}`), {
@@ -1526,13 +1366,12 @@ export async function sendCloudChatMessage(
   if (!isFirebaseConfigured() || !childId) return;
 
   const now = Date.now();
-  // Ensure slug correctly resolves to the child's slug
-  const slug = normalizeChildSlug(childName || (msg.sender === "kid" ? msg.senderName : ""));
+  const syncKey = getPartitionedSyncKey(parentId, childId);
 
   if (rtdb) {
     try {
-      // 1. Primary open sync channel by childId (Guaranteed accessible without auth barrier)
-      const openRef = rtdbPush(rtdbRef(rtdb, `pairings/sync/${childId}/chat_messages`));
+      // 1. Authoritative partitioned channel
+      const openRef = rtdbPush(rtdbRef(rtdb, `pairings/sync/${syncKey}/chat_messages`));
       const messagePayload: CloudChatMessage = {
         ...msg,
         id: openRef.key || msg.id || `msg_${now}`,
@@ -1540,24 +1379,10 @@ export async function sendCloudChatMessage(
       };
       await rtdbSet(openRef, messagePayload);
 
-      // 2. Open sync channel by child slug (e.g. 'bach')
-      if (slug && slug !== childId) {
-        const slugRef = rtdbPush(rtdbRef(rtdb, `pairings/sync/${slug}/chat_messages`));
-        rtdbSet(slugRef, { ...messagePayload, id: slugRef.key || messagePayload.id }).catch(() => {});
-      }
-
-      // 3. Paired channel
-      if (parentId && parentId !== "family_primary") {
-        rtdbSet(
-          rtdbPush(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/chat_messages`)),
-          messagePayload
-        ).catch(() => {});
-
-        // Only attempt users/ path if authenticated as parent to prevent permission_denied
-        if (auth?.currentUser && auth.currentUser.uid === parentId) {
-          const userRef = rtdbPush(rtdbRef(rtdb, `users/${parentId}/children/${childId}/chat_messages`));
-          rtdbSet(userRef, messagePayload).catch(() => {});
-        }
+      // 2. Authenticated parent path if logged in
+      if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
+        const userRef = rtdbPush(rtdbRef(rtdb, `users/${parentId}/children/${childId}/chat_messages`));
+        rtdbSet(userRef, messagePayload).catch(() => {});
       }
     } catch (err) {
       console.warn("RTDB sendCloudChatMessage error:", err);
@@ -1573,7 +1398,7 @@ export async function sendCloudChatMessage(
   }
 }
 
-// 15. Family Chat: Subscribe to real-time chat messages
+// 15. Family Chat: Subscribe to real-time chat messages (strictly partitioned)
 export function subscribeCloudChatMessages(
   parentId: string,
   childId: string,
@@ -1584,7 +1409,7 @@ export function subscribeCloudChatMessages(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const allMessagesMap = new Map<string, CloudChatMessage>();
 
   const dispatchSortedMessages = () => {
@@ -1624,50 +1449,26 @@ export function subscribeCloudChatMessages(
   };
 
   if (rtdb) {
-    // 1. Primary open sync channel by childId
+    // 1. Authoritative partitioned channel
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/chat_messages`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/chat_messages`),
         processSnap,
         () => {}
       );
       unsubs.push(u1);
     } catch (err) {}
 
-    // 2. Open sync channel by slug (e.g. 'bach')
-    if (slug && slug !== childId) {
+    // 2. Authenticated parent path fallback
+    if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/chat_messages`),
+        const u4 = rtdbOnValue(
+          rtdbRef(rtdb, `users/${parentId}/children/${childId}/chat_messages`),
           processSnap,
           () => {}
         );
-        unsubs.push(u2);
+        unsubs.push(u4);
       } catch (err) {}
-    }
-
-    // 3. Paired channel
-    if (parentId && parentId !== "family_primary") {
-      try {
-        const u3 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/chat_messages`),
-          processSnap,
-          () => {}
-        );
-        unsubs.push(u3);
-      } catch (err) {}
-
-      // Only listen on users/ if authenticated as parent to avoid permission_denied
-      if (auth?.currentUser && auth.currentUser.uid === parentId) {
-        try {
-          const u4 = rtdbOnValue(
-            rtdbRef(rtdb, `users/${parentId}/children/${childId}/chat_messages`),
-            processSnap,
-            () => {}
-          );
-          unsubs.push(u4);
-        } catch (err) {}
-      }
     }
   }
 
@@ -1734,14 +1535,29 @@ export async function fetchChildrenListFromCloud(
     }
   }
 
-  // 2. Fetch from RTDB pairings/active_children (open registry)
-  if (rtdb && isFirebaseConfigured()) {
+  const cleanParent = getPartitionedParentKey(parentId);
+
+  // 1. Fetch from RTDB users/{parentId}/children - if authenticated
+  if (rtdb && isFirebaseConfigured() && parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
     try {
-      const snap = await rtdbGet(rtdbRef(rtdb, "pairings/active_children"));
+      const snap = await rtdbGet(rtdbRef(rtdb, `users/${parentId}/children`));
       if (snap.exists()) {
         const val = snap.val();
         Object.values(val).forEach((c: any) => {
-          if (c && c.id && (!parentId || c.parentId === parentId || c.parentId === "family_primary")) {
+          if (c && c.id) childrenMap.set(c.id, c);
+        });
+      }
+    } catch (e) {}
+  }
+
+  // 2. Fetch from RTDB pairings/families/{cleanParent}/children (strictly partitioned per family)
+  if (rtdb && isFirebaseConfigured()) {
+    try {
+      const snap = await rtdbGet(rtdbRef(rtdb, `pairings/families/${cleanParent}/children`));
+      if (snap.exists()) {
+        const val = snap.val();
+        Object.values(val).forEach((c: any) => {
+          if (c && c.id) {
             const existing = childrenMap.get(c.id) || {};
             childrenMap.set(c.id, { ...existing, ...c });
           }
@@ -1765,40 +1581,7 @@ export async function fetchChildrenListFromCloud(
     } catch (e) {}
   }
 
-  // 4. Scan RTDB pairings for any completed pairings matching this parentId or parentName
-  if (rtdb && isFirebaseConfigured()) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, "pairings"));
-      if (snap.exists()) {
-        const allPairings = snap.val();
-        Object.values(allPairings).forEach((p: any) => {
-          if (
-            p &&
-            p.status === "paired" &&
-            (p.parentId === parentId || (parentName && p.parentName === parentName) || !p.parentId) &&
-            p.childId
-          ) {
-            const existing = childrenMap.get(p.childId) || {};
-            childrenMap.set(p.childId, {
-              id: p.childId,
-              name: p.childName || "Bé yêu",
-              avatar: p.childAvatar || "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150",
-              age: p.childAge || 8,
-              birthYear: p.childBirthYear || (new Date().getFullYear() - (p.childAge || 8)),
-              gender: p.childGender || "boy",
-              status: "online",
-              battery: 100,
-              pairedDevice: p.childDeviceInfo,
-              pairedAt: p.pairedAt || p.createdAt,
-              ...existing,
-            });
-          }
-        });
-      }
-    } catch (e) {}
-  }
-
-  // 5. Check localStorage pairing sessions as offline fallback
+  // 4. Check localStorage pairing sessions as offline fallback (strictly matching parentId)
   if (typeof window !== "undefined") {
     try {
       const raw = localStorage.getItem("parent_pro_pairing_sessions");
@@ -1808,7 +1591,7 @@ export async function fetchChildrenListFromCloud(
           if (
             p &&
             p.status === "paired" &&
-            (p.parentId === parentId || (parentName && p.parentName === parentName)) &&
+            p.parentId === parentId &&
             p.childId &&
             !childrenMap.has(p.childId)
           ) {
@@ -1833,7 +1616,7 @@ export async function fetchChildrenListFromCloud(
   return Array.from(childrenMap.values());
 }
 
-// 17. Live listener for all children list
+// 17. Live listener for all children list (strictly partitioned per family)
 export function subscribeDetailedChildrenLive(
   parentId: string,
   onChildren: (children: any[]) => void,
@@ -1842,17 +1625,33 @@ export function subscribeDetailedChildrenLive(
   const { db, rtdb, auth } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !parentId) return () => {};
 
+  const cleanParent = getPartitionedParentKey(parentId);
   let unsubRtdb: (() => void) | null = null;
+  let unsubFamilyChildren: (() => void) | null = null;
   let unsubFirestore: (() => void) | null = null;
-  let unsubRtdbPairings: (() => void) | null = null;
-  let unsubActiveChildren: (() => void) | null = null;
 
-  // Immediately run comprehensive multi-source fetch
+  // Immediately run fetch for this parent's children
   fetchChildrenListFromCloud(parentId, parentName).then((list) => {
     if (list.length > 0) onChildren(list);
   }).catch(() => {});
 
   if (rtdb) {
+    // 1. Listen on strictly partitioned family children node
+    try {
+      unsubFamilyChildren = rtdbOnValue(
+        rtdbRef(rtdb, `pairings/families/${cleanParent}/children`),
+        (snap) => {
+          if (snap.exists()) {
+            const val = snap.val();
+            const list: any[] = Object.values(val);
+            if (list.length > 0) onChildren(list);
+          }
+        },
+        () => {}
+      );
+    } catch (_) {}
+
+    // 2. Authenticated parent path if logged in
     if (parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         unsubRtdb = rtdbOnValue(
@@ -1868,36 +1667,6 @@ export function subscribeDetailedChildrenLive(
         );
       } catch (err) {}
     }
-
-    // Listen on pairings/active_children
-    try {
-      unsubActiveChildren = rtdbOnValue(
-        rtdbRef(rtdb, "pairings/active_children"),
-        (snap) => {
-          if (snap.exists()) {
-            fetchChildrenListFromCloud(parentId, parentName).then((list) => {
-              if (list.length > 0) onChildren(list);
-            }).catch(() => {});
-          }
-        },
-        () => {}
-      );
-    } catch (_) {}
-
-    // Also listen to pairings in RTDB for real-time detection when kid connects
-    try {
-      unsubRtdbPairings = rtdbOnValue(
-        rtdbRef(rtdb, "pairings"),
-        (snap) => {
-          if (snap.exists()) {
-            fetchChildrenListFromCloud(parentId, parentName).then((list) => {
-              if (list.length > 0) onChildren(list);
-            }).catch(() => {});
-          }
-        },
-        () => {}
-      );
-    } catch (_) {}
   }
 
   if (db && parentId !== "family_primary") {
@@ -1919,28 +1688,27 @@ export function subscribeDetailedChildrenLive(
 
   return () => {
     if (unsubRtdb) unsubRtdb();
-    if (unsubActiveChildren) unsubActiveChildren();
-    if (unsubRtdbPairings) unsubRtdbPairings();
+    if (unsubFamilyChildren) unsubFamilyChildren();
     if (unsubFirestore) unsubFirestore();
   };
 }
 
 export const subscribeChildrenListFromCloud = subscribeDetailedChildrenLive;
 
-// 18. Register child profile in open registry so KidCare can auto-discover
+// 18. Register child profile in family registry
 export async function registerActiveChildInCloud(
   parentId: string,
   child: { id: string; name: string; avatar?: string; age?: number; grade?: string; parentName?: string }
 ): Promise<void> {
-  const { rtdb } = getFirebaseInstance();
+  const { rtdb, auth } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !rtdb || !child?.id) return;
 
   const now = Date.now();
-  const slug = normalizeChildSlug(child.name);
+  const cleanParent = getPartitionedParentKey(parentId);
   const data = {
     id: child.id,
     name: child.name,
-    parentId: parentId || "family_primary",
+    parentId: parentId || "fam_default",
     parentName: child.parentName || "Bố/Mẹ",
     avatar: child.avatar || "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150",
     age: child.age || 8,
@@ -1949,9 +1717,9 @@ export async function registerActiveChildInCloud(
   };
 
   try {
-    await rtdbSet(rtdbRef(rtdb, `pairings/active_children/${child.id}`), data);
-    if (slug) {
-      await rtdbSet(rtdbRef(rtdb, `pairings/active_children_by_name/${slug}`), data);
+    await rtdbSet(rtdbRef(rtdb, `pairings/families/${cleanParent}/children/${child.id}`), data);
+    if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
+      rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${child.id}`), data).catch(() => {});
     }
   } catch (e) {
     console.warn("registerActiveChildInCloud error:", e);
@@ -2054,7 +1822,7 @@ export async function deleteChildFromCloud(
   }
 }
 
-// 22. Log real child route point to Cloud (RTDB & Firestore)
+// 22. Log real child route point to Cloud (RTDB & Firestore - strictly partitioned)
 export async function logChildRoutePointToCloud(
   parentId: string,
   childId: string,
@@ -2064,19 +1832,18 @@ export async function logChildRoutePointToCloud(
   const { db, rtdb, auth } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return;
 
-  const slug = normalizeChildSlug(childName);
   const now = Date.now();
+  const syncKey = getPartitionedSyncKey(parentId, childId);
   const pointPayload = {
     ...point,
+    childId,
+    parentId,
     timestamp: now,
   };
 
   if (rtdb) {
     try {
-      await rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/routeHistory/${point.id}`), pointPayload);
-      if (slug && slug !== childId) {
-        await rtdbSet(rtdbRef(rtdb, `pairings/sync/${slug}/routeHistory/${point.id}`), pointPayload);
-      }
+      await rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/routeHistory/${point.id}`), pointPayload);
       if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
         await rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}/routeHistory/${point.id}`), pointPayload);
       }
@@ -2093,7 +1860,7 @@ export async function logChildRoutePointToCloud(
   }
 }
 
-// 23. Subscribe to real child route history from Cloud
+// 23. Subscribe to real child route history from Cloud (strictly partitioned)
 export function subscribeChildRouteHistoryFromCloud(
   parentId: string,
   childId: string,
@@ -2104,7 +1871,7 @@ export function subscribeChildRouteHistoryFromCloud(
   if (!isFirebaseConfigured() || !childId) return () => {};
 
   const unsubs: Array<() => void> = [];
-  const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
 
   const parseRouteHistoryObj = (val: any): RoutePoint[] => {
     if (!val) return [];
@@ -2115,7 +1882,7 @@ export function subscribeChildRouteHistoryFromCloud(
   if (rtdb) {
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/${childId}/routeHistory`),
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/routeHistory`),
         (snap) => {
           if (snap.exists()) {
             const list = parseRouteHistoryObj(snap.val());
@@ -2126,22 +1893,6 @@ export function subscribeChildRouteHistoryFromCloud(
       );
       unsubs.push(u1);
     } catch (err) {}
-
-    if (slug && slug !== childId) {
-      try {
-        const u2 = rtdbOnValue(
-          rtdbRef(rtdb, `pairings/sync/${slug}/routeHistory`),
-          (snap) => {
-            if (snap.exists()) {
-              const list = parseRouteHistoryObj(snap.val());
-              if (list.length > 0) onUpdate(list);
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u2);
-      } catch (err) {}
-    }
 
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
@@ -2185,7 +1936,7 @@ export function subscribeChildRouteHistoryFromCloud(
   };
 }
 
-// 24. Sync Safe Zones to Cloud
+// 24. Sync Safe Zones to Cloud (strictly partitioned per family)
 export async function syncSafeZonesToCloud(
   parentId: string,
   safeZones: SafeZone[]
@@ -2194,14 +1945,16 @@ export async function syncSafeZonesToCloud(
   if (!isFirebaseConfigured() || !parentId) return;
 
   const now = Date.now();
+  const cleanParent = getPartitionedParentKey(parentId);
   const payload = {
     safeZones,
+    parentId,
     updatedAt: now,
   };
 
   if (rtdb) {
     try {
-      await rtdbSet(rtdbRef(rtdb, `pairings/sync/safeZones`), payload);
+      await rtdbSet(rtdbRef(rtdb, `pairings/sync/${cleanParent}/safeZones`), payload);
       if (parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
         await rtdbSet(rtdbRef(rtdb, `users/${parentId}/safeZones`), payload);
       }
@@ -2216,20 +1969,21 @@ export async function syncSafeZonesToCloud(
   }
 }
 
-// 25. Subscribe Safe Zones from Cloud
+// 25. Subscribe Safe Zones from Cloud (strictly partitioned per family)
 export function subscribeSafeZonesFromCloud(
   parentId: string,
   onUpdate: (zones: SafeZone[]) => void
 ): () => void {
   const { rtdb, db, auth } = getFirebaseInstance();
-  if (!isFirebaseConfigured()) return () => {};
+  if (!isFirebaseConfigured() || !parentId) return () => {};
 
   const unsubs: Array<() => void> = [];
+  const cleanParent = getPartitionedParentKey(parentId);
 
   if (rtdb) {
     try {
       const u1 = rtdbOnValue(
-        rtdbRef(rtdb, `pairings/sync/safeZones`),
+        rtdbRef(rtdb, `pairings/sync/${cleanParent}/safeZones`),
         (snap) => {
           if (snap.exists()) {
             const data = snap.val();

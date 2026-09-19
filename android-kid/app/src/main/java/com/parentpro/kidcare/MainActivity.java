@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(KidPermissionsPlugin.class);
+        registerPlugin(SystemNotificationPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Configure Status Bar color to match Kid app title header (#0ea5e9) with white icons
@@ -55,6 +56,15 @@ public class MainActivity extends BridgeActivity {
                     return true;
                 }
             });
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        // Prevent Android WebView from freezing JavaScript timers and WebSocket connections when screen is turned off!
+        if (bridge != null && bridge.getWebView() != null) {
+            bridge.getWebView().resumeTimers();
         }
     }
 

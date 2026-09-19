@@ -18,7 +18,7 @@ import {
   Car,
   Coffee
 } from 'lucide-react';
-import { useAppState } from '@shared/store';
+import { useAppState, getActiveParentId } from '@shared/store';
 import { InteractiveMap } from '@shared/components/InteractiveMap';
 import { MOCK_ROUTES_BY_DAY, INITIAL_ROUTE } from '@shared/mockData';
 import { RoutePoint } from '@shared/types';
@@ -33,8 +33,7 @@ type DayFilter = 'today' | 'yesterday' | 'twoDaysAgo';
 
 export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }) => {
   const { state } = useAppState();
-  const { routeHistory, child, children, selectedChildId } = state;
-  const currentChild = children?.find((c) => c.id === selectedChildId) || child;
+  const { child: currentChild, selectedChildId, routeHistory } = state;
 
   const [selectedDay, setSelectedDay] = useState<DayFilter>('today');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -45,8 +44,7 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
 
   // Subscribe to real cloud route history
   useEffect(() => {
-    const currentParent = getCurrentParentAccount();
-    const parentId = currentParent?.uid || 'family_primary';
+    const parentId = getActiveParentId();
     const childId = selectedChildId || currentChild?.id;
 
     if (parentId && childId) {

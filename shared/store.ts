@@ -149,6 +149,11 @@ export function getStorageKey(): string {
 }
 
 export function getActiveParentId(): string {
+  if (isKidAppMode()) {
+    const paired = getKidDevicePairedInfo();
+    if (paired?.parentId) return paired.parentId;
+  }
+
   const parent = getCurrentParentAccount();
   if (parent?.uid) return parent.uid;
 
@@ -156,10 +161,16 @@ export function getActiveParentId(): string {
   if (paired?.parentId) return paired.parentId;
 
   if (typeof window !== 'undefined') {
-    const savedFam = localStorage.getItem('parent_pro_family_id');
-    if (savedFam) return savedFam;
+    let savedFam = localStorage.getItem('parent_pro_family_id');
+    if (!savedFam || savedFam === 'family_primary') {
+      savedFam = 'fam_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+      try {
+        localStorage.setItem('parent_pro_family_id', savedFam);
+      } catch (_) {}
+    }
+    return savedFam;
   }
-  return 'family_primary';
+  return 'fam_local_default';
 }
 
 export function getActiveChildId(defaultId: string = 'child_1'): string {
@@ -782,32 +793,33 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
   const curTasks = curSettings.kidTasks ?? newState.kidTasks ?? [];
   const curStarHistory = curSettings.starHistory ?? newState.starHistory ?? [];
   const curRedemptions = curSettings.redemptions ?? newState.redemptions ?? [];
+  const isCurrentChild = !targetChildId || targetChildId === newState.selectedChildId;
 
   const updatedChildSettings = {
     ...(newState.childSettings || {}),
     [curId]: {
       ...curSettings,
       screenTimeLimitMinutes: curSettings.screenTimeLimitMinutes ?? 135,
-      apps: curSettings.apps ?? newState.apps,
-      screenTime: curSettings.screenTime ?? newState.screenTime,
-      hardwareControls: curSettings.hardwareControls ?? newState.hardwareControls,
-      kioskMode: curSettings.kioskMode ?? newState.kioskMode,
-      lockChallenge: curSettings.lockChallenge ?? newState.lockChallenge,
-      smartRoutines: curSettings.smartRoutines ?? newState.smartRoutines,
+      apps: curSettings.apps || (isCurrentChild ? newState.apps : createDefaultChildSettings(curId).apps),
+      screenTime: curSettings.screenTime || (isCurrentChild ? newState.screenTime : createDefaultChildSettings(curId).screenTime),
+      hardwareControls: curSettings.hardwareControls || (isCurrentChild ? newState.hardwareControls : createDefaultChildSettings(curId).hardwareControls),
+      kioskMode: curSettings.kioskMode || (isCurrentChild ? newState.kioskMode : createDefaultChildSettings(curId).kioskMode),
+      lockChallenge: curSettings.lockChallenge || (isCurrentChild ? newState.lockChallenge : createDefaultChildSettings(curId).lockChallenge),
+      smartRoutines: curSettings.smartRoutines || (isCurrentChild ? newState.smartRoutines : createDefaultChildSettings(curId).smartRoutines),
       kidTasks: curTasks,
       kidStars: curStars,
       starHistory: curStarHistory,
       redemptions: curRedemptions,
-      activeOpenedApp: curSettings.activeOpenedApp ?? newState.activeOpenedApp ?? null,
-      activeReminder: curSettings.activeReminder ?? newState.activeReminder ?? null,
-      lastVoiceGuide: curSettings.lastVoiceGuide ?? newState.lastVoiceGuide ?? '',
-      broadcastMessage: curSettings.broadcastMessage ?? newState.broadcastMessage ?? null,
-      isLocked: curSettings.lockChallenge?.isLocked ?? newState.lockChallenge?.isLocked ?? false,
+      activeOpenedApp: curSettings.activeOpenedApp ?? (isCurrentChild ? (newState.activeOpenedApp ?? null) : null),
+      activeReminder: curSettings.activeReminder ?? (isCurrentChild ? (newState.activeReminder ?? null) : null),
+      lastVoiceGuide: curSettings.lastVoiceGuide ?? (isCurrentChild ? (newState.lastVoiceGuide ?? '') : ''),
+      broadcastMessage: curSettings.broadcastMessage ?? (isCurrentChild ? (newState.broadcastMessage ?? null) : null),
+      isLocked: curSettings.lockChallenge?.isLocked ?? (isCurrentChild ? (newState.lockChallenge?.isLocked ?? false) : false),
       safeZones: curSettings.safeZones ?? newState.safeZones,
     }
   };
   newState.childSettings = updatedChildSettings;
-  if (curId === newState.selectedChildId || !newState.selectedChildId) {
+  if (isCurrentChild) {
     newState.kidStars = curStars;
     newState.kidTasks = curTasks;
     newState.starHistory = curStarHistory;
@@ -968,11 +980,15 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
         if (!wasActive || !isRecent) {
           lastHandledSosByChild[childId] = now;
           eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
-          showSystemNotification(`🚨 KHẨN CẤP: Bé ${sosChildName} nhấn SOS!`, {
-            body: `Vị trí: ${sosInfo.address}. Nhấn để mở ứng dụng ngay!`,
-            soundType: 'emergency',
-            tag: `sos_${childId}`,
-          });
+          const isGeofenceAlert = (sosInfo.address || '').includes('vùng an toàn');
+          showSystemNotification(
+            isGeofenceAlert ? `⚠️ CẢNH BÁO: Bé ${sosChildName} ra khỏi vùng an toàn!` : `🚨 KHẨN CẤP: Bé ${sosChildName} nhấn SOS!`,
+            {
+              body: isGeofenceAlert ? `${sosInfo.address}. Nhấn để xem định vị ngay!` : `Vị trí: ${sosInfo.address}. Nhấn để mở ứng dụng ngay!`,
+              soundType: isGeofenceAlert ? 'warning' : 'emergency',
+              tag: `sos_${childId}`,
+            }
+          );
         }
       } else if (sosData && sosData.active === false && globalState.activeSOS) {
         if (globalState.sosDetails?.childId === childId || !globalState.sosDetails?.childId) {
@@ -1023,7 +1039,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
 
         applyCloudStateUpdate((prev) => {
           const updatedChildren = prev.children.map((c) => {
-            if (c.id === childId || (telemetry.childName && c.name.toLowerCase() === telemetry.childName.toLowerCase())) {
+            if (c.id === childId) {
               let updatedDevices = c.devices ? [...c.devices] : [];
               if (telemetry.deviceId) {
                 const devIdx = updatedDevices.findIndex(d => (d.deviceId === telemetry.deviceId || d.id === telemetry.deviceId));
@@ -1097,12 +1113,14 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
             return c;
           });
 
-          const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
+          // TOP-LEVEL ISOLATION: Only mutate top-level state if childId strictly equals selectedChildId
+          const isCur = Boolean(prev.selectedChildId && childId === prev.selectedChildId);
           const updatedChild = updatedChildren.find((c) => c.id === prev.selectedChildId) || prev.child;
           const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
           const nextSettings = {
             ...curSettings,
             ...(telemetry.sensors ? { sensorValues: { ...curSettings.sensorValues, ...telemetry.sensors } } : {}),
+            ...(telemetry.screenTimeUsedMinutes !== undefined ? { screenTime: { ...curSettings.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes } } : {}),
           };
 
           return {
@@ -1220,7 +1238,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
 
             showSystemNotification(`💬 Bé ${chatChildName}`, {
               body: lastMsg.text,
-              soundType: 'info',
+              soundType: 'chat',
               tag: `chat_${childId}`,
             });
           }
@@ -1235,7 +1253,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
         applyCloudStateUpdate((prev) => {
           const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
           const mergedSettings = { ...curSettings, ...cloudSettings };
-          const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
+          const isCur = Boolean(prev.selectedChildId && childId === prev.selectedChildId);
           const newStars = mergedSettings.kidStars !== undefined ? mergedSettings.kidStars : curSettings.kidStars;
           return {
             ...prev,
@@ -1246,22 +1264,24 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                 kidStars: newStars,
               },
             },
-            apps: isCur ? (mergedSettings.apps || prev.apps) : prev.apps,
-            hardwareControls: isCur ? (mergedSettings.hardwareControls || prev.hardwareControls) : prev.hardwareControls,
-            kioskMode: isCur ? (mergedSettings.kioskMode || prev.kioskMode) : prev.kioskMode,
-            lockChallenge: isCur ? (mergedSettings.lockChallenge || prev.lockChallenge) : prev.lockChallenge,
-            smartRoutines: isCur ? (mergedSettings.smartRoutines || prev.smartRoutines) : prev.smartRoutines,
-            broadcastMessage: isCur ? (mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage) : prev.broadcastMessage,
-            kidTasks: isCur ? (mergedSettings.kidTasks || prev.kidTasks) : prev.kidTasks,
-            kidStars: isCur ? newStars : prev.kidStars,
-            starHistory: isCur ? (mergedSettings.starHistory || prev.starHistory) : prev.starHistory,
-            redemptions: isCur ? (mergedSettings.redemptions || prev.redemptions) : prev.redemptions,
-            safeZones: mergedSettings.safeZones || prev.safeZones,
-            activeReminder: isCur ? (mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder) : prev.activeReminder,
-            lastVoiceGuide: isCur ? (mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide) : prev.lastVoiceGuide,
-            screenTime: isCur && mergedSettings.screenTimeLimitMinutes !== undefined
-              ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
-              : prev.screenTime,
+            ...(isCur ? {
+              apps: mergedSettings.apps || prev.apps,
+              hardwareControls: mergedSettings.hardwareControls || prev.hardwareControls,
+              kioskMode: mergedSettings.kioskMode || prev.kioskMode,
+              lockChallenge: mergedSettings.lockChallenge || prev.lockChallenge,
+              smartRoutines: mergedSettings.smartRoutines || prev.smartRoutines,
+              broadcastMessage: mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage,
+              kidTasks: mergedSettings.kidTasks || prev.kidTasks,
+              kidStars: newStars,
+              starHistory: mergedSettings.starHistory || prev.starHistory,
+              redemptions: mergedSettings.redemptions || prev.redemptions,
+              safeZones: mergedSettings.safeZones || prev.safeZones,
+              activeReminder: mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder,
+              lastVoiceGuide: mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide,
+              screenTime: mergedSettings.screenTimeLimitMinutes !== undefined
+                ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
+                : prev.screenTime,
+            } : {}),
           };
         });
       }
@@ -1278,7 +1298,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
           if (starData.transaction && starData.transaction.id && !existingHistory.some((tx) => tx.id === starData.transaction.id)) {
             newHistory = [starData.transaction, ...existingHistory];
           }
-          const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
+          const isCur = Boolean(prev.selectedChildId && childId === prev.selectedChildId);
           return {
             ...prev,
             childSettings: {
@@ -2231,18 +2251,21 @@ export const useAppState = () => {
   };
 
   // Lock challenges
-  const setLockChallenge = (lockType: LockType, title?: string, desc?: string) => {
-    let customTitle = title || 'Thiết bị đang bị khóa';
-    let customDesc = desc || 'Con hãy hoàn thành thử thách để mở máy nhé!';
+  const setLockChallenge = (lockType: LockType, title?: string, desc?: string, customChallengeData?: Partial<LockChallengeState>) => {
+    let customTitle = (customChallengeData && customChallengeData.title) || title || 'Thiết bị đang bị khóa';
+    let customDesc = (customChallengeData && customChallengeData.description) || desc || 'Con hãy hoàn thành thử thách để mở máy nhé!';
 
     let challengeData: Partial<LockChallengeState> = {
       isLocked: lockType !== 'none',
       lockType,
       title: customTitle,
       description: customDesc,
+      ...(customChallengeData || {}),
     };
 
-    if (lockType === 'math') {
+    if (customChallengeData && (customChallengeData.mathChallenge || customChallengeData.quizChallenge || customChallengeData.movementChallenge || customChallengeData.countdownChallenge)) {
+      // Retain custom challenge details passed from remote parent
+    } else if (lockType === 'math') {
       const num1 = Math.floor(Math.random() * 50) + 10;
       const num2 = Math.floor(Math.random() * 40) + 10;
       challengeData.mathChallenge = {
@@ -2298,6 +2321,7 @@ export const useAppState = () => {
     const fullState: LockChallengeState = {
       ...state.lockChallenge,
       ...challengeData,
+      ...(customChallengeData || {}),
       isLocked: lockType !== 'none',
       lockType,
     };
@@ -2312,7 +2336,7 @@ export const useAppState = () => {
         lockType,
         title: challengeData.title,
         description: challengeData.description,
-        challengeData,
+        challengeData: fullState,
       }, targetChild?.name).catch(() => {});
     }
   };
@@ -2335,6 +2359,31 @@ export const useAppState = () => {
 
   const solveChallengeOnKid = () => {
     eventBus.publish('CHALLENGE_SOLVED', {}, 'child');
+    const parentId = getActiveParentId();
+    const kidPaired = getKidDevicePairedInfo();
+    const childId = kidPaired?.childId || state.selectedChildId;
+    const targetChild = state.children.find((c) => c.id === childId) || state.child;
+    const unlockedState: LockChallengeState = {
+      ...state.lockChallenge,
+      isLocked: false,
+      lockType: 'none',
+    };
+    const newStars = (state.kidStars || 0) + 5;
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, {
+        lockChallenge: unlockedState,
+        kidStars: newStars,
+      }, targetChild?.name).catch(() => {});
+      syncChildStarsToCloud(parentId, childId, newStars, {
+        id: 'tx_solve_' + Date.now(),
+        childId,
+        childName: targetChild.name,
+        type: 'challenge_solve',
+        stars: 5,
+        title: 'Hoàn thành thử thách mở khóa',
+        timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay',
+      }, targetChild?.name).catch(() => {});
+    }
   };
 
   const addStepsOnKid = (steps: number) => {
@@ -2352,12 +2401,35 @@ export const useAppState = () => {
       isLocked: !isCompleted,
       lockType: isCompleted ? 'none' : curLock.lockType,
     };
+    const newStars = isCompleted ? (globalState.kidStars || 0) + 5 : (globalState.kidStars || 0);
     saveAndNotify({
       ...globalState,
       lockChallenge: updatedLock,
-      kidStars: isCompleted ? globalState.kidStars + 5 : globalState.kidStars,
+      kidStars: newStars,
     });
     eventBus.publish('LOCK_CHALLENGE_UPDATED', updatedLock, 'child');
+
+    const parentId = getActiveParentId();
+    const kidPaired = getKidDevicePairedInfo();
+    const childId = kidPaired?.childId || globalState.selectedChildId;
+    const targetChild = globalState.children.find((c) => c.id === childId) || globalState.child;
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, {
+        lockChallenge: updatedLock,
+        kidStars: newStars,
+      }, targetChild?.name).catch(() => {});
+      if (isCompleted) {
+        syncChildStarsToCloud(parentId, childId, newStars, {
+          id: 'tx_step_' + Date.now(),
+          childId,
+          childName: targetChild.name,
+          type: 'challenge_solve',
+          stars: 5,
+          title: 'Hoàn thành thử thách vận động',
+          timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay',
+        }, targetChild?.name).catch(() => {});
+      }
+    }
   };
 
   // Smart routines & reminders
@@ -2472,6 +2544,7 @@ export const useAppState = () => {
     eventBus.publish('APP_STATUS_CHANGED', { appId, status: newStatus, childId: targetChildId }, 'parent');
     const parentId = getActiveParentId();
     if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { apps: updatedApps }).catch(() => {});
       sendRemoteCommandToKid(parentId, targetChildId, 'update_app_rule', { appId, status: newStatus }).catch(() => {});
     }
   };
@@ -2499,6 +2572,7 @@ export const useAppState = () => {
     eventBus.publish('APP_LIMIT_UPDATED', { appId, limitMinutes, childId: targetChildId }, 'parent');
     const parentId = getActiveParentId();
     if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { apps: updatedApps }).catch(() => {});
       sendRemoteCommandToKid(parentId, targetChildId, 'update_app_limit', { appId, limitMinutes }).catch(() => {});
     }
   };
@@ -2902,6 +2976,7 @@ export const useAppState = () => {
     const parentId = getActiveParentId();
     if (parentId && targetChildId) {
       syncChildStarsToCloud(parentId, targetChildId, newKidStars, nextCompleted ? updatedHistory[0] : undefined, targetChild?.name).catch(() => {});
+      syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks, kidStars: newKidStars }, targetChild?.name).catch(() => {});
     }
   };
 
@@ -3360,7 +3435,12 @@ export const useAppState = () => {
       childSettings: updatedChildSettings,
     };
     saveAndNotify(nextState, childId);
-    eventBus.publish('TRACKING_CONFIG_CHANGED', { childId, config: newConfig }, 'parent');
+    eventBus.publish('TRACKING_CONFIG_CHANGED', { childId, config: newConfig }, isKidAppMode() ? 'child' : 'parent');
+
+    const activeParentId = getActiveParentId();
+    if (activeParentId && childId) {
+      syncChildSettingsToCloud(activeParentId, childId, { trackingConfig: newConfig }).catch(() => {});
+    }
   };
 
   const setSensorThresholds = (profanityPenaltyMinutes?: number, noiseThresholdDb?: number) => {
@@ -3750,6 +3830,10 @@ export const useAppState = () => {
     const parentId = getActiveParentId();
     if (parentId && childId) {
       syncChildStarsToCloud(parentId, childId, newStars, transaction, targetChild?.name).catch(() => {});
+      syncChildSettingsToCloud(parentId, childId, {
+        redemptions: updatedChildSettings[childId]?.redemptions || [redemption],
+        kidStars: newStars,
+      }, targetChild?.name).catch(() => {});
     }
     return { success: true, message: `Chúc mừng! Con đã đổi thành công "${reward.title}" (-${reward.starsCost}⭐)!` };
   };

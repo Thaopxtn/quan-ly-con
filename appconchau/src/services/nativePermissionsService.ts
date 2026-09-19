@@ -64,6 +64,7 @@ export interface KidPermissionsPluginInterface {
   getScreenState(): Promise<{ isScreenOn: boolean }>;
   getInstalledApps(): Promise<{ apps: RealInstalledApp[]; count: number }>;
   launchApp(options: { packageName: string }): Promise<{ success: boolean; packageName?: string }>;
+  wakeUpDevice(): Promise<{ success: boolean }>;
   addListener(
     eventName: 'screenStateChange',
     listenerFunc: (data: { isScreenOn: boolean; action?: string }) => void
@@ -306,6 +307,19 @@ export async function launchNativeApp(packageName: string): Promise<boolean> {
     }
   }
   console.log(`[Web Simulator] Simulated launching app: ${packageName}`);
+  return true;
+}
+
+export async function wakeUpDevice(): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.wakeUpDevice();
+      return !!res?.success;
+    } catch (err) {
+      console.warn('wakeUpDevice error:', err);
+      return false;
+    }
+  }
   return true;
 }
 

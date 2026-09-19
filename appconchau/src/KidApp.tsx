@@ -43,8 +43,14 @@ import {
   ExternalLink,
   Layers,
   LogOut,
+  Battery,
+  BatteryCharging,
+  Power,
+  Leaf,
+  Activity,
+  MapPin,
 } from 'lucide-react';
-import { useAppState, syncWithCloudForChild, isSimulatorMode } from '@shared/store';
+import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId } from '@shared/store';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
 import confetti from 'canvas-confetti';
@@ -60,8 +66,10 @@ import {
   addScreenStateListener,
   fetchRealInstalledApps,
   launchNativeApp,
+  wakeUpDevice,
   type RealInstalledApp,
 } from './services/nativePermissionsService';
+import { showSystemNotification, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
 import { EmergencyContactBar } from './EmergencyContactBar';
 import { KidNotificationBanner } from './KidNotificationBanner';
 import { SharedLessonViewerModal } from './SharedLessonViewerModal';
@@ -209,13 +217,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     switchChild,
     incrementScreenTimeUsed,
     sendKidResponseToParent,
+    updateAppRule,
+    setTrackingCollectionConfig,
   } = useAppState();
 
   const [pairedInfo, setPairedInfo] = useState<KidPairedInfo | null>(() => getKidDevicePairedInfo());
-  const activeParentId = pairedInfo?.parentId || 'family_primary';
-  const realChildId = pairedInfo?.childId || (simulatedChildId && state.children?.find((c) => c.id === simulatedChildId)?.id) || state.selectedChildId || 'bach';
+  const activeParentId = pairedInfo?.parentId || (isSimulatorMode() ? getActiveParentId() : '');
+  const realChildId = pairedInfo?.childId || (simulatedChildId && state.children?.find((c) => c.id === simulatedChildId)?.id) || (isSimulatorMode() ? (state.selectedChildId || 'bach') : '');
 
-  const targetChild = (simulatedChildId && state.children?.find((c) => c.id === simulatedChildId)) || state.child;
+  const targetChild = (simulatedChildId && state.children?.find((c) => c.id === simulatedChildId)) || (state.children?.find((c) => c.id === realChildId)) || state.child;
   const targetChildId = realChildId;
   const targetSettings = state.childSettings?.[targetChildId] || {
     screenTimeLimitMinutes: 135,
@@ -286,6 +296,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     }
   }, [targetChildId, state.selectedChildId, switchChild]);
 
+  // Request system notification permission on Android 13+ / browser on app start
+  useEffect(() => {
+    requestSystemNotificationPermission().catch(() => {});
+  }, []);
+
   const apps = targetSettings.apps;
   const kidTasks = targetSettings.kidTasks;
   const kidStars = targetSettings.kidStars;
@@ -337,6 +352,81 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showDebugModal, setShowDebugModal] = useState(false);
   const [errorCount, setErrorCount] = useState(() => debugLogService.getErrorCount());
+
+  // Battery Saver / Power Optimization handlers
+  const isEcoMode = trackingConfig.isMasterTrackingEnabled && !trackingConfig.enableGpsTracking && !trackingConfig.enableSensorMonitoring;
+
+  const handleToggleMasterTracking = () => {
+    const nextVal = !trackingConfig.isMasterTrackingEnabled;
+    setTrackingCollectionConfig(targetChildId, {
+      ...trackingConfig,
+      isMasterTrackingEnabled: nextVal,
+    });
+    if (nextVal) {
+      showToast('🟢 Đã bật lại tiến trình giám sát nền.');
+    } else {
+      showToast('💤 Đã bật chế độ ngủ đông (Tạm dừng mọi thu thập ngầm để tiết kiệm pin).');
+    }
+    haptics.light();
+  };
+
+  const handleToggleEcoMode = () => {
+    if (isEcoMode) {
+      setTrackingCollectionConfig(targetChildId, {
+        ...trackingConfig,
+        isMasterTrackingEnabled: true,
+        enableGpsTracking: true,
+        enableSensorMonitoring: true,
+        enableAppUsageTracking: true,
+        enableScreenStateSync: true,
+      });
+      showToast('⚡ Đã chuyển sang Chế độ Tiêu chuẩn (Bật đầy đủ GPS & Cảm biến)');
+    } else {
+      setTrackingCollectionConfig(targetChildId, {
+        ...trackingConfig,
+        isMasterTrackingEnabled: true,
+        enableGpsTracking: false,
+        enableSensorMonitoring: false,
+        enableAppUsageTracking: true,
+        enableScreenStateSync: true,
+      });
+      if (!hardwareControls.isHardwareLocked && hardwareControls.brightness > 35) {
+        setHardwareControls({ brightness: 35 }, 'child');
+      }
+      showToast('🍃 Đã bật Siêu Tiết Kiệm Pin! Tắt GPS & cảm biến để pin dùng được lâu hơn gấp đôi.');
+    }
+    haptics.success();
+  };
+
+  const handleToggleGpsTracking = () => {
+    const nextVal = !trackingConfig.enableGpsTracking;
+    setTrackingCollectionConfig(targetChildId, {
+      ...trackingConfig,
+      enableGpsTracking: nextVal,
+    });
+    showToast(nextVal ? '📍 Đã bật định vị GPS liên tục' : '🛑 Đã tắt GPS liên tục (Tiết kiệm pin)');
+    haptics.light();
+  };
+
+  const handleToggleSensorMonitoring = () => {
+    const nextVal = !trackingConfig.enableSensorMonitoring;
+    setTrackingCollectionConfig(targetChildId, {
+      ...trackingConfig,
+      enableSensorMonitoring: nextVal,
+    });
+    showToast(nextVal ? '🏃 Đã bật cảm biến chuyển động' : '🛑 Đã tắt cảm biến chuyển động (Giảm tải CPU/Pin)');
+    haptics.light();
+  };
+
+  const handleToggleAppUsageTracking = () => {
+    const nextVal = !trackingConfig.enableAppUsageTracking;
+    setTrackingCollectionConfig(targetChildId, {
+      ...trackingConfig,
+      enableAppUsageTracking: nextVal,
+    });
+    showToast(nextVal ? '⏱️ Đã bật thống kê thời lượng app' : '🛑 Đã tắt thống kê thời lượng app');
+    haptics.light();
+  };
 
   useEffect(() => {
     return debugLogService.subscribe(() => {
@@ -821,6 +911,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
   const appsRef = useRef(apps);
   appsRef.current = apps;
+  const lockChallengeRef = useRef(lockChallenge);
+  lockChallengeRef.current = lockChallenge;
   const studyModeOnlyRef = useRef(studyModeOnly);
   studyModeOnlyRef.current = studyModeOnly;
   const kioskModeRef = useRef(kioskMode);
@@ -849,6 +941,16 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     }
   }, [activeParentId, targetChildId, child.name]);
 
+  // Synchronize enforcement rules to Android native Accessibility Service whenever apps/rules/kiosk/lock change
+  useEffect(() => {
+    updateNativeEnforcementRules({
+      isLocked: Boolean(lockChallenge?.isLocked),
+      kioskEnabled: Boolean(kioskMode?.isEnabled),
+      kioskPackage: kioskMode?.pinnedAppId || '',
+      blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
+    }).catch(() => {});
+  }, [apps, studyModeOnly, kioskMode?.isEnabled, kioskMode?.pinnedAppId, lockChallenge?.isLocked]);
+
   // Remote Control Commands Execution (Decoupled from local state changes to prevent re-render loops)
   useEffect(() => {
     if (!activeParentId || !targetChildId) return;
@@ -865,7 +967,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
       switch (cmd.command) {
         case 'buzz_siren':
+          wakeUpDevice().catch(() => {});
           playBuzzSirenAudio();
+          showSystemNotification('🚨 TÌM MÁY TỪ XA!', {
+            body: 'Bố mẹ đang phát tín hiệu còi khẩn cấp tìm máy của con!',
+            soundType: 'emergency',
+            tag: 'cmd_buzz_siren',
+          });
           showToast('🚨 BỐ MẸ ĐANG PHÁT TÍN HIỆU CÒI TÌM MÁY!');
           break;
         case 'ping':
@@ -894,10 +1002,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           }
           break;
         case 'lock_now':
+          wakeUpDevice().catch(() => {});
           setLockChallenge(
             cmd.payload?.lockType || 'instant',
             cmd.payload?.title || 'Thiết bị đang bị khóa từ xa',
-            cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!'
+            cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+            cmd.payload?.challengeData
           );
           updateNativeEnforcementRules({
             isLocked: true,
@@ -905,9 +1015,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             kioskPackage: '',
             blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
           }).catch(() => {});
+          showSystemNotification(cmd.payload?.title || '🔒 THIẾT BỊ ĐÃ BỊ KHÓA TỪ XA', {
+            body: cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+            soundType: 'emergency',
+            tag: 'cmd_lock_now',
+          });
           showToast('🔒 BỐ MẸ ĐÃ TẠM KHÓA MÁY TỪ XA!');
           break;
         case 'unlock_now':
+          wakeUpDevice().catch(() => {});
           unlockDevice();
           updateNativeEnforcementRules({
             isLocked: false,
@@ -915,14 +1031,25 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             kioskPackage: curKioskMode.pinnedAppId || '',
             blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
           }).catch(() => {});
+          showSystemNotification('🔓 THIẾT BỊ ĐÃ ĐƯỢC MỞ KHÓA', {
+            body: 'Bố mẹ đã mở khóa thiết bị. Chúc con học tập và giải trí vui vẻ!',
+            soundType: 'info',
+            tag: 'cmd_unlock_now',
+          });
           showToast('🔓 BỐ MẸ ĐÃ MỞ KHÓA THIẾT BỊ CHO CON!');
           break;
         case 'extend_time':
           const extra = cmd.payload?.minutes || 15;
           extendChildTimeNow(extra, targetChildId);
+          showSystemNotification(`⏱️ BỐ MẸ CỘNG THÊM +${extra} PHÚT`, {
+            body: `Bố mẹ đã đồng ý cộng thêm ${extra} phút sử dụng thiết bị cho con!`,
+            soundType: 'info',
+            tag: 'cmd_extend_time',
+          });
           showToast(`⏱️ BỐ MẸ ĐÃ CỘNG THÊM +${extra} PHÚT DÙNG MÁY!`);
           break;
         case 'kiosk_lock':
+          wakeUpDevice().catch(() => {});
           const kioskPkg = cmd.payload?.appId || 'study_app';
           setKioskMode(true, kioskPkg, cmd.payload?.appName || 'Ứng dụng học tập');
           updateNativeEnforcementRules({
@@ -931,6 +1058,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             kioskPackage: kioskPkg,
             blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
           }).catch(() => {});
+          showSystemNotification(`📌 CHẾ ĐỘ GHIM: ${cmd.payload?.appName || 'Học tập'}`, {
+            body: `Bố mẹ đã bật chế độ ghim chuyên tâm cho con: ${cmd.payload?.appName || 'Ứng dụng học tập'}`,
+            soundType: 'info',
+            tag: 'cmd_kiosk_lock',
+          });
           showToast(`📌 BỐ MẸ ĐÃ BẬT CHẾ ĐỘ GHIM: ${cmd.payload?.appName || 'Học tập'}`);
           break;
         case 'kiosk_unlock':
@@ -941,14 +1073,25 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             kioskPackage: '',
             blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
           }).catch(() => {});
+          showSystemNotification('🔓 ĐÃ TẮT CHẾ ĐỘ GHIM', {
+            body: 'Chế độ ghim ứng dụng đã được Bố Mẹ tắt.',
+            soundType: 'info',
+            tag: 'cmd_kiosk_unlock',
+          });
           showToast('🔓 Chế độ ghim ứng dụng đã được tắt');
           break;
         case 'broadcast_msg':
+          wakeUpDevice().catch(() => {});
           setIsBroadcastDismissed(false);
           broadcastOverlay(cmd.payload?.title || 'Lời dặn từ Bố Mẹ', cmd.payload?.message || '', cmd.payload?.imageUrl, true);
           if (cmd.payload?.speakTTS || cmd.payload?.message) {
             speakVietnamese(cmd.payload?.message || cmd.payload?.title || '');
           }
+          showSystemNotification(`📢 ${cmd.payload?.title || 'Lời dặn từ Bố Mẹ'}`, {
+            body: cmd.payload?.message || 'Bố mẹ vừa gửi lời nhắn quan trọng cho con!',
+            soundType: 'emergency',
+            tag: 'cmd_broadcast_msg',
+          });
           showToast('💬 THÔNG ĐIỆP MỚI TỪ BỐ MẸ!');
           break;
         case 'clear_broadcast':
@@ -979,12 +1122,46 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               createdAt: cmd.payload.createdAt || Date.now(),
               isOpen: true,
             });
+            showSystemNotification('🎓 BÀI HỌC MỚI TỪ BỐ MẸ', {
+              body: cmd.payload?.title || 'Bố mẹ vừa gửi bài học mới cho con! Hãy mở để cùng xem nhé.',
+              soundType: 'info',
+              tag: 'cmd_shared_lesson',
+            });
             showToast('🎓 BỐ MẸ VỪA GỬI BÀI HỌC CHO CON!');
           }
           break;
         case 'close_shared_link':
           setActiveSharedLesson(null);
           showToast('✅ Bố mẹ đã đóng bài học từ xa');
+          break;
+        case 'update_app_rule':
+          if (cmd.payload?.appId) {
+            updateAppRule(cmd.payload.appId, cmd.payload, targetChildId);
+            const nextApps = curApps.map((a) => (a.id === cmd.payload.appId ? { ...a, ...cmd.payload } : a));
+            updateNativeEnforcementRules({
+              isLocked: Boolean(lockChallengeRef.current?.isLocked),
+              kioskEnabled: Boolean(curKioskMode.isEnabled),
+              kioskPackage: curKioskMode.pinnedAppId || '',
+              blockedPackages: getBlockedPackagesList(nextApps, curStudyModeOnly),
+            }).catch(() => {});
+            showSystemNotification('📲 CẬP NHẬT QUYỀN ỨNG DỤNG', {
+              body: 'Bố mẹ vừa cập nhật quyền hoặc phân loại ứng dụng trên máy.',
+              soundType: 'info',
+              tag: 'cmd_app_rule',
+            });
+            showToast('📲 BỐ MẸ VỪA CẬP NHẬT QUYỀN ỨNG DỤNG!');
+          }
+          break;
+        case 'update_app_limit':
+          if (cmd.payload?.appId) {
+            updateAppRule(cmd.payload.appId, { dailyLimitMinutes: cmd.payload.limitMinutes }, targetChildId);
+            showSystemNotification('⏱️ GIỚI HẠN DÙNG ỨNG DỤNG ĐÃ ĐỔI', {
+              body: `Bố mẹ vừa cập nhật giới hạn sử dụng ứng dụng: ${cmd.payload?.limitMinutes} phút/ngày`,
+              soundType: 'info',
+              tag: 'cmd_app_limit',
+            });
+            showToast('⏱️ BỐ MẸ VỪA CẬP NHẬT GIỚI HẠN DÙNG ỨNG DỤNG!');
+          }
           break;
         default:
           break;
@@ -1027,8 +1204,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           if (msg.sender === 'parent' && (msg.timestamp || 0) > lastProcessedChatTsRef.current) {
             lastProcessedChatTsRef.current = msg.timestamp || Date.now();
 
-            // 1. Play audio chime on kid phone
+            // 1. Play audio chime on kid phone and show native system notification
             playNotificationChime();
+            showSystemNotification('💬 Tin nhắn từ Bố/Mẹ', {
+              body: msg.text,
+              soundType: 'chat',
+              tag: `chat_msg_${msg.id || Date.now()}`,
+            });
 
             if (!showChatModal) {
               setUnreadChatCount((prev) => prev + 1);
@@ -1187,7 +1369,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   // Core helper: Upload fresh telemetry snapshot with screen & sync mode (stabilized with refs)
   const uploadCurrentTelemetrySnapshot = React.useCallback(
     async (reason?: string) => {
-      if (!activeParentId || !targetChildId) return;
+      if (!activeParentId || !targetChildId || (!pairedInfo && !isSimulatorMode())) return;
 
       const curTrackingConfig = trackingConfigRef.current;
       const curChild = childRef.current;
@@ -1579,6 +1761,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     // Debounce geofence exit alert to at least 60 seconds interval to prevent GPS jitter loops
                     if (now - lastAlertTime > 60000) {
                       lastGeofenceAlertTimeRef.current[zone.id] = now;
+                      showSystemNotification(`⚠️ RA KHỎI VÙNG AN TOÀN`, {
+                        body: `Con vừa rời khỏi "${zone.name}". Hãy chú ý an toàn nhé!`,
+                        soundType: 'warning',
+                        tag: `geofence_exit_${zone.id}`,
+                      });
                       showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
                       haptics.warning();
                       if (zone.notifyOnExit !== false) {
@@ -1593,6 +1780,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     }
                   } else if (!wasInside && isInside) {
                     geofenceStateRef.current[zone.id] = true;
+                    showSystemNotification(`🏡 ĐÃ VÀO VÙNG AN TOÀN`, {
+                      body: `Con đã tới an toàn tại "${zone.name}".`,
+                      soundType: 'info',
+                      tag: `geofence_enter_${zone.id}`,
+                    });
                     showToast(`🏡 Bé đã vào vùng an toàn: ${zone.name}!`);
                     haptics.light();
                   }
@@ -1900,6 +2092,29 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   <Smartphone size={9} className="shrink-0" />
                   <span className="truncate">{pairedInfo?.deviceName || 'Thiết bị'}</span>
                 </span>
+
+                {/* Eco / Battery Saver Badge */}
+                {isEcoMode ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowKidControlPanel(true)}
+                    className="inline-flex items-center gap-1 bg-emerald-500 hover:bg-emerald-400 text-white px-1.5 py-0.5 rounded-lg text-[9.5px] font-black shadow-xs cursor-pointer border border-emerald-400/80 animate-subtle-pulse shrink-0"
+                    title="Chế độ tiết kiệm pin đang Bật"
+                  >
+                    <Leaf size={10} className="fill-white" />
+                    <span>Eco</span>
+                  </button>
+                ) : !trackingConfig.isMasterTrackingEnabled ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowKidControlPanel(true)}
+                    className="inline-flex items-center gap-1 bg-slate-600/80 text-white px-1.5 py-0.5 rounded-lg text-[9.5px] font-black shadow-xs cursor-pointer border border-slate-500 shrink-0"
+                    title="Đang tạm dừng giám sát ngầm"
+                  >
+                    <Power size={10} />
+                    <span>Ngủ đông</span>
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
@@ -3515,7 +3730,164 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               )}
             </div>
 
-            {/* Section 4: Device Info & Unpair */}
+            {/* Section 4: Battery Saver & Power Optimization */}
+            <div className="p-3.5 bg-gradient-to-br from-emerald-50/90 to-teal-50/70 rounded-2xl border border-emerald-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                  <BatteryCharging size={16} className="text-emerald-600" />
+                  <span>Tiết Kiệm Pin & Tối Ưu Năng Lượng</span>
+                </span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  isEcoMode ? 'bg-emerald-200 text-emerald-900 animate-pulse' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {isEcoMode ? '🍃 Đang Tiết Kiệm Pin' : 'Tiêu chuẩn'}
+                </span>
+              </div>
+
+              {/* Master Eco Battery Saver Card */}
+              <div className="p-3 bg-white/95 rounded-xl border border-emerald-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold shrink-0">
+                      <Leaf size={16} />
+                    </div>
+                    <div>
+                      <h5 className="text-xs font-black text-slate-800">Chế Độ Siêu Tiết Kiệm Pin</h5>
+                      <p className="text-[10px] text-slate-500">Tắt GPS liên tục & cảm biến để pin dùng lâu hơn gấp đôi</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleEcoMode}
+                    className={`w-11 h-6 rounded-full transition-colors duration-200 ease-in-out p-0.5 cursor-pointer shrink-0 ml-2 ${
+                      isEcoMode ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                        isEcoMode ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <div className="text-[9.5px] text-emerald-700 bg-emerald-50 rounded-lg p-1.5 font-medium leading-tight">
+                  🛡️ Khi bật chế độ này, nút SOS khẩn cấp, khóa máy và nhận lời dặn từ Bố Mẹ vẫn hoạt động 100%.
+                </div>
+              </div>
+
+              {/* Sub-controls: Toggle specific functions */}
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[10.5px] font-bold text-slate-700 block px-0.5">
+                  Tùy chỉnh bật/tắt từng chức năng riêng lẻ:
+                </span>
+
+                {/* 1. GPS Tracking Toggle */}
+                <div className="p-2.5 bg-white/90 rounded-xl border border-slate-200/80 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-6 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                      <MapPin size={13} />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Định vị GPS liên tục</span>
+                      <span className="text-[9.5px] text-slate-400">Tắt đi giúp máy con đỡ nóng và đỡ tốn pin nhất</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleGpsTracking}
+                    className={`w-9 h-5 rounded-full transition-colors duration-200 p-0.5 cursor-pointer shrink-0 ml-2 ${
+                      trackingConfig.enableGpsTracking ? 'bg-blue-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                        trackingConfig.enableGpsTracking ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* 2. Motion Sensors Toggle */}
+                <div className="p-2.5 bg-white/90 rounded-xl border border-slate-200/80 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-6 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center shrink-0">
+                      <Activity size={13} />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Cảm biến chuyển động (Gia tốc)</span>
+                      <span className="text-[9.5px] text-slate-400">Đo rung lắc và bước đi. Tắt để giảm tải CPU</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleSensorMonitoring}
+                    className={`w-9 h-5 rounded-full transition-colors duration-200 p-0.5 cursor-pointer shrink-0 ml-2 ${
+                      trackingConfig.enableSensorMonitoring ? 'bg-purple-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                        trackingConfig.enableSensorMonitoring ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* 3. Screen Time Sync Toggle */}
+                <div className="p-2.5 bg-white/90 rounded-xl border border-slate-200/80 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-6 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                      <Clock size={13} />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Thống kê giờ dùng ứng dụng</span>
+                      <span className="text-[9.5px] text-slate-400">Ghi nhận thời lượng mở app báo cáo cho Bố Mẹ</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleAppUsageTracking}
+                    className={`w-9 h-5 rounded-full transition-colors duration-200 p-0.5 cursor-pointer shrink-0 ml-2 ${
+                      trackingConfig.enableAppUsageTracking ? 'bg-amber-500' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                        trackingConfig.enableAppUsageTracking ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* 4. Master Standby Sleep Toggle */}
+                <div className="p-2.5 bg-white/90 rounded-xl border border-slate-200/80 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-6 rounded-lg bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
+                      <Power size={13} />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-800 block">Chế độ ngủ đông ngầm</span>
+                      <span className="text-[9.5px] text-slate-400">Tạm dừng mọi thu thập ngầm khi không dùng</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleMasterTracking}
+                    className={`w-9 h-5 rounded-full transition-colors duration-200 p-0.5 cursor-pointer shrink-0 ml-2 ${
+                      trackingConfig.isMasterTrackingEnabled ? 'bg-teal-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                        trackingConfig.isMasterTrackingEnabled ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 5: Device Info & Unpair */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-left">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">

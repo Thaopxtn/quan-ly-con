@@ -429,6 +429,29 @@ public class KidPermissionsPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void wakeUpDevice(PluginCall call) {
+        Context context = getContext();
+        try {
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                PowerManager.WakeLock wl = pm.newWakeLock(
+                        PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
+                        "KidCare::WakeUpDevice"
+                );
+                wl.acquire(5000);
+            }
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.w(TAG, "Error waking up device: " + e.getMessage());
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
     public void getDeviceInfo(PluginCall call) {
         Context context = getContext();
         JSObject ret = new JSObject();

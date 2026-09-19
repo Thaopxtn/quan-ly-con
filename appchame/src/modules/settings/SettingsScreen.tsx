@@ -29,7 +29,8 @@ import {
   MapPin,
   Mic,
   Clock,
-  Power
+  Power,
+  Leaf
 } from 'lucide-react';
 import { useAppState, getActiveParentId, DEFAULT_TRACKING_CONFIG } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
@@ -58,6 +59,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, onLogout
   const currentChild = state.children.find(c => c.id === currentChildId) || state.child;
   const currentParent = getCurrentParentAccount();
   const trackingConfig = currentSettings?.trackingConfig || DEFAULT_TRACKING_CONFIG;
+  const isEcoMode = Boolean(trackingConfig.isMasterTrackingEnabled && !trackingConfig.enableGpsTracking && !trackingConfig.enableSensorMonitoring);
 
   // Modal states
   const [showTrackingModal, setShowTrackingModal] = useState(false);
@@ -852,6 +854,59 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, onLogout
                   </p>
                 </div>
               )}
+
+              {/* Eco Mode Switch Card */}
+              <div className="bg-emerald-50/80 rounded-2xl p-3.5 border border-emerald-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                      isEcoMode ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-100 text-emerald-600'
+                    }`}>
+                      <Leaf size={16} />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">Chế Độ Siêu Tiết Kiệm Pin</span>
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        {isEcoMode ? 'Đang bật (Tắt GPS liên tục & cảm biến)' : 'Tắt GPS liên tục & cảm biến để pin lâu gấp đôi'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!currentChildId) return;
+                      if (isEcoMode) {
+                        setTrackingCollectionConfig(currentChildId, {
+                          ...trackingConfig,
+                          isMasterTrackingEnabled: true,
+                          enableGpsTracking: true,
+                          enableSensorMonitoring: true,
+                        });
+                      } else {
+                        setTrackingCollectionConfig(currentChildId, {
+                          ...trackingConfig,
+                          isMasterTrackingEnabled: true,
+                          enableGpsTracking: false,
+                          enableSensorMonitoring: false,
+                        });
+                      }
+                    }}
+                    className={`w-11 h-6 rounded-full transition-colors duration-200 ease-in-out p-0.5 cursor-pointer ${
+                      isEcoMode ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                        isEcoMode ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <div className="text-[9.5px] text-emerald-700 bg-white/70 rounded-lg p-1.5 font-medium leading-tight">
+                  🛡️ Khi bật chế độ này, nút SOS khẩn cấp, khóa máy và nhận thông báo từ cha mẹ trên máy con vẫn hoạt động 100%.
+                </div>
+              </div>
 
               {/* Master Switch Card */}
               <div className="bg-slate-50/90 rounded-2xl p-3.5 border border-slate-200/80 space-y-2">

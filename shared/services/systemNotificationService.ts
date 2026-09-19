@@ -1,5 +1,20 @@
-// System Notification Service for ParentPro
-// Standard OS-level and browser notifications (non-intrusive, dismissible)
+import { registerPlugin, Capacitor } from '@capacitor/core';
+
+export interface SystemNotificationPluginInterface {
+  showNotification(options: {
+    title: string;
+    body?: string;
+    soundType?: string;
+    tag?: string;
+    id?: number;
+  }): Promise<{ success: boolean; error?: string }>;
+
+  requestNotificationPermission(): Promise<{ granted: boolean }>;
+}
+
+const SystemNotificationPlugin = registerPlugin<SystemNotificationPluginInterface>('SystemNotificationPlugin');
+
+export type NotificationSoundType = 'info' | 'success' | 'warning' | 'emergency' | 'chat';
 
 export interface SystemNotificationOptions {
   body?: string;
@@ -8,12 +23,25 @@ export interface SystemNotificationOptions {
   badge?: string;
   data?: any;
   silent?: boolean;
+  soundType?: NotificationSoundType;
 }
 
 /**
- * Request permission for native browser/system notifications.
+ * Request permission for native system notifications (Android 13+ runtime permission or browser permission)
  */
 export async function requestSystemNotificationPermission(): Promise<boolean> {
+  // If on native Capacitor platform (Android/iOS)
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await SystemNotificationPlugin.requestNotificationPermission();
+      return !!res?.granted;
+    } catch (e) {
+      console.warn('Native requestNotificationPermission error:', e);
+      return false;
+    }
+  }
+
+  // Web browser fallback
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return false;
   }
@@ -31,16 +59,16 @@ export async function requestSystemNotificationPermission(): Promise<boolean> {
   return false;
 }
 
-export type NotificationSoundType = 'info' | 'success' | 'warning' | 'emergency';
-
-export interface SystemNotificationOptions {
-  body?: string;
-  icon?: string;
-  tag?: string;
-  badge?: string;
-  data?: any;
-  silent?: boolean;
-  soundType?: NotificationSoundType;
+/**
+ * Hash helper for unique integer notification IDs
+ */
+function hashStringToInt(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
 }
 
 /**
@@ -144,15 +172,40 @@ export function playSystemChime() {
 
 /**
  * Post a standard system notification (non-blocking)
+ * On Android / Capacitor, uses native SystemNotificationPlugin with channels & heads-up banner.
+ * In browser, uses Web Notification API & Web Audio.
  */
 export function showSystemNotification(title: string, options?: SystemNotificationOptions): Notification | null {
   if (typeof window === 'undefined') return null;
 
+  const soundType = options?.soundType || 'info';
+  const tag = options?.tag || `notif_${Date.now()}`;
+  const notifId = (hashStringToInt(tag) % 90000) + 1000;
+
+  // 1. If on native Android / iOS via Capacitor
+  if (Capacitor.isNativePlatform()) {
+    try {
+      SystemNotificationPlugin.showNotification({
+        title,
+        body: options?.body || '',
+        soundType,
+        tag,
+        id: notifId,
+      }).catch((err) => {
+        console.warn('SystemNotificationPlugin.showNotification error:', err);
+      });
+      return null;
+    } catch (e) {
+      console.warn('Failed to call SystemNotificationPlugin:', e);
+    }
+  }
+
+  // 2. Web browser fallback: audio chime + vibration
   if (!options?.silent) {
-    playNotificationSound(options?.soundType || 'info');
+    playNotificationSound(soundType);
     try {
       if ('vibrate' in navigator) {
-        if (options?.soundType === 'emergency') {
+        if (soundType === 'emergency') {
           navigator.vibrate([300, 100, 300, 100, 400]);
         } else {
           navigator.vibrate([150, 75, 150]);
@@ -161,12 +214,13 @@ export function showSystemNotification(title: string, options?: SystemNotificati
     } catch (e) {}
   }
 
+  // 3. Web browser Notification API
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
       const notif = new Notification(title, {
         body: options?.body || '',
         icon: options?.icon || '/icons/icon-192.png',
-        tag: options?.tag || `notif_${Date.now()}`,
+        tag,
         ...options,
       });
 

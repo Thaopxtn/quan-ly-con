@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { useAppState, syncWithCloudForChild, syncAllChildrenFromCloud, isSimulatorMode } from '@shared/store';
+import { useAppState, syncWithCloudForChild, syncAllChildrenFromCloud, isSimulatorMode, getActiveParentId } from '@shared/store';
 import { ParentBottomNav, ParentTab } from './components/ParentBottomNav';
 import { WelcomeAuthScreen } from './modules/auth/WelcomeAuthScreen';
 import { DashboardScreen } from './modules/dashboard/DashboardScreen';
@@ -98,8 +98,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
 
   // Sync with Cloud for active parent and children (deferred 300ms to free up launch thread)
   useEffect(() => {
-    const parentAccount = getCurrentParentAccount();
-    const parentId = parentAccount?.uid || 'family_primary';
+    const parentId = getActiveParentId();
     
     let timer: any = null;
     if (parentId) {
