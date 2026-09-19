@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Google Play Feature Graphic Generator (1024x500)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090d16;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      padding: 40px 0;
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    }
+    .graphic-box {
+      width: 1024px;
+      height: 500px;
+      position: relative;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========================================================================= -->
+  <!-- 1. PARENTPRO FEATURE GRAPHIC (1024 x 500)                                 -->
+  <!-- ========================================================================= -->
+  <div id="parentpro-feature" class="graphic-box">
+    <svg width="1024" height="500" viewBox="0 0 1024 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- Background Gradient -->
+        <linearGradient id="pBg" x1="0" y1="0" x2="1024" y2="500" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#0F172A" />
+          <stop offset="35%" stop-color="#1E3A8A" />
+          <stop offset="70%" stop-color="#1D4ED8" />
+          <stop offset="100%" stop-color="#172554" />
+        </linearGradient>
+
+        <radialGradient id="pGlowLeft" cx="240" cy="250" r="380" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.35" />
+          <stop offset="100%" stop-color="#1D4ED8" stop-opacity="0" />
+        </radialGradient>
+
+        <radialGradient id="pGlowRight" cx="780" cy="250" r="360" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#60A5FA" stop-opacity="0.4" />
+          <stop offset="100%" stop-color="#1E3A8A" stop-opacity="0" />
+        </radialGradient>
+
+        <!-- Shield Gradients -->
+        <linearGradient id="pShieldRim" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FFFFFF" />
+          <stop offset="50%" stop-color="#93C5FD" />
+          <stop offset="100%" stop-color="#3B82F6" />
+        </linearGradient>
+
+        <linearGradient id="pShieldBody" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#2563EB" />
+          <stop offset="100%" stop-color="#1E40AF" />
+        </linearGradient>
+
+        <linearGradient id="pHeart" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#F43F5E" />
+          <stop offset="100%" stop-color="#BE123C" />
+        </linearGradient>
+
+        <linearGradient id="pGold" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FDE047" />
+          <stop offset="100%" stop-color="#F59E0B" />
+        </linearGradient>
+
+        <!-- Drop Shadows -->
+        <filter id="pShadowPhone" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="16" dy="24" stdDeviation="24" flood-color="#020617" flood-opacity="0.65" />
+        </filter>
+        <filter id="pShadowLogo" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0F172A" flood-opacity="0.5" />
+        </filter>
+        <filter id="pBadgeGlow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.3" />
+        </filter>
+      </defs>
+
+      <!-- 1. Background Fill -->
+      <rect width="1024" height="500" fill="url(#pBg)" />
+      <rect width="1024" height="500" fill="url(#pGlowLeft)" />
+      <rect width="1024" height="500" fill="url(#pGlowRight)" />
+
+      <!-- Geometric Security Grid & Radar Circles -->
+      <g opacity="0.15">
+        <circle cx="780" cy="250" r="230" stroke="#93C5FD" stroke-width="1.5" stroke-dasharray="6 6" fill="none" />
+        <circle cx="780" cy="250" r="160" stroke="#FFFFFF" stroke-width="1.5" fill="none" />
+        <circle cx="780" cy="250" r="90" stroke="#93C5FD" stroke-width="1" stroke-dasharray="4 4" fill="none" />
+        <!-- Grid diagonal accent lines -->
+        <line x1="0" y1="500" x2="500" y2="0" stroke="#3B82F6" stroke-width="1" />
+        <line x1="200" y1="500" x2="700" y2="0" stroke="#3B82F6" stroke-width="1" />
+        <line x1="550" y1="500" x2="1050" y2="0" stroke="#3B82F6" stroke-width="1" />
+      </g>
+
+      <!-- 2. Left Side: Brand Logo, Typography & Value Proposition -->
+      <!-- Shield Logo (Centered at x=135, y=140) -->
+      <g filter="url(#pShadowLogo)">
+        <!-- Outer Rim Shield -->
+        <path d="M 135 75 
+                 C 166 75 192 84 196 88 
+                 C 198 140 188 188 135 234 
+                 C 82 188 72 140 74 88 
+                 C 78 84 104 75 135 75 Z" 
+              fill="url(#pShieldRim)" />
+        <!-- Inner Core Shield -->
+        <path d="M 135 83 
+                 C 161 83 183 90 186 94 
+                 C 188 137 178 178 135 218 
+                 C 92 178 82 137 84 94 
+                 C 87 90 109 83 135 83 Z" 
+              fill="url(#pShieldBody)" />
+        <!-- Heart Center -->
+        <path d="M 135 186 
+                 C 135 186 102 162 102 132 
+                 C 102 115 116 106 128 113 
+                 C 133 116 135 121 135 121 
+                 C 135 121 137 116 142 113 
+                 C 154 106 168 115 168 132 
+                 C 168 162 135 186 135 186 Z" 
+              fill="url(#pHeart)" />
+        <!-- Parent Child Silhouette -->
+        <circle cx="129" cy="130" r="7" fill="#FFFFFF" />
+        <path d="M 119 152 C 119 140 127 139 132 141 C 134 142 137 145 138 150 C 132 155 123 156 119 152 Z" fill="#FFFFFF" />
+        <circle cx="142" cy="137" r="5" fill="#FEF08A" />
+        <path d="M 136 153 C 136 146 142 145 145 147 C 147 149 149 151 149 155 C 145 158 139 157 136 153 Z" fill="#FEF08A" />
+        <!-- Top Star -->
+        <polygon points="135,68 137.5,72.5 143,75 137.5,77.5 135,82 132.5,77.5 127,75 132.5,72.5" fill="url(#pGold)" />
+      </g>
+
+      <!-- App Title -->
+      <text x="216" y="145" font-family="'Plus Jakarta Sans', sans-serif" font-size="52" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">
+        ParentPro
+      </text>
+      <rect x="490" y="105" width="68" height="28" rx="8" fill="#3B82F6" fill-opacity="0.3" stroke="#60A5FA" stroke-width="1.5" />
+      <text x="524" y="124" font-family="'Plus Jakarta Sans', sans-serif" font-size="13" font-weight="800" fill="#93C5FD" text-anchor="middle">
+        PRO
+      </text>
+
+      <!-- Main Tagline -->
+      <text x="80" y="278" font-family="'Plus Jakarta Sans', sans-serif" font-size="28" font-weight="800" fill="#FFFFFF" letter-spacing="-0.2">
+        Đồng Hành &amp; Bảo Vệ Con Toàn Diện
+      </text>
+      <text x="80" y="310" font-family="'Plus Jakarta Sans', sans-serif" font-size="15" font-weight="600" fill="#93C5FD" letter-spacing="0.2">
+        Giải pháp kiểm soát thời gian dùng máy, định vị GPS &amp; an toàn số cho trẻ
+      </text>
+
+      <!-- 3 Value Feature Badges -->
+      <!-- Badge 1: GPS -->
+      <g filter="url(#pBadgeGlow)" transform="translate(80, 348)">
+        <rect width="144" height="42" rx="14" fill="#1E293B" fill-opacity="0.8" stroke="#3B82F6" stroke-opacity="0.5" stroke-width="1.5" />
+        <circle cx="24" cy="21" r="10" fill="#2563EB" />
+        <text x="24" y="25" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">📍</text>
+        <text x="44" y="26" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Định vị GPS 24/7</text>
+      </g>
+
+      <!-- Badge 2: Screen Time -->
+      <g filter="url(#pBadgeGlow)" transform="translate(236, 348)">
+        <rect width="146" height="42" rx="14" fill="#1E293B" fill-opacity="0.8" stroke="#6366F1" stroke-opacity="0.5" stroke-width="1.5" />
+        <circle cx="24" cy="21" r="10" fill="#4F46E5" />
+        <text x="24" y="25" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">⏳</text>
+        <text x="44" y="26" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Khóa giờ dùng máy</text>
+      </g>
+
+      <!-- Badge 3: SOS -->
+      <g filter="url(#pBadgeGlow)" transform="translate(394, 348)">
+        <rect width="142" height="42" rx="14" fill="#1E293B" fill-opacity="0.8" stroke="#F43F5E" stroke-opacity="0.5" stroke-width="1.5" />
+        <circle cx="24" cy="21" r="10" fill="#E11D48" />
+        <text x="24" y="25" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">🚨</text>
+        <text x="44" y="26" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Cứu nạn SOS tức thì</text>
+      </g>
+
+      <!-- Security Trust Guarantee Line -->
+      <g transform="translate(80, 422)">
+        <circle cx="10" cy="10" r="8" fill="#10B981" fill-opacity="0.2" />
+        <text x="10" y="14" font-family="sans-serif" font-size="10" fill="#34D399" text-anchor="middle">✓</text>
+        <text x="26" y="14" font-family="'Plus Jakarta Sans', sans-serif" font-size="11.5" font-weight="600" fill="#94A3B8">
+          Tuân thủ Luật Trẻ Em &amp; COPPA Quốc Tế • Mã hóa đám mây Realtime 256-bit
+        </text>
+      </g>
+
+
+      <!-- 3. Right Side: Smartphone Device Mockup with Real ParentPro Dashboard UI -->
+      <g filter="url(#pShadowPhone)" transform="translate(680, 40)">
+        <!-- Phone Body Frame (270 x 440, rounded 36) -->
+        <rect width="270" height="440" rx="36" fill="#0F172A" stroke="#475569" stroke-width="3.5" />
+        <!-- Screen Bezel (260 x 430, rounded 32) -->
+        <rect x="5" y="5" width="260" height="430" rx="32" fill="#F8FAFC" />
+
+        <!-- Camera Pill / Dynamic Island -->
+        <rect x="95" y="12" width="70" height="14" rx="7" fill="#0F172A" />
+
+        <!-- App UI Inside Phone Mockup -->
+        <!-- Header Bar -->
+        <rect x="5" y="5" width="260" height="60" rx="32" fill="#2563EB" />
+        <rect x="5" y="35" width="260" height="30" fill="#2563EB" />
+        <circle cx="34" cy="46" r="14" fill="#FFFFFF" fill-opacity="0.2" />
+        <text x="34" y="50" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">👨‍👩‍👧</text>
+        <text x="56" y="44" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="800" fill="#FFFFFF">Phụ Huynh PRO</text>
+        <text x="56" y="56" font-family="'Plus Jakarta Sans', sans-serif" font-size="9" font-weight="600" fill="#BFDBFE">Đang quản lý: Bé An (10t)</text>
+        <circle cx="236" cy="46" r="12" fill="#FFFFFF" fill-opacity="0.2" />
+        <text x="236" y="50" font-family="sans-serif" font-size="11" fill="#FFFFFF" text-anchor="middle">🔔</text>
+
+        <!-- Child Profile Pill Card -->
+        <rect x="18" y="78" width="234" height="46" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />
+        <circle cx="42" cy="101" r="16" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5" />
+        <text x="42" y="106" font-family="sans-serif" font-size="15" text-anchor="middle">👧</text>
+        <text x="68" y="97" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="800" fill="#0F172A">Bé An</text>
+        <rect x="110" y="87" width="44" height="14" rx="7" fill="#DCFCE7" />
+        <text x="132" y="97" font-family="'Plus Jakarta Sans', sans-serif" font-size="8.5" font-weight="800" fill="#15803D" text-anchor="middle">● Online</text>
+        <text x="68" y="112" font-family="'Plus Jakarta Sans', sans-serif" font-size="9.5" font-weight="600" fill="#64748B">🔋 Pin: 78% • 📍 Ở Trường học</text>
+        <rect x="204" y="92" width="38" height="18" rx="6" fill="#FEE2E2" />
+        <text x="223" y="104" font-family="'Plus Jakarta Sans', sans-serif" font-size="9" font-weight="800" fill="#DC2626" text-anchor="middle">SOS</text>
+
+        <!-- Circular Screen Time Card -->
+        <rect x="18" y="134" width="234" height="136" rx="18" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />
+        <text x="32" y="152" font-family="'Plus Jakarta Sans', sans-serif" font-size="10.5" font-weight="800" fill="#1E293B">THỜI GIAN DÙNG HÔM NAY</text>
+
+        <!-- Circular Gauge (Center at x=80, y=204) -->
+        <circle cx="80" cy="204" r="38" stroke="#F1F5F9" stroke-width="8" fill="none" />
+        <circle cx="80" cy="204" r="38" stroke="#3B82F6" stroke-width="8" stroke-dasharray="238" stroke-dashoffset="60" stroke-linecap="round" fill="none" />
+        <text x="80" y="200" font-family="'Plus Jakarta Sans', sans-serif" font-size="13" font-weight="800" fill="#0F172A" text-anchor="middle">1h 45p</text>
+        <text x="80" y="214" font-family="'Plus Jakarta Sans', sans-serif" font-size="8" font-weight="700" fill="#64748B" text-anchor="middle">Còn lại 30p</text>
+
+        <!-- Stats on Right of Gauge -->
+        <text x="136" y="184" font-family="'Plus Jakarta Sans', sans-serif" font-size="9.5" font-weight="600" fill="#64748B">Đã dùng:</text>
+        <text x="194" y="184" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="800" fill="#0F172A">1h 45p</text>
+        <text x="136" y="206" font-family="'Plus Jakarta Sans', sans-serif" font-size="9.5" font-weight="600" fill="#64748B">Giới hạn:</text>
+        <text x="194" y="206" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="800" fill="#2563EB">2h 15p</text>
+        <text x="136" y="228" font-family="'Plus Jakarta Sans', sans-serif" font-size="9.5" font-weight="600" fill="#64748B">Trạng thái:</text>
+        <text x="194" y="228" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" font-weight="800" fill="#16A34A">An toàn</text>
+
+        <rect x="30" y="244" width="100" height="18" rx="6" fill="#FEE2E2" />
+        <text x="80" y="256" font-family="'Plus Jakarta Sans', sans-serif" font-size="8.5" font-weight="800" fill="#DC2626" text-anchor="middle">🔒 Khóa ngay</text>
+        <rect x="140" y="244" width="100" height="18" rx="6" fill="#EFF6FF" />
+        <text x="190" y="256" font-family="'Plus Jakarta Sans', sans-serif" font-size="8.5" font-weight="800" fill="#2563EB" text-anchor="middle">➕ Thêm 15 phút</text>
+
+        <!-- GPS Mini Map Box -->
+        <rect x="18" y="280" width="234" height="96" rx="16" fill="#E2E8F0" />
+        <!-- Map roads simulation -->
+        <path d="M 18 310 Q 100 330 180 290 T 252 340" stroke="#CBD5E1" stroke-width="8" fill="none" />
+        <path d="M 90 280 L 140 376" stroke="#CBD5E1" stroke-width="6" fill="none" />
+        <!-- Safe Zone Circle -->
+        <circle cx="140" cy="328" r="28" fill="#10B981" fill-opacity="0.25" stroke="#10B981" stroke-width="1.5" stroke-dasharray="3 3" />
+        <!-- Pin Marker -->
+        <circle cx="140" cy="328" r="10" fill="#2563EB" stroke="#FFFFFF" stroke-width="2" />
+        <circle cx="140" cy="328" r="4" fill="#FFFFFF" />
+        <rect x="100" y="292" width="80" height="18" rx="6" fill="#0F172A" />
+        <text x="140" y="304" font-family="'Plus Jakarta Sans', sans-serif" font-size="8" font-weight="800" fill="#FFFFFF" text-anchor="middle">📍 Trường Nguyễn Du</text>
+
+        <!-- Bottom Navigation Bar Mockup -->
+        <rect x="5" y="386" width="260" height="49" rx="25" fill="#FFFFFF" stroke="#F1F5F9" stroke-width="1" />
+        <text x="40" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">🏠</text>
+        <text x="95" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">📍</text>
+        <text x="150" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">📊</text>
+        <text x="205" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">⚙️</text>
+      </g>
+    </svg>
+  </div>
+
+
+  <!-- ========================================================================= -->
+  <!-- 2. KIDCARE FEATURE GRAPHIC (1024 x 500)                                   -->
+  <!-- ========================================================================= -->
+  <div id="kidcare-feature" class="graphic-box">
+    <svg width="1024" height="500" viewBox="0 0 1024 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- Background Gradient: Emerald to Cyan -->
+        <linearGradient id="kBg" x1="0" y1="0" x2="1024" y2="500" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#064E3B" />
+          <stop offset="35%" stop-color="#047857" />
+          <stop offset="70%" stop-color="#0284C7" />
+          <stop offset="100%" stop-color="#075985" />
+        </linearGradient>
+
+        <radialGradient id="kGlowLeft" cx="240" cy="250" r="380" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#34D399" stop-opacity="0.35" />
+          <stop offset="100%" stop-color="#047857" stop-opacity="0" />
+        </radialGradient>
+
+        <radialGradient id="kGlowRight" cx="780" cy="250" r="360" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.45" />
+          <stop offset="100%" stop-color="#0284C7" stop-opacity="0" />
+        </radialGradient>
+
+        <!-- Owl Gradients -->
+        <linearGradient id="kOwlBody" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FFFFFF" />
+          <stop offset="70%" stop-color="#E0F2FE" />
+          <stop offset="100%" stop-color="#BAE6FD" />
+        </linearGradient>
+
+        <linearGradient id="kOwlBelly" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FEF9C3" />
+          <stop offset="100%" stop-color="#FDE047" />
+        </linearGradient>
+
+        <linearGradient id="kWing" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#38BDF8" />
+          <stop offset="100%" stop-color="#0284C7" />
+        </linearGradient>
+
+        <linearGradient id="kGoldStar" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FDE047" />
+          <stop offset="100%" stop-color="#F59E0B" />
+        </linearGradient>
+
+        <!-- Shadows -->
+        <filter id="kShadowPhone" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="16" dy="24" stdDeviation="24" flood-color="#022c22" flood-opacity="0.6" />
+        </filter>
+        <filter id="kShadowOwl" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#064e3b" flood-opacity="0.5" />
+        </filter>
+        <filter id="kGlowStar" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#FDE047" flood-opacity="0.7" />
+        </filter>
+      </defs>
+
+      <!-- 1. Background Fill -->
+      <rect width="1024" height="500" fill="url(#kBg)" />
+      <rect width="1024" height="500" fill="url(#kGlowLeft)" />
+      <rect width="1024" height="500" fill="url(#kGlowRight)" />
+
+      <!-- Floating Playful Stars & Bubbles -->
+      <g opacity="0.25">
+        <circle cx="100" cy="90" r="30" fill="#FFFFFF" />
+        <circle cx="480" cy="80" r="22" fill="#FFFFFF" />
+        <circle cx="60" cy="380" r="25" fill="#FFFFFF" />
+        <circle cx="460" cy="430" r="35" fill="#FFFFFF" />
+        <circle cx="950" cy="80" r="40" fill="#FFFFFF" />
+        <circle cx="960" cy="440" r="28" fill="#FFFFFF" />
+      </g>
+
+      <!-- Sparkling Stars in Sky -->
+      <g fill="#FEF08A">
+        <polygon points="260,60 263,68 271,71 263,74 260,82 257,74 249,71 257,68" opacity="0.8" />
+        <polygon points="560,90 562,96 568,98 562,100 560,106 558,100 552,98 558,96" opacity="0.7" />
+        <polygon points="630,420 632,426 638,428 632,430 630,436 628,430 622,428 628,426" opacity="0.6" />
+        <polygon points="80,240 82,246 88,248 82,250 80,256 78,250 72,248 78,246" opacity="0.6" />
+      </g>
+
+      <!-- 2. Left Side: Mascot Character, Typography & Value Badges -->
+      <!-- Owl Mascot (Centered at x=135, y=145, scaled) -->
+      <g filter="url(#kShadowOwl)" transform="translate(75, 60) scale(0.65)">
+        <!-- Owl Body -->
+        <path d="M 120 40 C 145 40 172 28 186 48 C 195 60 197 80 200 100 C 224 135 228 205 205 265 C 182 315 145 325 120 325 C 95 325 58 315 35 265 C 12 205 16 135 40 100 C 43 80 45 60 54 48 C 68 28 95 40 120 40 Z" fill="url(#kOwlBody)" />
+        <!-- Wings -->
+        <path d="M 42 120 C 22 150 15 200 35 250 C 47 246 58 218 58 184 C 58 150 52 130 42 120 Z" fill="url(#kWing)" />
+        <path d="M 198 120 C 218 150 225 200 205 250 C 193 246 182 218 182 184 C 182 150 188 130 198 120 Z" fill="url(#kWing)" />
+        <!-- Belly -->
+        <path d="M 120 160 C 150 160 174 185 174 225 C 174 275 145 305 120 305 C 95 305 66 275 66 225 C 66 185 90 160 120 160 Z" fill="url(#kOwlBelly)" />
+        <!-- Eyes -->
+        <circle cx="85" cy="115" r="32" fill="#FFFFFF" />
+        <circle cx="87" cy="115" r="22" fill="#0284C7" />
+        <circle cx="84" cy="108" r="8" fill="#FFFFFF" />
+        <circle cx="155" cy="115" r="32" fill="#FFFFFF" />
+        <circle cx="153" cy="115" r="22" fill="#0284C7" />
+        <circle cx="150" cy="108" r="8" fill="#FFFFFF" />
+        <!-- Beak -->
+        <polygon points="120,146 108,126 132,126" fill="#F97316" />
+        <!-- Cheeks -->
+        <ellipse cx="55" cy="148" rx="11" ry="7" fill="#FB7185" opacity="0.5" />
+        <ellipse cx="185" cy="148" rx="11" ry="7" fill="#FB7185" opacity="0.5" />
+        <!-- Golden Star on Belly -->
+        <g filter="url(#kGlowStar)" transform="translate(120, 260)">
+          <polygon points="0,-18 5.1,-5.6 18,0 5.1,5.6 0,18 -5.1,5.6 -18,0 -5.1,-5.6" fill="url(#kGoldStar)" />
+          <circle cx="0" cy="0" r="3.5" fill="#FFFFFF" />
+        </g>
+      </g>
+
+      <!-- App Title -->
+      <text x="240" y="145" font-family="'Plus Jakarta Sans', sans-serif" font-size="54" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">
+        KidCare
+      </text>
+      <rect x="470" y="105" width="80" height="28" rx="8" fill="#FBBF24" fill-opacity="0.3" stroke="#FDE047" stroke-width="1.5" />
+      <text x="510" y="124" font-family="'Plus Jakarta Sans', sans-serif" font-size="13" font-weight="800" fill="#FEF08A" text-anchor="middle">
+        MÁY CON
+      </text>
+
+      <!-- Main Tagline -->
+      <text x="80" y="278" font-family="'Plus Jakarta Sans', sans-serif" font-size="28" font-weight="800" fill="#FFFFFF" letter-spacing="-0.2">
+        Học Tập, Tích Sao &amp; An Toàn Số
+      </text>
+      <text x="80" y="310" font-family="'Plus Jakarta Sans', sans-serif" font-size="15" font-weight="600" fill="#A7F3D0" letter-spacing="0.2">
+        Đồng hành cùng bé rèn luyện thói quen công nghệ lành mạnh, tự giác &amp; vui vẻ
+      </text>
+
+      <!-- 3 Value Feature Badges -->
+      <!-- Badge 1: Stars -->
+      <g filter="url(#pBadgeGlow)" transform="translate(80, 348)">
+        <rect width="144" height="42" rx="14" fill="#064E3B" fill-opacity="0.8" stroke="#10B981" stroke-opacity="0.6" stroke-width="1.5" />
+        <circle cx="24" cy="21" r="10" fill="#059669" />
+        <text x="24" y="25" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">⭐</text>
+        <text x="44" y="26" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Tích sao đổi quà</text>
+      </g>
+
+      <!-- Badge 2: Study -->
+      <g filter="url(#pBadgeGlow)" transform="translate(236, 348)">
+        <rect width="146" height="42" rx="14" fill="#064E3B" fill-opacity="0.8" stroke="#0EA5E9" stroke-opacity="0.6" stroke-width="1.5" />
+        <circle cx="24" cy="21" r="10" fill="#0284C7" />
+        <text x="24" y="25" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">📚</text>
+        <text x="44" y="26" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Học tập trung 24/7</text>
+      </g>
+
+      <!-- Badge 3: SOS -->
+      <g filter="url(#pBadgeGlow)" transform="translate(394, 348)">
+        <rect width="142" height="42" rx="14" fill="#064E3B" fill-opacity="0.8" stroke="#F43F5E" stroke-opacity="0.6" stroke-width="1.5" />
+        <circle cx="24" cy="21" r="10" fill="#E11D48" />
+        <text x="24" y="25" font-family="sans-serif" font-size="12" fill="#FFFFFF" text-anchor="middle">🚨</text>
+        <text x="44" y="26" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Nút SOS bảo vệ</text>
+      </g>
+
+      <!-- Trust Line -->
+      <g transform="translate(80, 422)">
+        <circle cx="10" cy="10" r="8" fill="#FDE047" fill-opacity="0.2" />
+        <text x="10" y="14" font-family="sans-serif" font-size="10" fill="#FDE047" text-anchor="middle">★</text>
+        <text x="26" y="14" font-family="'Plus Jakarta Sans', sans-serif" font-size="11.5" font-weight="600" fill="#D1FAE5">
+          Giao diện thân thiện • Khóa ứng dụng độc hại • Tiết kiệm pin tối ưu
+        </text>
+      </g>
+
+
+      <!-- 3. Right Side: Smartphone Device Mockup with Real KidCare UI -->
+      <g filter="url(#kShadowPhone)" transform="translate(680, 40)">
+        <!-- Phone Frame -->
+        <rect width="270" height="440" rx="36" fill="#064E3B" stroke="#10B981" stroke-width="3" />
+        <!-- Screen Bezel -->
+        <rect x="5" y="5" width="260" height="430" rx="32" fill="#F0FDF4" />
+
+        <!-- Camera Pill -->
+        <rect x="95" y="12" width="70" height="14" rx="7" fill="#064E3B" />
+
+        <!-- App UI Inside Phone Mockup -->
+        <!-- Header Bar -->
+        <rect x="5" y="5" width="260" height="64" rx="32" fill="#0284C7" />
+        <rect x="5" y="40" width="260" height="30" fill="#0284C7" />
+        <circle cx="34" cy="46" r="14" fill="#FFFFFF" />
+        <text x="34" y="51" font-family="sans-serif" font-size="13" text-anchor="middle">👧</text>
+        <text x="56" y="44" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="800" fill="#FFFFFF">Chào Bé An! 🌈</text>
+        <rect x="56" y="50" width="62" height="16" rx="8" fill="#FBBF24" />
+        <text x="87" y="62" font-family="'Plus Jakarta Sans', sans-serif" font-size="9" font-weight="800" fill="#78350F" text-anchor="middle">⭐ 28 Sao</text>
+
+        <rect x="202" y="38" width="48" height="22" rx="8" fill="#DC2626" />
+        <text x="226" y="52" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" font-weight="900" fill="#FFFFFF" text-anchor="middle">! SOS</text>
+
+        <!-- Mascot Advice Card -->
+        <rect x="18" y="78" width="234" height="48" rx="14" fill="#FFFFFF" stroke="#BBF7D0" stroke-width="1" />
+        <circle cx="42" cy="102" r="16" fill="#DCFCE7" />
+        <text x="42" y="107" font-family="sans-serif" font-size="16" text-anchor="middle">🦉</text>
+        <text x="66" y="96" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="800" fill="#0F172A">Bé Cú Thông Thái</text>
+        <rect x="160" y="86" width="46" height="13" rx="6.5" fill="#FEF3C7" />
+        <text x="183" y="96" font-family="'Plus Jakarta Sans', sans-serif" font-size="8" font-weight="800" fill="#B45309" text-anchor="middle">Level 3 ⭐</text>
+        <text x="66" y="112" font-family="'Plus Jakarta Sans', sans-serif" font-size="9" font-weight="600" fill="#15803D">Hoàn thành 3 nhiệm vụ để đổi quà nè!</text>
+
+        <!-- Free Screen Time Card -->
+        <rect x="18" y="134" width="234" height="124" rx="18" fill="#0284C7" />
+        <text x="32" y="154" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" font-weight="700" fill="#BAE6FD">THỜI GIAN TỰ DO HÔM NAY</text>
+        <rect x="180" y="142" width="58" height="16" rx="8" fill="#0369A1" />
+        <text x="209" y="153" font-family="'Plus Jakarta Sans', sans-serif" font-size="8" font-weight="800" fill="#E0F2FE" text-anchor="middle">✓ Đang mở</text>
+
+        <text x="32" y="174" font-family="'Plus Jakarta Sans', sans-serif" font-size="10.5" font-weight="600" fill="#E0F2FE">Con còn lại:</text>
+        <text x="32" y="206" font-family="'Plus Jakarta Sans', sans-serif" font-size="28" font-weight="900" fill="#FFFFFF">2h 15p</text>
+
+        <rect x="136" y="172" width="102" height="24" rx="8" fill="#38BDF8" />
+        <text x="187" y="188" font-family="'Plus Jakarta Sans', sans-serif" font-size="9.5" font-weight="800" fill="#0C4A6E" text-anchor="middle">🙋 Xin thêm giờ</text>
+        <rect x="136" y="202" width="102" height="24" rx="8" fill="#F59E0B" />
+        <text x="187" y="218" font-family="'Plus Jakarta Sans', sans-serif" font-size="9.5" font-weight="800" fill="#FFFFFF" text-anchor="middle">🎯 Làm bài nhận giờ</text>
+
+        <!-- Progress bar -->
+        <rect x="32" y="238" width="206" height="8" rx="4" fill="#0369A1" />
+        <rect x="32" y="238" width="160" height="8" rx="4" fill="#34D399" />
+
+        <!-- Launcher Safe Apps Drawer -->
+        <rect x="18" y="268" width="234" height="106" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />
+        <text x="32" y="286" font-family="'Plus Jakarta Sans', sans-serif" font-size="10.5" font-weight="800" fill="#1E293B">Ứng Dụng Được Phép</text>
+        <rect x="186" y="275" width="52" height="14" rx="6" fill="#EFF6FF" />
+        <text x="212" y="285" font-family="'Plus Jakarta Sans', sans-serif" font-size="8" font-weight="800" fill="#2563EB" text-anchor="middle">16 App</text>
+
+        <!-- 4 App icons -->
+        <rect x="32" y="296" width="42" height="42" rx="12" fill="#F59E0B" />
+        <text x="53" y="322" font-family="sans-serif" font-size="20" fill="#FFFFFF" text-anchor="middle">🦉</text>
+        <text x="53" y="352" font-family="'Plus Jakarta Sans', sans-serif" font-size="7.5" font-weight="700" fill="#64748B" text-anchor="middle">Duolingo</text>
+
+        <rect x="86" y="296" width="42" height="42" rx="12" fill="#2563EB" />
+        <text x="107" y="322" font-family="sans-serif" font-size="18" fill="#FFFFFF" text-anchor="middle">📐</text>
+        <text x="107" y="352" font-family="'Plus Jakarta Sans', sans-serif" font-size="7.5" font-weight="700" fill="#64748B" text-anchor="middle">VioEdu</text>
+
+        <rect x="140" y="296" width="42" height="42" rx="12" fill="#10B981" />
+        <text x="161" y="322" font-family="sans-serif" font-size="18" fill="#FFFFFF" text-anchor="middle">📖</text>
+        <text x="161" y="352" font-family="'Plus Jakarta Sans', sans-serif" font-size="7.5" font-weight="700" fill="#64748B" text-anchor="middle">Monkey</text>
+
+        <rect x="194" y="296" width="42" height="42" rx="12" fill="#6366F1" />
+        <text x="215" y="322" font-family="sans-serif" font-size="18" fill="#FFFFFF" text-anchor="middle">⏰</text>
+        <text x="215" y="352" font-family="'Plus Jakarta Sans', sans-serif" font-size="7.5" font-weight="700" fill="#64748B" text-anchor="middle">Đồng Hồ</text>
+
+        <!-- Bottom Navigation Mockup -->
+        <rect x="5" y="386" width="260" height="49" rx="25" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />
+        <text x="40" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">📱</text>
+        <text x="95" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">🎯</text>
+        <text x="150" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">🎁</text>
+        <text x="205" y="415" font-family="sans-serif" font-size="14" text-anchor="middle">⏰</text>
+      </g>
+    </svg>
+  </div>
+
+</body>
+</html>
