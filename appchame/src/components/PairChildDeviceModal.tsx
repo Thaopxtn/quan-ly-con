@@ -24,7 +24,6 @@ import {
 import {
   createChildPairingCode,
   subscribePairingSession,
-  requestPairingWithKidCode,
   loadChildDataFromCloud,
   PairingSession
 } from "@shared/firebase/pairingService";
@@ -58,10 +57,9 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
   const currentParent = getCurrentParentAccount();
 
   // Tabs:
-  // 1. 'parent_generate': Bố mẹ tạo mã PIN 6 số cho con nhập (CHÍNH - KHUYẾN NGHỊ)
-  // 2. 'from_kid': Nhập mã do máy con tạo (Dự phòng)
-  // 3. 'from_share': Nhận chia sẻ từ phụ huynh khác
-  const [activeTab, setActiveTab] = useState<'parent_generate' | 'from_kid' | 'from_share'>('parent_generate');
+  // 1. 'parent_generate': Bố mẹ tạo mã PIN 6 số cho con nhập (CHÍNH - DUY NHẤT CHO THIẾT BỊ CON)
+  // 2. 'from_share': Nhận chia sẻ từ phụ huynh khác
+  const [activeTab, setActiveTab] = useState<'parent_generate' | 'from_share'>('parent_generate');
 
   // Multi-device target mode: 'existing' or 'new'
   const initialChildId = propChildId || (state.children.length > 0 ? state.children[0].id : 'new');
@@ -81,23 +79,13 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
   // Tab 1 state: Generated PIN session for child to enter
   const [generatedSession, setGeneratedSession] = useState<PairingSession | null>(null);
   const [isGeneratingPin, setIsGeneratingPin] = useState(false);
+  const [generatePinError, setGeneratePinError] = useState<string | null>(null);
   const [pinTimeLeft, setPinTimeLeft] = useState(15 * 60);
   const [copiedPin, setCopiedPin] = useState(false);
-
-  // Tab 2 state: Parent enters kid's code
-  const [kidCode, setKidCode] = useState('');
-  const [isRequestingKidCode, setIsRequestingKidCode] = useState(false);
-  const [kidCodeError, setKidCodeError] = useState<string | null>(null);
-  const [isWaitingKidApproval, setIsWaitingKidApproval] = useState(false);
-  const [pendingKidSession, setPendingKidSession] = useState<PairingSession | null>(null);
-  const [kidCodeTimeLeft, setKidCodeTimeLeft] = useState(15 * 60);
-
-  // Tab 3 state: Co-parent share
+  // Tab 2 state: Co-parent share
   const [shareCode, setShareCode] = useState('');
   const [isAcceptingShare, setIsAcceptingShare] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
-
-  // Celebration state
   const [isPairedSuccess, setIsPairedSuccess] = useState(false);
   const [pairedChildSummary, setPairedChildSummary] = useState<{
     name: string;
@@ -109,10 +97,11 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
 
   const selectedChildObj = state.children.find((c) => c.id === selectedChildId);
 
-  // ─── Auto-generate PIN for Tab 1 ──────────────────────────────────────────
+  // ─── Generate PIN for Child Device ──────────────────────────────────────────
   const handleGeneratePin = async () => {
     setIsGeneratingPin(true);
     setCopiedPin(false);
+    setGeneratePinError(null);
     try {
       const parentId = currentParent?.uid || getActiveParentId();
       const parentName = currentParent?.displayName || "Bố/Mẹ";
@@ -143,14 +132,15 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
 
       setGeneratedSession(session);
       setPinTimeLeft(15 * 60);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to generate child PIN:", err);
+      setGeneratePinError(err?.message || "Không thể tạo mã lúc này. Vui lòng kiểm tra mạng và thử lại.");
     } finally {
       setIsGeneratingPin(false);
     }
   };
 
-  // Generate PIN on mount or when switching to existing child / setting new child
+  // Generate PIN on mount or when switching child
   useEffect(() => {
     if (activeTab === 'parent_generate' && !generatedSession && !isPairedSuccess) {
       handleGeneratePin();
@@ -163,26 +153,9 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
     const interval = setInterval(() => {
       const remaining = Math.max(0, Math.floor((generatedSession.expiresAt - Date.now()) / 1000));
       setPinTimeLeft(remaining);
-      if (remaining <= 0) {
-        // Expired
-      }
     }, 1000);
     return () => clearInterval(interval);
   }, [generatedSession, activeTab, isPairedSuccess]);
-
-  // Countdown timer for waiting kid approval (Tab 2)
-  useEffect(() => {
-    if (!isWaitingKidApproval || !pendingKidSession) return;
-    const interval = setInterval(() => {
-      const remaining = Math.max(0, Math.floor((pendingKidSession.expiresAt - Date.now()) / 1000));
-      setKidCodeTimeLeft(remaining);
-      if (remaining <= 0) {
-        setIsWaitingKidApproval(false);
-        setKidCodeError("Mã kết nối đã hết hạn. Vui lòng tạo mã mới trên máy con.");
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isWaitingKidApproval, pendingKidSession]);
 
   const formatTimer = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -283,133 +256,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
     setTimeout(() => setCopiedPin(false), 2000);
   };
 
-  // ─── TAB 2: Parent sends request using Kid's 6-digit code ─────────────────
-  const handleSendPairingRequest = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const clean = kidCode.replace(/\s+/g, "").trim();
-    if (clean.length !== 6) {
-      setKidCodeError("Vui lòng nhập đủ 6 chữ số hiển thị trên điện thoại của con.");
-      return;
-    }
-
-    setIsRequestingKidCode(true);
-    setKidCodeError(null);
-
-    try {
-      const parentId = currentParent?.uid || getActiveParentId();
-      const parentName = currentParent?.displayName || "Bố/Mẹ";
-
-      const res = await requestPairingWithKidCode(clean, parentId, parentName);
-
-      if (!res.success || !res.session) {
-        setIsRequestingKidCode(false);
-        setKidCodeError(res.error || "Mã không đúng hoặc đã hết hạn. Vui lòng kiểm tra lại!");
-        return;
-      }
-
-      setPendingKidSession(res.session);
-      const remaining = Math.max(0, Math.floor((res.session.expiresAt - Date.now()) / 1000));
-      setKidCodeTimeLeft(remaining);
-      setIsWaitingKidApproval(true);
-    } catch (err: any) {
-      setKidCodeError(err.message || "Lỗi kết nối máy chủ. Vui lòng thử lại!");
-    } finally {
-      setIsRequestingKidCode(false);
-    }
-  };
-
-  // Real-time listener for Tab 2 approval from Kid device
-  useEffect(() => {
-    if (!isWaitingKidApproval || !pendingKidSession?.code) return;
-    const cleanCode = pendingKidSession.code;
-
-    let isCompleted = false;
-
-    const finalizeSuccess = async (data: any) => {
-      if (isCompleted) return;
-      isCompleted = true;
-
-      const parentId = currentParent?.uid || getActiveParentId();
-      let cloudData: Record<string, any> | null = null;
-      try {
-        cloudData = await loadChildDataFromCloud(parentId, pendingKidSession.childId);
-      } catch (_) {}
-
-      const childName = cloudData?.name || data?.childName || pendingKidSession.childName || "Bé yêu";
-      const childAvatar = cloudData?.avatar || data?.childAvatar || pendingKidSession.childAvatar || DEFAULT_AVATARS[0];
-      const childAge = cloudData?.age || data?.childAge || pendingKidSession.childAge || 8;
-      const childBirthYear = cloudData?.birthYear || data?.childBirthYear || pendingKidSession.childBirthYear || new Date().getFullYear() - childAge;
-
-      const devData = data?.childDeviceInfo || pendingKidSession.childDeviceInfo;
-      const deviceName = devData?.deviceName || devData?.model || "Điện thoại của bé";
-      const fullDevice: ChildDeviceInfo = {
-        deviceId: devData?.deviceId || ("dev_" + pendingKidSession.childId),
-        hardwareIdType: devData?.hardwareIdType || "imei",
-        deviceName: deviceName,
-        model: devData?.model || "Android Device",
-        manufacturer: devData?.manufacturer || "Android",
-        phoneNumber: devData?.phoneNumber || "",
-        imei: devData?.imei || "",
-        mac: devData?.mac || "",
-        serial: devData?.serial || "",
-        androidId: devData?.androidId || "",
-        osVersion: devData?.osVersion || "Android",
-        pairedAt: new Date().toISOString(),
-        status: "online",
-        battery: 100,
-        isPrimary: true,
-      };
-
-      if (targetChildMode === "existing" && selectedChildId) {
-        addOrUpdateChildDevice(selectedChildId, fullDevice);
-        setPairedChildSummary({
-          name: selectedChildObj?.name || childName,
-          avatar: selectedChildObj?.avatar || childAvatar,
-          age: selectedChildObj?.age || childAge,
-          deviceModel: `${deviceName} (${fullDevice.model})`,
-        });
-        if (onSuccess) onSuccess(selectedChildId, selectedChildObj?.name || childName);
-      } else {
-        addChild({
-          id: pendingKidSession.childId,
-          name: childName,
-          avatar: childAvatar,
-          age: childAge,
-          birthYear: childBirthYear,
-          status: "online",
-          battery: 100,
-          devices: [fullDevice],
-          activeDeviceId: fullDevice.deviceId,
-        });
-        setPairedChildSummary({
-          name: childName,
-          avatar: childAvatar,
-          age: childAge,
-          deviceModel: `${deviceName} (${fullDevice.model})`,
-        });
-        if (onSuccess) onSuccess(pendingKidSession.childId, childName);
-      }
-
-      setIsWaitingKidApproval(false);
-      setIsPairedSuccess(true);
-      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-      syncAllChildrenFromCloud();
-
-      setTimeout(() => {
-        onClose();
-      }, 3000);
-    };
-
-    const unsub = subscribePairingSession(cleanCode, (session) => {
-      if (session && session.status === 'paired') {
-        finalizeSuccess(session);
-      }
-    });
-
-    return () => unsub();
-  }, [isWaitingKidApproval, pendingKidSession]);
-
-  // ─── TAB 3: Connect using Co-Parent Share Code ─────────────────────────────
+  // ─── TAB 2: Connect using Co-Parent Share Code ─────────────────────────────
   const handleAcceptShareCode = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = shareCode.replace(/\s+/g, "").trim();
@@ -548,54 +395,36 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
           </div>
         ) : (
           <>
-            {/* Tab Navigation */}
-            <div className="grid grid-cols-3 p-1 bg-slate-100 rounded-2xl text-[10.5px] font-bold">
+            {/* Tab Navigation (2 Tabs) */}
+            <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl text-[11px] font-bold">
               <button
                 type="button"
                 onClick={() => {
                   setActiveTab("parent_generate");
-                  setKidCodeError(null);
                   setShareError(null);
                 }}
-                className={`py-2 rounded-xl transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                className={`py-2 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeTab === "parent_generate"
                     ? "bg-white text-blue-700 shadow-xs font-black"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <Zap size={13} className={activeTab === "parent_generate" ? "text-amber-500" : ""} />
+                <Zap size={14} className={activeTab === "parent_generate" ? "text-amber-500 fill-amber-500" : ""} />
                 <span>Tạo mã cho con</span>
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setActiveTab("from_kid");
-                  setKidCodeError(null);
-                  setShareError(null);
-                }}
-                className={`py-2 rounded-xl transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
-                  activeTab === "from_kid"
-                    ? "bg-white text-blue-700 shadow-xs font-black"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Smartphone size={13} />
-                <span>Nhập mã máy con</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
                   setActiveTab("from_share");
-                  setKidCodeError(null);
                   setShareError(null);
                 }}
-                className={`py-2 rounded-xl transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                className={`py-2 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeTab === "from_share"
                     ? "bg-white text-indigo-700 shadow-xs font-black"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <Share2 size={13} />
+                <Share2 size={14} />
                 <span>Nhận chia sẻ</span>
               </button>
             </div>
@@ -674,7 +503,9 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
                         <input
                           type="text"
                           value={newChildName}
-                          onChange={(e) => setNewChildName(e.target.value)}
+                          onChange={(e) => {
+                            setNewChildName(e.target.value);
+                          }}
                           placeholder="Ví dụ: Bé An, Bé Bống..."
                           className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-900"
                         />
@@ -686,7 +517,9 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
                           </label>
                           <select
                             value={newChildAge}
-                            onChange={(e) => setNewChildAge(Number(e.target.value))}
+                            onChange={(e) => {
+                              setNewChildAge(Number(e.target.value));
+                            }}
                             className="w-full p-2 text-xs font-bold rounded-xl border border-slate-300 bg-white text-slate-900"
                           >
                             {Array.from({ length: 15 }, (_, i) => i + 4).map((a) => (
@@ -729,6 +562,23 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Error Banner if any */}
+                {generatePinError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs font-semibold flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle size={16} className="shrink-0 text-rose-500" />
+                      <span>{generatePinError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGeneratePin}
+                      className="px-2.5 py-1 bg-rose-600 text-white text-[10.5px] font-bold rounded-lg shrink-0 active:scale-95"
+                    >
+                      Thử lại
+                    </button>
+                  </div>
+                )}
 
                 {/* The Generated Code Display */}
                 {isGeneratingPin ? (
@@ -817,120 +667,11 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
                   <button
                     type="button"
                     onClick={handleGeneratePin}
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
+                    className="w-full py-3.5 bg-blue-600 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs rounded-2xl shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
                   >
                     <Sparkles size={16} />
-                    <span>Tạo Mã Kết Nối Mới</span>
+                    <span>Tạo Mã Kết Nối (Mã 6 Số)</span>
                   </button>
-                )}
-              </div>
-            )}
-
-            {/* ══════════════════════════════════════════════════════════════════
-                TAB 2: NHẬP MÃ DO MÁY CON TẠO (REVERSE FLOW)
-                ══════════════════════════════════════════════════════════════════ */}
-            {activeTab === "from_kid" && (
-              <div className="space-y-3.5 py-1">
-                {isWaitingKidApproval && pendingKidSession ? (
-                  <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
-                    <div className="relative w-16 h-16 mx-auto">
-                      <span className="absolute inset-0 rounded-full bg-blue-400/30 animate-ping" />
-                      <div className="relative w-16 h-16 rounded-full bg-blue-50 border-2 border-blue-300 flex items-center justify-center text-blue-600 shadow-md">
-                        <Smartphone size={26} className="animate-bounce" />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10.5px] font-black uppercase tracking-wider">
-                        <Radio size={12} className="text-blue-600 animate-pulse" />
-                        ĐÃ GỬI YÊU CẦU GHÉP ĐÔI
-                      </span>
-                      <h4 className="text-sm font-black text-slate-900 pt-1">
-                        Đang chờ bé "{pendingKidSession.childName}" xác nhận...
-                      </h4>
-                      <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                        Mở máy con và bấm nút{" "}
-                        <strong className="text-blue-600 font-bold">[Chấp nhận]</strong> trên thông báo.
-                      </p>
-                    </div>
-
-                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-2.5 flex items-center justify-between text-xs">
-                      <span className="text-slate-600 font-medium">Thời gian còn lại:</span>
-                      <span className="font-mono font-black text-blue-700 text-sm bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200">
-                        {formatTimer(kidCodeTimeLeft)}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsWaitingKidApproval(false);
-                        setPendingKidSession(null);
-                        setKidCodeError(null);
-                      }}
-                      className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
-                    >
-                      Hủy & nhập mã khác
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="bg-blue-50/70 border border-blue-200/70 rounded-2xl p-3 space-y-1.5">
-                      <div className="flex items-center gap-2 text-blue-900 font-bold text-xs">
-                        <UserCheck size={16} className="text-blue-600 shrink-0" />
-                        <span>Nhập mã 6 số hiển thị trên máy con:</span>
-                      </div>
-                      <p className="text-[11px] text-slate-600 leading-relaxed">
-                        Nếu bé đã mở app KidCare và đang hiển thị mã 6 số trên màn hình, hãy nhập vào đây.
-                      </p>
-                    </div>
-
-                    <form onSubmit={handleSendPairingRequest} className="space-y-3">
-                      <div>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          maxLength={7}
-                          value={kidCode}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9\s]/g, "");
-                            setKidCode(val);
-                            setKidCodeError(null);
-                          }}
-                          placeholder="VD: 852 147"
-                          className="w-full text-center text-2xl font-black font-mono tracking-widest px-4 py-3 rounded-2xl border-2 border-slate-200 focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white text-slate-900 shadow-inner"
-                          autoFocus
-                        />
-                      </div>
-
-                      {kidCodeError && (
-                        <div className="flex items-center gap-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
-                          <AlertCircle size={15} className="shrink-0" />
-                          <span>{kidCodeError}</span>
-                        </div>
-                      )}
-
-                      <button
-                        type="submit"
-                        disabled={isRequestingKidCode || kidCode.replace(/\s+/g, "").length !== 6}
-                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
-                      >
-                        {isRequestingKidCode ? (
-                          <>
-                            <Loader2 size={16} className="animate-spin" />
-                            <span>Đang gửi yêu cầu...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles size={16} />
-                            <span>Gửi Yêu Cầu Kết Nối</span>
-                            <ArrowRight size={14} />
-                          </>
-                        )}
-                      </button>
-                    </form>
-                  </>
                 )}
               </div>
             )}

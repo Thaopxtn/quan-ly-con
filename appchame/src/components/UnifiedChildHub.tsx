@@ -394,7 +394,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
               Chưa có thiết bị con nào kết nối
             </h4>
             <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-              Cài ứng dụng <strong>KidCare</strong> trên điện thoại con, tạo hồ sơ và lấy mã PIN 6 số để kết nối hai máy.
+              Bấm nút dưới đây để tạo mã PIN 6 số, sau đó nhập vào app <strong>KidCare</strong> trên máy con để kết nối tức thì.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">

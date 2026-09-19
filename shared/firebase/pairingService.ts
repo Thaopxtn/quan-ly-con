@@ -217,18 +217,26 @@ export async function createChildPairingCode(
     gender?: "boy" | "girl";
   }
 ): Promise<PairingSession> {
+  // Ensure active auth session so Firebase Security Rules allow write
+  await ensureKidAnonymousAuth().catch(() => {});
+
   const code = generateRandomPin();
   const now = Date.now();
+  const age = extraChildData?.age ?? 8;
+  const birthYear = extraChildData?.birthYear ?? (new Date().getFullYear() - age);
+  const avatar = extraChildData?.avatar || "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150";
+  const gender = extraChildData?.gender || "boy";
+
   const session: PairingSession = {
     code,
-    parentId,
-    parentName,
-    childId,
-    childName,
-    childAge: extraChildData?.age,
-    childBirthYear: extraChildData?.birthYear,
-    childAvatar: extraChildData?.avatar,
-    childGender: extraChildData?.gender,
+    parentId: parentId || "family_primary",
+    parentName: parentName || "Bố/Mẹ",
+    childId: childId || ("child_" + now),
+    childName: childName.trim() || "Bé yêu",
+    childAge: age,
+    childBirthYear: birthYear,
+    childAvatar: avatar,
+    childGender: gender,
     status: "pending",
     initiator: "parent",
     createdAt: now,
@@ -241,22 +249,35 @@ export async function createChildPairingCode(
 
   // Save to localStorage first
   if (typeof window !== "undefined") {
-    const existingStr = localStorage.getItem(LOCAL_PAIRING_SESSIONS_KEY);
-    const sessions: Record<string, PairingSession> = existingStr ? JSON.parse(existingStr) : {};
-    sessions[code] = session;
-    localStorage.setItem(LOCAL_PAIRING_SESSIONS_KEY, JSON.stringify(sessions));
+    try {
+      const existingStr = localStorage.getItem(LOCAL_PAIRING_SESSIONS_KEY);
+      const sessions: Record<string, PairingSession> = existingStr ? JSON.parse(existingStr) : {};
+      sessions[code] = session;
+      localStorage.setItem(LOCAL_PAIRING_SESSIONS_KEY, JSON.stringify(sessions));
+    } catch (localErr) {
+      console.warn("localStorage pairing write warning:", localErr);
+    }
   }
 
-  // Non-blocking Firebase writes
+  // Sanitize data 100% against undefined values
+  const sanitized = sanitizeForFirebase({ ...session, timestamp: now });
+
+  // Cloud Realtime writes
   if (isFirebaseConfigured() && rtdb) {
-    rtdbSet(rtdbRef(rtdb, `pairings/${code}`), { ...session, timestamp: now }).catch((e) =>
-      console.warn("RTDB pairing write skipped:", e?.code)
-    );
+    try {
+      await rtdbSet(rtdbRef(rtdb, `pairings/${code}`), sanitized);
+      console.log(`[Pairing] ✅ RTDB code ${code} created successfully for ${session.childName}`);
+    } catch (e: any) {
+      console.warn("RTDB pairing write error:", e?.code || e?.message);
+    }
   }
   if (isFirebaseConfigured() && db) {
-    setDoc(doc(db, "pairings", code), { ...session, timestamp: serverTimestamp() }).catch((e) =>
-      console.warn("Firestore pairing write skipped:", e?.code)
-    );
+    try {
+      await setDoc(doc(db, "pairings", code), sanitized);
+      console.log(`[Pairing] ✅ Firestore code ${code} created successfully for ${session.childName}`);
+    } catch (e: any) {
+      console.warn("Firestore pairing write error:", e?.code || e?.message);
+    }
   }
 
   return session;
@@ -447,6 +468,9 @@ export async function submitChildPairingCode(
     battery?: number;
   }
 ): Promise<{ success: boolean; session?: PairingSession; kidPairedInfo?: KidPairedInfo; error?: string }> {
+  // Ensure active auth session so Firebase Security Rules allow read/write
+  await ensureKidAnonymousAuth().catch(() => {});
+
   const rl = checkRateLimit();
   if (!rl.allowed) {
     return {
@@ -521,11 +545,11 @@ export async function submitChildPairingCode(
     deviceName: activeDevName,
     model: deviceMeta.model || "Android Device",
     manufacturer: (deviceMeta as any)?.manufacturer || "Android",
-    androidId: (deviceMeta as any)?.androidId,
-    serial: (deviceMeta as any)?.serial,
-    mac: (deviceMeta as any)?.mac,
-    imei: (deviceMeta as any)?.imei,
-    phoneNumber: (deviceMeta as any)?.phoneNumber,
+    androidId: (deviceMeta as any)?.androidId || "",
+    serial: (deviceMeta as any)?.serial || "",
+    mac: (deviceMeta as any)?.mac || "",
+    imei: (deviceMeta as any)?.imei || "",
+    phoneNumber: (deviceMeta as any)?.phoneNumber || "",
     osVersion: deviceMeta.osVersion || "Android",
     pairedAt: new Date().toISOString(),
     status: "online",
@@ -541,22 +565,25 @@ export async function submitChildPairingCode(
     registerChildDeviceInCloud(parentId, childId, session.childDeviceInfo).catch(() => {});
   }
 
-  // 2. Non-blocking Firebase updates for pairing session
+  // 2. Firebase updates for pairing session (sanitized against undefined values)
+  const sanitizedDev = sanitizeForFirebase(session.childDeviceInfo);
+  const sanitizedUpdate = sanitizeForFirebase({
+    status: "paired",
+    used: true,
+    childDeviceInfo: sanitizedDev,
+    sessionToken,
+    pairedAt: Date.now(),
+  });
+
   if (isFirebaseConfigured() && rtdb) {
-    rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), {
-      status: "paired",
-      used: true,
-      childDeviceInfo: session.childDeviceInfo,
-      sessionToken,
-    }).catch((e) => console.warn("RTDB update error:", e?.code));
+    rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), sanitizedUpdate).catch((e) =>
+      console.warn("RTDB pairing update error:", e?.code || e?.message)
+    );
   }
   if (isFirebaseConfigured() && db) {
-    updateDoc(doc(db, "pairings", cleanCode), {
-      status: "paired",
-      used: true,
-      childDeviceInfo: session.childDeviceInfo,
-      sessionToken,
-    }).catch((e) => console.warn("Firestore update error:", e?.code));
+    updateDoc(doc(db, "pairings", cleanCode), sanitizedUpdate).catch((e) =>
+      console.warn("Firestore pairing update error:", e?.code || e?.message)
+    );
   }
 
   // 3. Emit event bus for dual simulator / local test
