@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Google Play Icon Generator (512x512)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f172a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .icon-box {
+      width: 512px;
+      height: 512px;
+      position: relative;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. PARENTPRO ICON (512 x 512 Full Square, Safe Zone ~384px) -->
+  <div id="parentpro-icon" class="icon-box">
+    <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- Background Gradient -->
+        <linearGradient id="parentBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#1D4ED8" />
+          <stop offset="50%" stop-color="#2563EB" />
+          <stop offset="100%" stop-color="#312E81" />
+        </linearGradient>
+
+        <!-- Ambient Glow -->
+        <radialGradient id="parentGlow" cx="256" cy="220" r="240" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#60A5FA" stop-opacity="0.4" />
+          <stop offset="100%" stop-color="#1E40AF" stop-opacity="0" />
+        </radialGradient>
+
+        <!-- Shield Metallic Gradient -->
+        <linearGradient id="shieldGrad" x1="120" y1="90" x2="392" y2="430" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#FFFFFF" />
+          <stop offset="15%" stop-color="#EFF6FF" />
+          <stop offset="60%" stop-color="#DBEAFE" />
+          <stop offset="100%" stop-color="#93C5FD" />
+        </linearGradient>
+
+        <!-- Shield Inner Gradient -->
+        <linearGradient id="shieldInner" x1="140" y1="120" x2="370" y2="410" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#2563EB" />
+          <stop offset="50%" stop-color="#1D4ED8" />
+          <stop offset="100%" stop-color="#1E3A8A" />
+        </linearGradient>
+
+        <!-- Heart Gradient -->
+        <linearGradient id="heartGrad" x1="180" y1="190" x2="330" y2="340" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#F43F5E" />
+          <stop offset="100%" stop-color="#E11D48" />
+        </linearGradient>
+
+        <!-- Gold Star Gradient -->
+        <linearGradient id="goldGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FDE047" />
+          <stop offset="100%" stop-color="#F59E0B" />
+        </linearGradient>
+
+        <!-- Soft Drop Shadows -->
+        <filter id="shadowLg" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#0F172A" flood-opacity="0.4" />
+        </filter>
+        <filter id="shadowSm" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0F172A" flood-opacity="0.3" />
+        </filter>
+        <filter id="glowGold" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#FBBF24" flood-opacity="0.6" />
+        </filter>
+      </defs>
+
+      <!-- 1. Background Square (Full 512x512) -->
+      <rect width="512" height="512" fill="url(#parentBg)" />
+      <rect width="512" height="512" fill="url(#parentGlow)" />
+
+      <!-- Subtle background security grid circles -->
+      <circle cx="256" cy="246" r="210" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="2" fill="none" />
+      <circle cx="256" cy="246" r="160" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1.5" stroke-dasharray="8 8" fill="none" />
+
+      <!-- 2. Outer Shield with Drop Shadow -->
+      <!-- Shield Path: Center at 256, Top at 100, Bottom tip at 420 -->
+      <g filter="url(#shadowLg)">
+        <path d="M 256 100 
+                 C 320 100 376 116 384 126
+                 C 388 230 366 330 256 424
+                 C 146 330 124 230 128 126
+                 C 136 116 192 100 256 100 Z" 
+              fill="url(#shieldGrad)" />
+      </g>
+
+      <!-- 3. Inner Shield Core -->
+      <path d="M 256 116 
+               C 310 116 358 130 365 138
+               C 368 226 348 312 256 394
+               C 164 312 144 226 147 138
+               C 154 130 202 116 256 116 Z" 
+            fill="url(#shieldInner)" />
+
+      <!-- Shield Highlight Reflection Arc -->
+      <path d="M 256 116 
+               C 310 116 358 130 365 138
+               C 367 180 360 230 344 276
+               C 334 230 300 150 256 126 Z" 
+            fill="#FFFFFF" fill-opacity="0.12" />
+
+      <!-- 4. Family Embrace / Protective Heart in Center -->
+      <g filter="url(#shadowSm)">
+        <!-- Heart Path centered around (256, 252) -->
+        <path d="M 256 330 
+                 C 256 330 186 280 186 220 
+                 C 186 186 214 168 240 182 
+                 C 250 187 256 198 256 198 
+                 C 256 198 262 187 272 182 
+                 C 298 168 326 186 326 220 
+                 C 326 280 256 330 256 330 Z" 
+              fill="url(#heartGrad)" />
+      </g>
+
+      <!-- Silhouette of Parent & Child inside Heart -->
+      <!-- Parent Head -->
+      <circle cx="242" cy="216" r="15" fill="#FFFFFF" />
+      <!-- Parent Body / Arm Embracing -->
+      <path d="M 222 262 C 222 238 238 236 248 240 C 252 242 258 248 260 258 C 248 268 230 270 222 262 Z" fill="#FFFFFF" />
+
+      <!-- Child Head -->
+      <circle cx="268" cy="230" r="11" fill="#FEF08A" />
+      <!-- Child Body -->
+      <path d="M 256 264 C 256 250 268 248 274 252 C 278 255 282 260 282 268 C 274 274 262 272 256 264 Z" fill="#FEF08A" />
+
+      <!-- 5. Top Accent: Sparkling Golden Safety Star -->
+      <g filter="url(#glowGold)" transform="translate(256, 94)">
+        <polygon points="0,-16 4.5,-5 16,0 4.5,5 0,16 -4.5,5 -16,0 -4.5,-5" fill="url(#goldGrad)" />
+        <circle cx="0" cy="0" r="3" fill="#FFFFFF" />
+      </g>
+
+      <!-- Corner Security Nodes -->
+      <circle cx="256" cy="386" r="4" fill="#60A5FA" />
+      <circle cx="152" cy="144" r="3" fill="#93C5FD" />
+      <circle cx="360" cy="144" r="3" fill="#93C5FD" />
+    </svg>
+  </div>
+
+
+  <!-- 2. KIDCARE ICON (512 x 512 Full Square, Safe Zone ~384px) -->
+  <div id="kidcare-icon" class="icon-box">
+    <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- Background Gradient: Energetic Emerald to Vibrant Cyan -->
+        <linearGradient id="kidBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#10B981" />
+          <stop offset="55%" stop-color="#0EA5E9" />
+          <stop offset="100%" stop-color="#0284C7" />
+        </linearGradient>
+
+        <!-- Ambient Warm Glow -->
+        <radialGradient id="kidGlow" cx="256" cy="200" r="230" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#FEF08A" stop-opacity="0.35" />
+          <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0" />
+        </radialGradient>
+
+        <!-- Owl Body Gradient -->
+        <linearGradient id="owlBody" x1="160" y1="120" x2="352" y2="420" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#FFFFFF" />
+          <stop offset="30%" stop-color="#F0FDF4" />
+          <stop offset="70%" stop-color="#E0F2FE" />
+          <stop offset="100%" stop-color="#BAE6FD" />
+        </linearGradient>
+
+        <!-- Mascot Belly Gradient -->
+        <linearGradient id="owlBelly" x1="190" y1="230" x2="322" y2="390" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#FEF9C3" />
+          <stop offset="100%" stop-color="#FDE047" />
+        </linearGradient>
+
+        <!-- Wings Gradient -->
+        <linearGradient id="wingGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#38BDF8" />
+          <stop offset="100%" stop-color="#0284C7" />
+        </linearGradient>
+
+        <!-- Star Gradient -->
+        <linearGradient id="kidStarGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FDE047" />
+          <stop offset="100%" stop-color="#F59E0B" />
+        </linearGradient>
+
+        <!-- Drop Shadows -->
+        <filter id="kidShadowLg" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#024B68" flood-opacity="0.35" />
+        </filter>
+        <filter id="kidShadowSm" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#0369A1" flood-opacity="0.25" />
+        </filter>
+        <filter id="kidStarGlow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#FDE047" flood-opacity="0.7" />
+        </filter>
+      </defs>
+
+      <!-- 1. Background Square (Full 512x512) -->
+      <rect width="512" height="512" fill="url(#kidBg)" />
+      <rect width="512" height="512" fill="url(#kidGlow)" />
+
+      <!-- Playful Decorative Floating Bubbles & Sparkles in Background -->
+      <circle cx="90" cy="110" r="28" fill="#FFFFFF" fill-opacity="0.1" />
+      <circle cx="430" cy="130" r="36" fill="#FFFFFF" fill-opacity="0.12" />
+      <circle cx="70" cy="400" r="20" fill="#FFFFFF" fill-opacity="0.08" />
+      <circle cx="440" cy="380" r="26" fill="#FFFFFF" fill-opacity="0.09" />
+
+      <!-- Sparkle stars in corners -->
+      <polygon points="120,70 123,79 132,82 123,85 120,94 117,85 108,82 117,79" fill="#FEF08A" fill-opacity="0.6" />
+      <polygon points="390,75 392,82 399,84 392,86 390,93 388,86 381,84 388,82" fill="#FEF08A" fill-opacity="0.7" />
+
+      <!-- 2. Mascot Character: "Bé Cú Thông Thái" / Guardian Owl Shield -->
+      <g filter="url(#kidShadowLg)">
+        <!-- Owl Outer Body Shape with Cute Pointy Feather Ears -->
+        <path d="M 256 100 
+                 C 285 100 316 86 332 108 
+                 C 342 122 344 146 348 168 
+                 C 376 210 380 290 354 360 
+                 C 328 420 286 430 256 430 
+                 C 226 430 184 420 158 360 
+                 C 132 290 136 210 164 168 
+                 C 168 146 170 122 180 108 
+                 C 196 86 227 100 256 100 Z" 
+              fill="url(#owlBody)" />
+      </g>
+
+      <!-- Left Guardian Wing -->
+      <path d="M 166 195 
+               C 142 230 134 290 158 348 
+               C 172 344 186 310 186 270 
+               C 186 230 178 206 166 195 Z" 
+            fill="url(#wingGrad)" />
+
+      <!-- Right Guardian Wing -->
+      <path d="M 346 195 
+               C 370 230 378 290 354 348 
+               C 340 344 326 310 326 270 
+               C 326 230 334 206 346 195 Z" 
+            fill="url(#wingGrad)" />
+
+      <!-- Cute Golden Belly Shield -->
+      <path d="M 256 242 
+               C 292 242 320 270 320 316 
+               C 320 370 286 406 256 406 
+               C 226 406 192 370 192 316 
+               C 192 270 220 242 256 242 Z" 
+            fill="url(#owlBelly)" />
+
+      <!-- Belly Chevron Feather Patterns -->
+      <path d="M 240 282 Q 256 292 272 282" stroke="#F59E0B" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.6" />
+      <path d="M 234 306 Q 256 318 278 306" stroke="#F59E0B" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.6" />
+      <path d="M 242 330 Q 256 340 270 330" stroke="#F59E0B" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.6" />
+
+      <!-- 3. Big Expressive Cartoon Eyes -->
+      <!-- Left Eye Outer -->
+      <circle cx="214" cy="186" r="38" fill="#FFFFFF" filter="url(#kidShadowSm)" />
+      <!-- Left Eye Iris (Aquamarine Teal) -->
+      <circle cx="217" cy="186" r="26" fill="#0284C7" />
+      <circle cx="219" cy="185" r="18" fill="#0369A1" />
+      <!-- Left Eye Highlights -->
+      <circle cx="212" cy="178" r="9" fill="#FFFFFF" />
+      <circle cx="225" cy="192" r="4.5" fill="#FFFFFF" />
+
+      <!-- Right Eye Outer -->
+      <circle cx="298" cy="186" r="38" fill="#FFFFFF" filter="url(#kidShadowSm)" />
+      <!-- Right Eye Iris (Aquamarine Teal) -->
+      <circle cx="295" cy="186" r="26" fill="#0284C7" />
+      <circle cx="293" cy="185" r="18" fill="#0369A1" />
+      <!-- Right Eye Highlights -->
+      <circle cx="288" cy="178" r="9" fill="#FFFFFF" />
+      <circle cx="301" cy="192" r="4.5" fill="#FFFFFF" />
+
+      <!-- Cute Blushing Cheeks -->
+      <ellipse cx="178" cy="226" rx="13" ry="8" fill="#FB7185" fill-opacity="0.4" />
+      <ellipse cx="334" cy="226" rx="13" ry="8" fill="#FB7185" fill-opacity="0.4" />
+
+      <!-- Cute Orange Beak -->
+      <polygon points="256,224 243,200 269,200" fill="#F97316" />
+      <polygon points="256,220 248,203 264,203" fill="#FB923C" />
+
+      <!-- 4. Hero Golden Star Award (Held proudly on chest) -->
+      <g filter="url(#kidStarGlow)" transform="translate(256, 360)">
+        <polygon points="0,-24 6.8,-7.5 24,0 6.8,7.5 0,24 -6.8,7.5 -24,0 -6.8,-7.5" fill="url(#kidStarGrad)" />
+        <circle cx="0" cy="0" r="5" fill="#FFFFFF" />
+      </g>
+
+      <!-- Little feet -->
+      <ellipse cx="230" cy="428" rx="12" ry="7" fill="#F97316" />
+      <ellipse cx="282" cy="428" rx="12" ry="7" fill="#F97316" />
+    </svg>
+  </div>
+
+</body>
+</html>
