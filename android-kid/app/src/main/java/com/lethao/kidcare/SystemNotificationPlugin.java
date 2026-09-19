@@ -1,4 +1,4 @@
-package com.parentpro.parent;
+package com.lethao.kidcare;
 
 import android.Manifest;
 import android.app.NotificationChannel;
@@ -26,11 +26,11 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "SystemNotificationPlugin")
 public class SystemNotificationPlugin extends Plugin {
-    private static final String TAG = "ParentNotificationPlugin";
+    private static final String TAG = "KidNotificationPlugin";
 
-    public static final String CHANNEL_SOS = "parentpro_sos_channel";
-    public static final String CHANNEL_CHAT = "parentpro_chat_channel";
-    public static final String CHANNEL_ALERT = "parentpro_alert_channel";
+    public static final String CHANNEL_URGENT = "kidcare_urgent_channel";
+    public static final String CHANNEL_CHAT = "kidcare_chat_channel";
+    public static final String CHANNEL_INFO = "kidcare_info_channel";
 
     @Override
     public void load() {
@@ -49,29 +49,29 @@ public class SystemNotificationPlugin extends Plugin {
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                     .build();
 
-            // 1. SOS Emergency Channel (Highest importance, heads-up banner, sirens)
-            NotificationChannel sosChannel = new NotificationChannel(
-                    CHANNEL_SOS,
-                    "Cảnh Báo SOS Khẩn Cấp",
+            // 1. Urgent Commands Channel (Heads-up banner, locks, siren, broadcast)
+            NotificationChannel urgentChannel = new NotificationChannel(
+                    CHANNEL_URGENT,
+                    "Lệnh Khẩn Cấp Từ Bố Mẹ",
                     NotificationManager.IMPORTANCE_HIGH
             );
-            sosChannel.setDescription("Thông báo khẩn cấp khi con bấm nút SOS hoặc gặp nguy hiểm");
-            sosChannel.enableLights(true);
-            sosChannel.setLightColor(Color.RED);
-            sosChannel.enableVibration(true);
-            sosChannel.setVibrationPattern(new long[]{0, 500, 200, 500, 200, 500, 200, 500});
+            urgentChannel.setDescription("Thông báo khẩn cấp, khóa máy từ xa và thông điệp của Bố Mẹ");
+            urgentChannel.enableLights(true);
+            urgentChannel.setLightColor(Color.RED);
+            urgentChannel.enableVibration(true);
+            urgentChannel.setVibrationPattern(new long[]{0, 500, 200, 500, 200, 500});
             Uri alertSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
             if (alertSound == null) alertSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-            sosChannel.setSound(alertSound, audioAttributes);
-            manager.createNotificationChannel(sosChannel);
+            urgentChannel.setSound(alertSound, audioAttributes);
+            manager.createNotificationChannel(urgentChannel);
 
-            // 2. Family Chat Channel (Heads-up banner for messages)
+            // 2. Chat Channel (Heads-up banner for messages)
             NotificationChannel chatChannel = new NotificationChannel(
                     CHANNEL_CHAT,
-                    "Tin Nhắn Gia Đình",
+                    "Tin Nhắn Từ Bố Mẹ",
                     NotificationManager.IMPORTANCE_HIGH
             );
-            chatChannel.setDescription("Tin nhắn tức thì gửi từ con cái hoặc các thành viên");
+            chatChannel.setDescription("Tin nhắn tức thì từ Bố Mẹ và gia đình");
             chatChannel.enableLights(true);
             chatChannel.setLightColor(Color.BLUE);
             chatChannel.enableVibration(true);
@@ -80,29 +80,29 @@ public class SystemNotificationPlugin extends Plugin {
             chatChannel.setSound(chatSound, audioAttributes);
             manager.createNotificationChannel(chatChannel);
 
-            // 3. Alerts Channel (Battery, Time requests, Geofence)
-            NotificationChannel alertChannel = new NotificationChannel(
-                    CHANNEL_ALERT,
-                    "Cảnh Báo An Toàn & Thiết Bị",
+            // 3. Info / Routines Channel (Lessons, habit reminders)
+            NotificationChannel infoChannel = new NotificationChannel(
+                    CHANNEL_INFO,
+                    "Lời Nhắc & Hoạt Động Của Bé",
                     NotificationManager.IMPORTANCE_HIGH
             );
-            alertChannel.setDescription("Cảnh báo pin yếu, xin thêm giờ, ra khỏi vùng an toàn");
-            alertChannel.enableLights(true);
-            alertChannel.setLightColor(Color.YELLOW);
-            alertChannel.enableVibration(true);
-            alertChannel.setVibrationPattern(new long[]{0, 200, 100, 200});
-            manager.createNotificationChannel(alertChannel);
+            infoChannel.setDescription("Nhắc uống nước, đến giờ học bài, đi ngủ hoặc bài học mới");
+            infoChannel.enableLights(true);
+            infoChannel.setLightColor(Color.GREEN);
+            infoChannel.enableVibration(true);
+            infoChannel.setVibrationPattern(new long[]{0, 200, 100, 200});
+            manager.createNotificationChannel(infoChannel);
 
-            Log.i(TAG, "Notification channels created successfully");
+            Log.i(TAG, "KidCare Notification channels created successfully");
         }
     }
 
     @PluginMethod
     public void showNotification(PluginCall call) {
-        String title = call.getString("title", "ParentPro Thông Báo");
+        String title = call.getString("title", "KidCare Thông Báo");
         String body = call.getString("body", "");
         String soundType = call.getString("soundType", "info");
-        String tag = call.getString("tag", "parent_notif_" + System.currentTimeMillis());
+        String tag = call.getString("tag", "kid_notif_" + System.currentTimeMillis());
         int notifId = call.getInt("id", (int) (System.currentTimeMillis() % 100000));
 
         Context context = getContext();
@@ -111,17 +111,17 @@ public class SystemNotificationPlugin extends Plugin {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     Log.w(TAG, "POST_NOTIFICATIONS permission not granted, requesting now");
-                    ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
+                    ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 102);
                 }
             }
 
             // Pick channel based on soundType
-            String targetChannelId = CHANNEL_ALERT;
-            boolean isEmergency = "emergency".equalsIgnoreCase(soundType) || title.contains("SOS") || title.contains("KHẨN CẤP");
+            String targetChannelId = CHANNEL_INFO;
+            boolean isEmergency = "emergency".equalsIgnoreCase(soundType) || title.contains("Khóa") || title.contains("KHÓA") || title.contains("TÌM MÁY") || title.contains("SOS");
             boolean isChat = "chat".equalsIgnoreCase(soundType);
 
             if (isEmergency) {
-                targetChannelId = CHANNEL_SOS;
+                targetChannelId = CHANNEL_URGENT;
             } else if (isChat) {
                 targetChannelId = CHANNEL_CHAT;
             }
@@ -142,19 +142,19 @@ public class SystemNotificationPlugin extends Plugin {
                     .setContentIntent(pendingIntent)
                     .setAutoCancel(true)
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(isEmergency ? NotificationCompat.CATEGORY_ALARM : (isChat ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_STATUS));
+                    .setCategory(isEmergency ? NotificationCompat.CATEGORY_ALARM : (isChat ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_EVENT));
 
             if (isEmergency) {
-                builder.setVibrate(new long[]{0, 500, 200, 500, 200, 500, 200, 500});
+                builder.setVibrate(new long[]{0, 500, 200, 500, 200, 500});
                 builder.setFullScreenIntent(pendingIntent, true);
 
-                // Wake up the physical screen
+                // Wake up screen
                 try {
                     PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
                     if (pm != null) {
                         PowerManager.WakeLock wl = pm.newWakeLock(
                                 PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
-                                "ParentPro::EmergencyWakeUp"
+                                "KidCare::EmergencyWakeUp"
                         );
                         wl.acquire(5000);
                     }
@@ -166,14 +166,14 @@ public class SystemNotificationPlugin extends Plugin {
             NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager != null) {
                 manager.notify(tag, notifId, builder.build());
-                Log.i(TAG, "Notification posted: " + title + " (channel=" + targetChannelId + ")");
+                Log.i(TAG, "KidCare Notification posted: " + title + " (channel=" + targetChannelId + ")");
             }
 
             JSObject ret = new JSObject();
             ret.put("success", true);
             call.resolve(ret);
         } catch (Exception e) {
-            Log.e(TAG, "Failed to post notification: " + e.getMessage(), e);
+            Log.e(TAG, "Failed to post notification in KidCare: " + e.getMessage(), e);
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -188,7 +188,7 @@ public class SystemNotificationPlugin extends Plugin {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             isGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
             if (!isGranted && getActivity() != null) {
-                ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
+                ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 102);
             }
         }
         JSObject ret = new JSObject();

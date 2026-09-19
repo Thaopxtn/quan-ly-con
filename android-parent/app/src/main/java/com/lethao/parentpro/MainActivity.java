@@ -1,4 +1,4 @@
-package com.parentpro.parent;
+package com.lethao.parentpro;
 
 import android.os.Bundle;
 import android.util.Log;

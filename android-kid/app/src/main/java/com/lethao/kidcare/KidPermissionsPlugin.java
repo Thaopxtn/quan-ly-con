@@ -1,4 +1,4 @@
-package com.parentpro.kidcare;
+package com.lethao.kidcare;
 
 import android.Manifest;
 import android.app.admin.DevicePolicyManager;

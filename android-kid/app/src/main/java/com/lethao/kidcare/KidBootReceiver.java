@@ -1,4 +1,4 @@
-package com.parentpro.kidcare;
+package com.lethao.kidcare;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;

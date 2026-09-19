@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.parentpro.parent',
+  appId: 'com.lethao.parentpro',
   appName: 'ParentPro - Cha Mẹ',
   webDir: 'dist-parent',
   server: {

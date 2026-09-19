@@ -175,7 +175,7 @@ function syncParent() {
 
   const capConfigFile = path.join(root, 'android-parent', 'app', 'src', 'main', 'assets', 'capacitor.config.json');
   const capConfigContent = {
-    appId: 'com.parentpro.parent',
+    appId: 'com.lethao.parentpro',
     appName: 'ParentPro - Cha Mẹ',
     webDir: 'dist-parent',
     server: {
@@ -218,6 +218,21 @@ function syncKid() {
   // Suppress Capacitor cordova.js / cordova_plugins.js warning
   fs.writeFileSync(path.join(targetDir, 'cordova.js'), '// Capacitor Cordova Compatibility Placeholder\nwindow.Cordova = window.cordova = window.cordova || {};\n', 'utf8');
   fs.writeFileSync(path.join(targetDir, 'cordova_plugins.js'), '// Capacitor Cordova Plugins Placeholder\nif (typeof cordova !== "undefined" && cordova.define) { cordova.define("cordova/plugin_list", function(require, exports, module) { module.exports = []; module.exports.metadata = {}; }); }\n', 'utf8');
+
+  const capKidConfigFile = path.join(root, 'android-kid', 'app', 'src', 'main', 'assets', 'capacitor.config.json');
+  const capKidConfigContent = {
+    appId: 'com.lethao.kidcare',
+    appName: 'KidCare - Con Cái',
+    webDir: 'dist-kid',
+    server: {
+      androidScheme: 'https',
+      cleartext: true
+    },
+    android: {
+      allowMixedContent: true
+    }
+  };
+  fs.writeFileSync(capKidConfigFile, JSON.stringify(capKidConfigContent, null, 2));
 
   console.log('✅ Đã đồng bộ dist-kid -> android-kid/app/src/main/assets/public/');
 }
