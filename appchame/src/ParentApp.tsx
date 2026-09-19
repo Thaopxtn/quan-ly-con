@@ -335,7 +335,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
           <div className="flex items-center space-x-2 truncate">
             <BellRing size={15} className="shrink-0" />
             <span className="truncate">
-              <strong>{pendingTimeRequest.childName}</strong> xin thêm {pendingTimeRequest.requestedMinutes}p dùng {pendingTimeRequest.appName}
+              <strong>{pendingTimeRequest.childName}</strong> xin {pendingTimeRequest.requestedMinutes === -1 ? 'mở máy đến khi khóa' : `thêm ${pendingTimeRequest.requestedMinutes}p`} ({pendingTimeRequest.appName})
               {pendingTimeRequests.length > 1 && (
                 <span className="ml-1.5 px-1.5 py-0.5 bg-amber-700/80 text-[10px] rounded-full font-bold">
                   +{pendingTimeRequests.length - 1} bé khác
@@ -348,7 +348,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
               onClick={() => decideTimeRequest(pendingTimeRequest.id, 'approved')}
               className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] shadow-xs active:scale-95 transition"
             >
-              Duyệt
+              {pendingTimeRequest.requestedMinutes === -1 ? 'Mở máy' : `Duyệt +${pendingTimeRequest.requestedMinutes}p`}
             </button>
             <button
               onClick={() => decideTimeRequest(pendingTimeRequest.id, 'rejected')}

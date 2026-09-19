@@ -16,6 +16,16 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(KidPermissionsPlugin.class);
         super.onCreate(savedInstanceState);
 
+        // Configure Status Bar color to match Kid app title header (#0ea5e9) with white icons
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            getWindow().setStatusBarColor(android.graphics.Color.parseColor("#0ea5e9"));
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            android.view.View decor = getWindow().getDecorView();
+            decor.setSystemUiVisibility(decor.getSystemUiVisibility() & ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        }
+
         if (bridge != null) {
             WebView.setWebContentsDebuggingEnabled(true);
             if (bridge.getWebView() != null) {

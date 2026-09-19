@@ -2503,6 +2503,93 @@ export const useAppState = () => {
     }
   };
 
+  const toggleAppVisibility = (appId: string, childId?: string) => {
+    const targetChildId = childId || state.selectedChildId;
+    const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
+    const targetApps = currentSettings.apps || state.apps;
+    const target = targetApps.find((a) => a.id === appId);
+    if (!target) return;
+    const newHidden = !target.isHidden;
+    const updatedApps = targetApps.map((a) => (a.id === appId ? { ...a, isHidden: newHidden } : a));
+
+    const isCur = state.selectedChildId === targetChildId;
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [targetChildId]: {
+        ...currentSettings,
+        apps: updatedApps,
+      },
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: updatedChildSettings,
+      ...(isCur ? { apps: updatedApps } : {}),
+    }, targetChildId);
+
+    eventBus.publish('APP_VISIBILITY_CHANGED', { appId, isHidden: newHidden, childId: targetChildId }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { apps: updatedApps }).catch(() => {});
+      sendRemoteCommandToKid(parentId, targetChildId, 'update_app_rule', { appId, isHidden: newHidden }).catch(() => {});
+    }
+  };
+
+  const toggleAppFavorite = (appId: string, childId?: string) => {
+    const targetChildId = childId || state.selectedChildId;
+    const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
+    const targetApps = currentSettings.apps || state.apps;
+    const target = targetApps.find((a) => a.id === appId);
+    if (!target) return;
+    const newFav = !target.isFavorite;
+    const updatedApps = targetApps.map((a) => (a.id === appId ? { ...a, isFavorite: newFav } : a));
+
+    const isCur = state.selectedChildId === targetChildId;
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [targetChildId]: {
+        ...currentSettings,
+        apps: updatedApps,
+      },
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: updatedChildSettings,
+      ...(isCur ? { apps: updatedApps } : {}),
+    }, targetChildId);
+
+    eventBus.publish('APP_FAVORITE_CHANGED', { appId, isFavorite: newFav, childId: targetChildId }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { apps: updatedApps }).catch(() => {});
+    }
+  };
+
+  const updateAppRule = (appId: string, updates: Partial<AppItem>, childId?: string) => {
+    const targetChildId = childId || state.selectedChildId;
+    const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
+    const targetApps = currentSettings.apps || state.apps;
+    const updatedApps = targetApps.map((a) => (a.id === appId ? { ...a, ...updates } : a));
+
+    const isCur = state.selectedChildId === targetChildId;
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [targetChildId]: {
+        ...currentSettings,
+        apps: updatedApps,
+      },
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: updatedChildSettings,
+      ...(isCur ? { apps: updatedApps } : {}),
+    }, targetChildId);
+
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { apps: updatedApps }).catch(() => {});
+    }
+  };
+
   const toggleSafeZone = (zoneId: string) => {
     const updatedZones = state.safeZones.map((z) => (z.id === zoneId ? { ...z, isActive: !z.isActive } : z));
     saveAndNotify({ ...state, safeZones: updatedZones });
@@ -2713,7 +2800,7 @@ export const useAppState = () => {
     const targetChild = state.children.find((c) => c.id === targetId) || state.child;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
     const currentLimit = currentSettings.screenTimeLimitMinutes || 135;
-    const newLimit = currentLimit + minutes;
+    const newLimit = minutes === -1 ? Math.max(currentLimit, 1440) : (currentLimit + minutes);
     const updatedLock: LockChallengeState = {
       ...currentSettings.lockChallenge,
       isLocked: false,
@@ -2733,7 +2820,11 @@ export const useAppState = () => {
       },
     });
     if (parentId && targetId && !isKidAppMode()) {
-      sendRemoteCommandToKid(parentId, targetId, 'extend_time', { minutes }, targetChild?.name).catch(() => {});
+      if (minutes === -1) {
+        sendRemoteCommandToKid(parentId, targetId, 'unlock_now', { minutes: -1 }, targetChild?.name).catch(() => {});
+      } else {
+        sendRemoteCommandToKid(parentId, targetId, 'extend_time', { minutes }, targetChild?.name).catch(() => {});
+      }
     }
   };
 
@@ -3289,6 +3380,34 @@ export const useAppState = () => {
     };
     saveAndNotify({ ...state, smartRoutines: updated });
     eventBus.publish('SMART_ROUTINE_CHANGED', updated, 'parent');
+  };
+
+  const updateSmartRoutines = (newRoutines: Partial<SmartRoutines>, targetChildId?: string) => {
+    const effectiveChildId = targetChildId || state.selectedChildId || state.child?.id;
+    const currentSettings = effectiveChildId ? (state.childSettings[effectiveChildId] || createDefaultChildSettings(effectiveChildId)) : null;
+
+    const mergedRoutines: SmartRoutines = {
+      ...state.smartRoutines,
+      ...(currentSettings?.smartRoutines || {}),
+      ...newRoutines,
+    };
+
+    let updatedChildSettings = { ...state.childSettings };
+    if (effectiveChildId && currentSettings) {
+      updatedChildSettings[effectiveChildId] = {
+        ...currentSettings,
+        smartRoutines: mergedRoutines,
+      };
+    }
+
+    const nextState: AppState = {
+      ...state,
+      smartRoutines: mergedRoutines,
+      childSettings: updatedChildSettings,
+    };
+
+    saveAndNotify(nextState, effectiveChildId);
+    eventBus.publish('SMART_ROUTINE_CHANGED', mergedRoutines, 'parent');
   };
 
   const getFamilyAggregatedStats = () => {
@@ -4158,6 +4277,7 @@ export const useAppState = () => {
     solveChallengeOnKid,
     addStepsOnKid,
     toggleSmartRoutine,
+    updateSmartRoutines,
     triggerVoiceGuide,
     triggerReminder,
     clearReminder,
@@ -4166,6 +4286,9 @@ export const useAppState = () => {
     switchCameraFacing,
     toggleAppStatus,
     setAppDailyLimit,
+    toggleAppVisibility,
+    toggleAppFavorite,
+    updateAppRule,
     toggleSafeZone,
     addSafeZone,
     updateSafeZone,

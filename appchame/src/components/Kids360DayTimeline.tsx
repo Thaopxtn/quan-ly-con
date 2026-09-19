@@ -1,10 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Moon, BookOpen, Gamepad2, Utensils, Sparkles, ChevronRight, Info } from 'lucide-react';
+import { Clock, Moon, BookOpen, Gamepad2, Utensils, Sparkles, ChevronRight, Megaphone } from 'lucide-react';
+import { SmartRoutines } from '@shared/types';
 import { haptics } from '@shared/utils/haptics';
 
 interface Kids360DayTimelineProps {
   childName: string;
+  childId?: string;
+  smartRoutines?: SmartRoutines;
   onNavigate?: (screenKey: string) => void;
+  onOpenConfig?: () => void;
+  showQuickActions?: boolean;
+  isMealtimeLocked?: boolean;
+  isBedtimeLocked?: boolean;
+  isStudyMode?: boolean;
+  onToggleMealtime?: () => void;
+  onToggleBedtime?: () => void;
+  onToggleStudyMode?: () => void;
+  onOpenBroadcast?: () => void;
+  familyUsedMinutes?: number;
 }
 
 interface ScheduleSegment {
@@ -20,9 +33,36 @@ interface ScheduleSegment {
   ruleDescription: string;
 }
 
+function parseTimeToMinutes(timeStr?: string, fallback: number = 0): number {
+  if (!timeStr) return fallback;
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return fallback;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return fallback;
+  return Math.min(1440, Math.max(0, h * 60 + m));
+}
+
+function formatMinutesToTime(totalMins: number): string {
+  const h = Math.floor(totalMins / 60) % 24;
+  const m = totalMins % 60;
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+}
+
 export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
   childName,
+  smartRoutines,
   onNavigate,
+  onOpenConfig,
+  showQuickActions,
+  isMealtimeLocked,
+  isBedtimeLocked,
+  isStudyMode,
+  onToggleMealtime,
+  onToggleBedtime,
+  onToggleStudyMode,
+  onOpenBroadcast,
+  familyUsedMinutes,
 }) => {
   const [currentMinutes, setCurrentMinutes] = useState(() => {
     const now = new Date();
@@ -40,6 +80,18 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  // Compute dynamic routine boundaries from smartRoutines or Kids360 defaults
+  const wakeUpMins = parseTimeToMinutes(smartRoutines?.bedtimeEnd, 390); // 06:30
+  const schoolMornStart = Math.max(wakeUpMins, parseTimeToMinutes(smartRoutines?.schoolMorningStart, 450)); // 07:30
+  const schoolMornEnd = Math.max(schoolMornStart, parseTimeToMinutes(smartRoutines?.schoolMorningEnd, 690)); // 11:30
+  const mealStart = Math.max(schoolMornEnd, parseTimeToMinutes(smartRoutines?.mealtimeStart, 690)); // 11:30
+  const mealEnd = Math.max(mealStart, parseTimeToMinutes(smartRoutines?.mealtimeEnd, 810)); // 13:30
+  const schoolAftStart = Math.max(mealEnd, parseTimeToMinutes(smartRoutines?.schoolAfternoonStart, 810)); // 13:30
+  const schoolAftEnd = Math.max(schoolAftStart, parseTimeToMinutes(smartRoutines?.schoolAfternoonEnd, 1020)); // 17:00
+  const homeStudyStart = Math.max(schoolAftEnd, parseTimeToMinutes(smartRoutines?.homeStudyStart, 1170)); // 19:30
+  const homeStudyEnd = Math.max(homeStudyStart, parseTimeToMinutes(smartRoutines?.homeStudyEnd, 1290)); // 21:30
+  const bedtimeStart = Math.max(homeStudyEnd, parseTimeToMinutes(smartRoutines?.bedtimeStart, 1290)); // 21:30
+
   // 24-hour visual schedule blocks (1440 mins total)
   const segments: ScheduleSegment[] = [
     {
@@ -47,7 +99,7 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       label: 'Giờ ngủ đêm',
       icon: Moon,
       startMinutes: 0,
-      endMinutes: 390, // 0:00 - 6:30 (390m)
+      endMinutes: wakeUpMins,
       colorBg: 'bg-slate-700',
       colorBorder: 'border-slate-800',
       colorText: 'text-slate-200',
@@ -58,20 +110,20 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       id: 'morning_prep',
       label: 'Thức dậy & Ăn sáng',
       icon: Utensils,
-      startMinutes: 390, // 6:30
-      endMinutes: 450, // 7:30 (60m)
+      startMinutes: wakeUpMins,
+      endMinutes: schoolMornStart,
       colorBg: 'bg-amber-400',
       colorBorder: 'border-amber-500',
       colorText: 'text-amber-950',
       badgeBg: 'bg-amber-100 text-amber-900',
-      ruleDescription: 'Mở ứng dụng cơ bản, nhắc nhở con chuẩn bị sách vở đến trường.',
+      ruleDescription: 'Mở ứng dụng cơ bản, chuẩn bị sách vở đến trường.',
     },
     {
       id: 'school_morning',
       label: 'Học ở trường (Sáng)',
       icon: BookOpen,
-      startMinutes: 450, // 7:30
-      endMinutes: 690, // 11:30 (240m)
+      startMinutes: schoolMornStart,
+      endMinutes: schoolMornEnd,
       colorBg: 'bg-blue-500',
       colorBorder: 'border-blue-600',
       colorText: 'text-white',
@@ -82,8 +134,8 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       id: 'lunch_rest',
       label: 'Nghỉ trưa & Ăn cơm',
       icon: Utensils,
-      startMinutes: 690, // 11:30
-      endMinutes: 810, // 13:30 (120m)
+      startMinutes: mealStart,
+      endMinutes: mealEnd,
       colorBg: 'bg-emerald-400',
       colorBorder: 'border-emerald-500',
       colorText: 'text-emerald-950',
@@ -94,8 +146,8 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       id: 'school_afternoon',
       label: 'Học ở trường (Chiều)',
       icon: BookOpen,
-      startMinutes: 810, // 13:30
-      endMinutes: 1020, // 17:00 (210m)
+      startMinutes: schoolAftStart,
+      endMinutes: schoolAftEnd,
       colorBg: 'bg-blue-500',
       colorBorder: 'border-blue-600',
       colorText: 'text-white',
@@ -106,8 +158,8 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       id: 'free_play',
       label: 'Giải trí tự do',
       icon: Gamepad2,
-      startMinutes: 1020, // 17:00
-      endMinutes: 1170, // 19:30 (150m)
+      startMinutes: schoolAftEnd,
+      endMinutes: homeStudyStart,
       colorBg: 'bg-teal-400',
       colorBorder: 'border-teal-500',
       colorText: 'text-teal-950',
@@ -118,8 +170,8 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       id: 'home_study',
       label: 'Tự học tại nhà',
       icon: BookOpen,
-      startMinutes: 1170, // 19:30
-      endMinutes: 1290, // 21:30 (120m)
+      startMinutes: homeStudyStart,
+      endMinutes: homeStudyEnd,
       colorBg: 'bg-indigo-500',
       colorBorder: 'border-indigo-600',
       colorText: 'text-white',
@@ -130,8 +182,8 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
       id: 'night_sleep_2',
       label: 'Giờ đi ngủ',
       icon: Moon,
-      startMinutes: 1290, // 21:30
-      endMinutes: 1440, // 24:00 (150m)
+      startMinutes: bedtimeStart,
+      endMinutes: 1440,
       colorBg: 'bg-slate-700',
       colorBorder: 'border-slate-800',
       colorText: 'text-slate-200',
@@ -170,11 +222,19 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
           </div>
         </div>
 
-        {onNavigate && (
+        {(onOpenConfig || onNavigate) && (
           <button
             type="button"
-            onClick={() => onNavigate('screentime')}
-            className="text-[11px] font-bold text-blue-600 hover:text-blue-700 transition flex items-center gap-0.5 cursor-pointer"
+            onClick={() => {
+              haptics.selection();
+              if (onOpenConfig) {
+                onOpenConfig();
+              } else if (onNavigate) {
+                onNavigate('screentime');
+              }
+            }}
+            className="text-[11px] font-bold text-blue-600 hover:text-blue-700 transition flex items-center gap-0.5 cursor-pointer bg-blue-50/80 hover:bg-blue-100/80 px-2.5 py-1 rounded-xl border border-blue-100 shadow-2xs"
+            title="Mở cấu hình lịch biểu & thói quen 24h"
           >
             <span>Cấu hình</span>
             <ChevronRight size={13} />
@@ -222,9 +282,9 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
           {/* 24-Hour Continuous Colored Track Bar */}
           <div className="w-full h-7 rounded-2xl bg-slate-100 flex overflow-hidden border border-slate-200 shadow-inner">
             {segments.map((seg) => {
-              const duration = seg.endMinutes - seg.startMinutes;
+              const duration = Math.max(0, seg.endMinutes - seg.startMinutes);
+              if (duration <= 0) return null;
               const widthPct = (duration / 1440) * 100;
-              const isCurrent = seg.id === activeSegment.id;
 
               return (
                 <div
@@ -235,9 +295,9 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
                   }}
                   className={`${seg.colorBg} h-full relative group cursor-pointer transition-all duration-200 hover:brightness-110 flex items-center justify-center`}
                   style={{ width: `${widthPct}%` }}
-                  title={`${seg.label} (${Math.floor(seg.startMinutes / 60)}h - ${Math.floor(seg.endMinutes / 60)}h)`}
+                  title={`${seg.label} (${formatMinutesToTime(seg.startMinutes)} - ${formatMinutesToTime(seg.endMinutes)})`}
                 >
-                  {widthPct >= 12 && (
+                  {widthPct >= 11 && (
                     <span className={`text-[9px] font-black ${seg.colorText} opacity-80 group-hover:opacity-100 truncate px-1`}>
                       {seg.label}
                     </span>
@@ -265,7 +325,7 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
             <span className="text-base">📌</span>
             <div>
               <strong className="text-slate-900 block font-bold">
-                {selectedSegment.label} ({Math.floor(selectedSegment.startMinutes / 60)}h00 - {Math.floor(selectedSegment.endMinutes / 60)}h00)
+                {selectedSegment.label} ({formatMinutesToTime(selectedSegment.startMinutes)} - {formatMinutesToTime(selectedSegment.endMinutes)})
               </strong>
               <span className="text-[10.5px] text-slate-500 font-medium">
                 {selectedSegment.ruleDescription}
@@ -301,6 +361,99 @@ export const Kids360DayTimeline: React.FC<Kids360DayTimelineProps> = ({
           <span>Tự học tại nhà</span>
         </span>
       </div>
+
+      {/* Integrated Routine Controls (One-Touch Quick Actions) */}
+      {(showQuickActions || onToggleMealtime) && (
+        <div className="pt-2.5 border-t border-slate-100 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10.5px] font-black text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles size={12} className="text-indigo-500" />
+              <span>Điều khiển nhanh cả nhà:</span>
+            </span>
+            {familyUsedMinutes !== undefined && (
+              <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100/80">
+                ⏱️ {Math.floor(familyUsedMinutes / 60)}h {familyUsedMinutes % 60}p / cả nhà
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-4 gap-1.5">
+            {/* 1. Mealtime Lock */}
+            <button
+              type="button"
+              onClick={() => {
+                haptics.selection();
+                onToggleMealtime?.();
+              }}
+              className={`p-2 rounded-2xl border text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                isMealtimeLocked
+                  ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-2xs'
+              }`}
+              title="Khóa/mở máy con trong giờ ăn cơm gia đình"
+            >
+              <Utensils size={16} className={isMealtimeLocked ? 'text-white' : 'text-amber-600'} />
+              <span className="text-[10px] font-bold leading-tight">
+                {isMealtimeLocked ? 'Mở giờ cơm' : 'Giờ cơm'}
+              </span>
+            </button>
+
+            {/* 2. Bedtime Lock */}
+            <button
+              type="button"
+              onClick={() => {
+                haptics.selection();
+                onToggleBedtime?.();
+              }}
+              className={`p-2 rounded-2xl border text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                isBedtimeLocked
+                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-2xs'
+              }`}
+              title="Khóa/mở máy con trong giờ ngủ ban đêm"
+            >
+              <Moon size={16} className={isBedtimeLocked ? 'text-white' : 'text-indigo-600'} />
+              <span className="text-[10px] font-bold leading-tight">
+                {isBedtimeLocked ? 'Mở giờ ngủ' : 'Giờ ngủ'}
+              </span>
+            </button>
+
+            {/* 3. Study Mode */}
+            <button
+              type="button"
+              onClick={() => {
+                haptics.selection();
+                onToggleStudyMode?.();
+              }}
+              className={`p-2 rounded-2xl border text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                isStudyMode
+                  ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-2xs'
+              }`}
+              title="Bật/tắt chế độ giờ học tập trung"
+            >
+              <BookOpen size={16} className={isStudyMode ? 'text-white' : 'text-blue-600'} />
+              <span className="text-[10px] font-bold leading-tight">
+                {isStudyMode ? 'Đang học' : 'Giờ học'}
+              </span>
+            </button>
+
+            {/* 4. Reminder / Broadcast */}
+            <button
+              type="button"
+              onClick={() => {
+                haptics.selection();
+                onOpenBroadcast?.();
+              }}
+              className="p-2 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-2xs text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 cursor-pointer"
+              title="Gửi lời dặn / loa nhắc nhở đến các con"
+            >
+              <Megaphone size={16} className="text-emerald-600" />
+              <span className="text-[10px] font-bold leading-tight">Nhắc nhở</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

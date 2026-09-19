@@ -63,11 +63,13 @@ import {
   type RealInstalledApp,
 } from './services/nativePermissionsService';
 import { EmergencyContactBar } from './EmergencyContactBar';
-import { SharedLessonViewerModal } from './SharedLessonViewerModal';
 import { KidNotificationBanner } from './KidNotificationBanner';
-import { SharedLessonLink } from '../../shared/types';
+import { SharedLessonViewerModal } from './SharedLessonViewerModal';
+import { SharedLessonLink, AppItem } from '../../shared/types';
 import { FamilyChatModal } from '../../shared/components/FamilyChatModal';
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
+import { TimeExtensionRequestModal } from '../../shared/components/TimeExtensionRequestModal';
+import { CompulsoryResponseOverlay } from '../../shared/components/CompulsoryResponseOverlay';
 import {
   uploadChildTelemetryToCloud,
   subscribeRemoteCommandsOnKid,
@@ -77,6 +79,9 @@ import {
   logChildRoutePointToCloud,
   triggerCloudSOS,
   subscribeCloudChatMessages,
+  sendCloudChatMessage,
+  syncChildSettingsToCloud,
+  CloudChatMessage,
 } from '../../shared/firebase/cloudSyncService';
 import {
   getKidDevicePairedInfo,
@@ -107,6 +112,29 @@ function speakVietnamese(text: string) {
       console.warn('SpeechSynthesis error:', e);
     }
   }
+}
+
+function playNotificationChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    const now = ctx.currentTime;
+    osc.frequency.setValueAtTime(587.33, now); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.15); // A5
+    gain.gain.setValueAtTime(0.4, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.35);
+  } catch (e) {}
 }
 
 function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -299,6 +327,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const lastProcessedChatTsRef = React.useRef<number>(Date.now() - 5000);
   const [showPermissionsScreen, setShowPermissionsScreen] = useState(false);
+  const [showTimeExtensionModal, setShowTimeExtensionModal] = useState(false);
+  const [timeExtensionTarget, setTimeExtensionTarget] = useState<string>('Thiết bị');
+  const [compulsoryMessage, setCompulsoryMessage] = useState<CloudChatMessage | null>(null);
   const [showConnectedAccounts, setShowConnectedAccounts] = useState(false);
   const [activeSharedLesson, setActiveSharedLesson] = useState<SharedLessonLink | null>(null);
 
@@ -316,6 +347,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   // Hardware back button & gesture navigation handler
   useEffect(() => {
     const handleBack = (): boolean => {
+      if (compulsoryMessage) {
+        // Non-dismissible: kid must respond to compulsory parent message
+        return true;
+      }
+      if (showTimeExtensionModal) {
+        setShowTimeExtensionModal(false);
+        return true;
+      }
       if (showPermissionsScreen) {
         setShowPermissionsScreen(false);
         return true;
@@ -418,13 +457,41 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         try {
           localStorage.setItem('kidcare_cached_apps_v2', JSON.stringify(scanned));
         } catch (e) {}
+
+        // Auto convert to AppItem and sync with cloud so parent sees child's real installed apps
+        if (activeParentId && targetChildId) {
+          const currentSettings = state.childSettings[targetChildId];
+          const existingRules = currentSettings?.apps || state.apps || [];
+          const mergedApps: AppItem[] = scanned.map((app) => {
+            const existing = existingRules.find(
+              (r) =>
+                r.id === app.id ||
+                r.name.toLowerCase() === app.name.toLowerCase() ||
+                (app.packageName && r.packageName === app.packageName)
+            );
+            return {
+              id: app.id,
+              name: app.name,
+              packageName: app.packageName,
+              category: (app.category as any) || (existing?.category || 'other'),
+              icon: app.icon,
+              status: existing ? existing.status : 'allowed',
+              isHidden: existing ? !!existing.isHidden : false,
+              isFavorite: existing ? !!existing.isFavorite : false,
+              timeUsedMinutes: existing ? existing.timeUsedMinutes : 0,
+              dailyLimitMinutes: existing ? existing.dailyLimitMinutes : 0,
+              isSystem: !!app.isSystem,
+            };
+          });
+          syncChildSettingsToCloud(activeParentId, targetChildId, { apps: mergedApps }).catch(() => {});
+        }
       }
     } catch (e) {
       console.warn('Load installed apps error:', e);
     } finally {
       setIsScanningApps(false);
     }
-  }, []);
+  }, [activeParentId, targetChildId, state.childSettings, state.apps]);
 
   useEffect(() => {
     // Launch load optimization: delay real app scan by 1200ms so initial frame paints immediately
@@ -463,6 +530,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         );
 
         const isBlocked = matchingRule ? matchingRule.status === 'blocked' : false;
+        const isHidden = matchingRule ? !!matchingRule.isHidden : false;
+        const isFavorite = matchingRule ? !!matchingRule.isFavorite : false;
         const timeUsed = matchingRule ? matchingRule.timeUsedMinutes : 0;
         const dailyLimit = matchingRule ? matchingRule.dailyLimitMinutes : 0;
 
@@ -473,6 +542,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           category: realApp.category || (matchingRule ? matchingRule.category : 'other'),
           icon: realApp.icon,
           status: isBlocked ? ('blocked' as const) : ('allowed' as const),
+          isHidden,
+          isFavorite,
           timeUsedMinutes: timeUsed,
           dailyLimitMinutes: dailyLimit,
           isSystem: realApp.isSystem,
@@ -487,6 +558,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       category: a.category,
       icon: undefined,
       status: a.status,
+      isHidden: !!a.isHidden,
+      isFavorite: !!a.isFavorite,
       timeUsedMinutes: a.timeUsedMinutes,
       dailyLimitMinutes: a.dailyLimitMinutes,
       isSystem: false,
@@ -494,29 +567,39 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   }, [realInstalledApps, apps]);
 
   const filteredLauncherApps = useMemo(() => {
-    return launcherApps.filter((app) => {
-      // 1. Search Query
-      if (appSearchQuery.trim()) {
-        const q = appSearchQuery.trim().toLowerCase();
-        const matchesName = app.name.toLowerCase().includes(q);
-        const matchesPkg = (app.packageName || '').toLowerCase().includes(q);
-        if (!matchesName && !matchesPkg) return false;
-      }
+    return launcherApps
+      .filter((app) => {
+        // Exclude apps hidden by parent
+        if (app.isHidden) return false;
 
-      // 2. Category / Status Filter
-      const isBlocked = app.status === 'blocked' || (studyModeOnly && app.category !== 'study');
-      if (appCategoryFilter === 'allowed') {
-        return !isBlocked;
-      }
-      if (appCategoryFilter === 'blocked') {
-        return isBlocked;
-      }
-      if (appCategoryFilter === 'study') {
-        return app.category === 'study';
-      }
+        // 1. Search Query
+        if (appSearchQuery.trim()) {
+          const q = appSearchQuery.trim().toLowerCase();
+          const matchesName = app.name.toLowerCase().includes(q);
+          const matchesPkg = (app.packageName || '').toLowerCase().includes(q);
+          if (!matchesName && !matchesPkg) return false;
+        }
 
-      return true;
-    });
+        // 2. Category / Status Filter
+        const isBlocked = app.status === 'blocked' || (studyModeOnly && app.category !== 'study');
+        if (appCategoryFilter === 'allowed') {
+          return !isBlocked;
+        }
+        if (appCategoryFilter === 'blocked') {
+          return isBlocked;
+        }
+        if (appCategoryFilter === 'study') {
+          return app.category === 'study';
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        // Pinned favorite apps to top
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return a.name.localeCompare(b.name, 'vi');
+      });
   }, [launcherApps, appSearchQuery, appCategoryFilter, studyModeOnly]);
   const [isPrivacyAccepted, setIsPrivacyAccepted] = useState(() => {
     return localStorage.getItem('kidcare_privacy_policy_accepted_v1') === 'true';
@@ -671,7 +754,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   }, []);
 
   // Helper to map managed app items to Android package keywords/identifiers
-  const getBlockedPackagesList = (appList: typeof apps, isStudyMode: boolean): string[] => {
+  const getBlockedPackagesList = (
+    appList: Array<{ id: string; name: string; packageName?: string; status?: string; category?: string }>,
+    isStudyMode: boolean
+  ): string[] => {
     const pkgMapping: Record<string, string[]> = {
       app_youtube: ['youtube', 'com.google.android.youtube'],
       app_tiktok: ['tiktok', 'musically', 'trill', 'com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'],
@@ -687,6 +773,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     appList.forEach((app) => {
       const isBlocked = app.status === 'blocked' || (isStudyMode && app.category !== 'study');
       if (isBlocked) {
+        if (app.packageName) {
+          blockedList.push(app.packageName);
+        }
         const mapped = pkgMapping[app.id];
         if (mapped) {
           blockedList.push(...mapped);
@@ -713,7 +802,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     const isLocked = Boolean(lockChallenge.isLocked);
     const kioskEnabled = Boolean(kioskMode.isEnabled);
     const kioskPackage = kioskMode.pinnedAppId || '';
-    const blockedPackages = getBlockedPackagesList(apps, studyModeOnly);
+    const blockedPackages = getBlockedPackagesList(launcherApps, studyModeOnly);
 
     const rulesPayload = {
       isLocked,
@@ -728,7 +817,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     lastEnforcementRulesRef.current = serialized;
 
     updateNativeEnforcementRules(rulesPayload).catch((e) => console.warn('updateNativeEnforcementRules error:', e));
-  }, [lockChallenge.isLocked, kioskMode.isEnabled, kioskMode.pinnedAppId, apps, studyModeOnly]);
+  }, [lockChallenge.isLocked, kioskMode.isEnabled, kioskMode.pinnedAppId, launcherApps, studyModeOnly]);
 
   const appsRef = useRef(apps);
   appsRef.current = apps;
@@ -938,14 +1027,23 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           if (msg.sender === 'parent' && (msg.timestamp || 0) > lastProcessedChatTsRef.current) {
             lastProcessedChatTsRef.current = msg.timestamp || Date.now();
 
+            // 1. Play audio chime on kid phone
+            playNotificationChime();
+
             if (!showChatModal) {
               setUnreadChatCount((prev) => prev + 1);
               setToastMessage(`💬 Bố/Mẹ: "${msg.text}"`);
               haptics.success();
+            }
 
-              if (msg.speakTTS) {
-                speakVietnamese(`Bố mẹ dặn: ${msg.text}`);
-              }
+            // 2. Speak message aloud on kid phone if requested
+            if (msg.speakTTS) {
+              speakVietnamese(`Bố mẹ dặn: ${msg.text}`);
+            }
+
+            // 3. Compulsory response mode: full screen takeover until kid responds
+            if (msg.requireResponse) {
+              setCompulsoryMessage(msg);
             }
           }
         });
@@ -1669,6 +1767,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       <KidActivationScreen
         onActivationComplete={() => {
           setPairedInfo(getKidDevicePairedInfo());
+          setShowPermissionsScreen(true);
         }}
       />
     );
@@ -1691,10 +1790,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       {/* Smart Offline Detection Banner */}
       <OfflineBanner />
 
-      {/* Native Status Bar Spacer for Kid Device */}
+      {/* Native Status Bar Spacer for Kid Device - Unified with Header Gradient */}
       {!simulatedChildId && !isSimulatorMode() && (
         <div
-          className="w-full shrink-0 bg-sky-50 transition-all pointer-events-none"
+          className="w-full shrink-0 bg-sky-500 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500 transition-all pointer-events-none"
           style={{ height: 'var(--status-bar-height, 42px)' }}
         />
       )}
@@ -1767,46 +1866,46 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         </div>
       )}
 
-      {/* Top Kid Header Bar - Cheerful Friendly Child Style */}
-      <div className="bg-sky-500 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500 text-white px-4 pt-3.5 pb-3.5 shadow-md select-none rounded-b-3xl">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 min-w-0">
+      {/* Top Kid Header Bar - Cheerful Friendly Child Style with Fluid Responsive Scaling */}
+      <div className="bg-sky-500 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500 text-white px-2.5 sm:px-4 pt-2 pb-3 shadow-md select-none rounded-b-2xl sm:rounded-b-3xl">
+        <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+          {/* Left: Child Avatar + Greeting + Star Pill & Device Info */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="relative shrink-0">
               <img
                 src={child.avatar}
                 alt={child.name}
-                className="w-12 h-12 rounded-2xl object-cover ring-3 ring-amber-300 shadow-md bg-white"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl object-cover ring-2 ring-amber-300 shadow-xs bg-white"
               />
-              <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-white shadow-xs animate-subtle-pulse"></span>
+              <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-white shadow-xs animate-subtle-pulse"></span>
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] bg-white/20 backdrop-blur-md text-white font-bold px-2 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1">
-                  <Smartphone size={10} />
-                  <span>{pairedInfo?.deviceName || 'Thiết bị con'}</span>
-                </span>
-                <span className="text-[10px] bg-amber-400/90 text-amber-950 font-black px-2 py-0.5 rounded-full flex items-center gap-0.5 whitespace-nowrap shadow-xs">
-                  🔥 7 Ngày
-                </span>
-              </div>
-              <h2 className="text-base font-black text-white leading-tight truncate mt-1">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xs sm:text-sm font-black text-white leading-tight truncate">
                 Chào {pairedInfo?.childName || child.name}! 🌈
               </h2>
+              <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+                {/* Star Bank Counter Pill (Click to switch to rewards tab) */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('rewards')}
+                  className="inline-flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-amber-950 px-1.5 py-0.5 rounded-lg shadow-xs font-black text-[10px] sm:text-[11px] transition active:scale-95 cursor-pointer border border-amber-300 shrink-0"
+                  title="Xem kho sao đổi quà"
+                >
+                  <Star size={11} className="fill-amber-950 text-amber-950 shrink-0" />
+                  <span>{kidStars} sao</span>
+                </button>
+
+                {/* Device Name Pill */}
+                <span className="text-[9px] sm:text-[10px] bg-white/20 backdrop-blur-md text-white font-medium px-1.5 py-0.5 rounded-lg truncate max-w-[80px] sm:max-w-[120px] flex items-center gap-0.5 shrink">
+                  <Smartphone size={9} className="shrink-0" />
+                  <span className="truncate">{pairedInfo?.deviceName || 'Thiết bị'}</span>
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 shrink-0">
-            {/* Star Bank Counter (Click to switch to rewards tab) */}
-            <button
-              type="button"
-              onClick={() => setActiveTab('rewards')}
-              className="flex items-center space-x-1.5 bg-amber-400 hover:bg-amber-300 text-amber-950 px-3 py-1.5 rounded-2xl shadow-md font-black text-xs transition active:scale-95 cursor-pointer border border-amber-300"
-              title="Xem kho sao đổi quà"
-            >
-              <Star size={14} className="fill-amber-950 text-amber-950" />
-              <span>{kidStars} sao</span>
-            </button>
-
+          {/* Right: Quick Action Buttons - Fluid Auto-scaling */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             {/* Quick Chat Button */}
             <button
               type="button"
@@ -1814,12 +1913,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 setUnreadChatCount(0);
                 setShowChatModal(true);
               }}
-              className="relative w-10 h-10 rounded-2xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer"
+              className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0"
               title="Nhắn tin với Bố Mẹ"
             >
-              <MessageCircle size={18} strokeWidth={2.2} />
+              <MessageCircle size={16} strokeWidth={2.2} />
               {unreadChatCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white rounded-full text-[10px] font-black flex items-center justify-center shadow-md animate-bounce border-2 border-white">
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center shadow-md animate-bounce border border-white">
                   {unreadChatCount > 9 ? "9+" : unreadChatCount}
                 </span>
               )}
@@ -1829,33 +1928,38 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             <button
               type="button"
               onClick={() => handleKidTriggerSOS('header')}
-              className="px-2.5 py-1.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/80 shadow-sm flex items-center gap-1 font-black text-xs active:scale-90 transition-all cursor-pointer animate-subtle-pulse"
+              className="h-8 sm:h-9 px-2 sm:px-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/80 shadow-xs flex items-center gap-1 font-black text-xs active:scale-90 transition-all cursor-pointer animate-subtle-pulse shrink-0"
               title="Báo động cứu hộ khẩn cấp cho Bố Mẹ"
             >
-              <AlertOctagon size={15} className="animate-bounce" />
-              <span>SOS</span>
+              <AlertOctagon size={14} className="animate-bounce" />
+              <span className="text-[11px] sm:text-xs">SOS</span>
             </button>
 
-            {/* Quick Hardware Controls Button */}
+            {/* Quick Hardware & System Settings Button */}
             <button
               type="button"
               onClick={() => setShowKidControlPanel(true)}
-              className="w-10 h-10 rounded-2xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer"
-              title="Cài đặt âm lượng & độ sáng màn hình"
+              className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0"
+              title="Cài đặt máy & Quyền bảo vệ"
             >
-              <Sliders size={18} strokeWidth={2.2} />
+              <Sliders size={16} strokeWidth={2.2} />
+              {hasMissingPermissions && (
+                <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-rose-500 border-2 border-white rounded-full animate-pulse shadow-xs" />
+              )}
             </button>
 
-            {/* Debug Logs Button */}
+            {/* Debug Logs Button - Shown on >=360px screens or when there are errors */}
             <button
               type="button"
               onClick={() => setShowDebugModal(true)}
-              className="relative w-10 h-10 rounded-2xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer"
+              className={`relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0 ${
+                errorCount > 0 ? 'flex' : 'hidden min-[360px]:flex'
+              }`}
               title="Nhật ký truyền nhận & Gỡ lỗi đồng bộ"
             >
-              <FileText size={18} strokeWidth={2.2} className={errorCount > 0 ? "text-rose-300" : "text-white"} />
+              <FileText size={16} strokeWidth={2.2} className={errorCount > 0 ? "text-rose-300" : "text-white"} />
               {errorCount > 0 && (
-                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[9px] font-black animate-pulse shadow-sm">
+                <span className="absolute -top-1 -right-1 px-1 py-0.2 bg-rose-500 text-white rounded-full text-[8px] font-black animate-pulse shadow-xs">
                   {errorCount}
                 </span>
               )}
@@ -1919,48 +2023,6 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           {/* ===================== TAB 1: TRANG CHỦ & ỨNG DỤNG ===================== */}
           {activeTab === 'home' && (
             <div className="space-y-4 animate-in fade-in duration-200">
-              {/* Google Family Link Style: Smart Permissions Setup Card */}
-              {hasMissingPermissions && (
-                <div
-                  onClick={() => setShowPermissionsScreen(true)}
-                  className="bg-white border border-amber-200/90 rounded-3xl p-4 shadow-sm hover:shadow-md transition-all active:scale-[0.985] cursor-pointer group relative overflow-hidden"
-                >
-                  <div className="flex items-start space-x-3.5">
-                    <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200/60 text-amber-600 flex items-center justify-center font-bold text-xl shrink-0 group-hover:scale-105 transition">
-                      🛡️
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <h4 className="text-xs font-black text-slate-900 tracking-tight">
-                          Hoàn tất thiết lập bảo vệ KidCare
-                        </h4>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold shrink-0">
-                          Cần thiết lập
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                        Kích hoạt đầy đủ các quyền để định vị GPS và quản lý thời gian chính xác nhất.
-                      </p>
-                      <div className="mt-2.5 flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-amber-700 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                          Bấm để xem danh sách quyền
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setShowPermissionsScreen(true);
-                          }}
-                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 cursor-pointer"
-                        >
-                          Thiết lập ➔
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* 🦉 Mascot Companion Card - Emotional & Gamification Polish */}
               <div className="bg-emerald-50 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border border-emerald-200/80 rounded-3xl p-3.5 shadow-xs flex items-center gap-3.5 relative overflow-hidden">
@@ -2052,8 +2114,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                           <button
                             type="button"
                             onClick={() => {
-                              haptics.light();
-                              setShowChatModal(true);
+                              haptics.selection();
+                              setTimeExtensionTarget('Thời gian dùng máy');
+                              setShowTimeExtensionModal(true);
                             }}
                             className="px-3 py-1.5 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-xl text-xs font-bold text-white transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1"
                           >
@@ -2107,89 +2170,43 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 );
               })()}
 
-              {/* 4 Quick Action Shortcuts */}
-              <div className="grid grid-cols-4 gap-2.5">
-                {/* 1. Permissions */}
-                <button
-                  type="button"
-                  onClick={() => setShowPermissionsScreen(true)}
-                  className="relative flex flex-col items-center p-2.5 rounded-2xl bg-white border border-slate-200/70 shadow-xs hover:shadow-md hover:border-blue-200 transition-all active:scale-92 text-center group cursor-pointer"
-                >
-                  <div
-                    className={`w-11 h-11 rounded-2xl flex items-center justify-center mb-1.5 border shadow-2xs group-hover:scale-108 transition-all duration-200 ${
-                      hasMissingPermissions
-                        ? 'bg-rose-50 text-rose-600 border-rose-200 animate-pulse'
-                        : 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                    }`}
-                  >
-                    <Shield size={20} strokeWidth={2} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-800 leading-tight">
-                    {hasMissingPermissions ? 'Cần Quyền' : 'Quyền Bảo Vệ'}
-                  </span>
-                  {hasMissingPermissions && (
-                    <span className="absolute top-1 right-1 w-4 h-4 bg-rose-600 text-white font-black text-[9px] rounded-full flex items-center justify-center shadow-xs animate-bounce">
-                      !
-                    </span>
-                  )}
-                </button>
-
-                {/* 2. Message Parents */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUnreadChatCount(0);
-                    setShowChatModal(true);
-                  }}
-                  className="relative flex flex-col items-center p-2.5 rounded-2xl bg-white border border-slate-200/70 shadow-xs hover:shadow-md hover:border-blue-200 transition-all active:scale-92 text-center group cursor-pointer"
-                >
-                  <div className="relative w-11 h-11 rounded-2xl flex items-center justify-center mb-1.5 border shadow-2xs bg-blue-50 text-blue-600 border-blue-200 group-hover:scale-108 transition-all duration-200">
-                    <MessageCircle size={20} strokeWidth={2} />
-                    {unreadChatCount > 0 && (
-                      <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white rounded-full text-[10px] font-black flex items-center justify-center shadow-md animate-bounce border-2 border-white">
-                        {unreadChatCount > 9 ? "9+" : unreadChatCount}
-                      </span>
+              {/* Unified Settings & System Controls Shortcut */}
+              <button
+                type="button"
+                onClick={() => setShowKidControlPanel(true)}
+                className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:shadow-md hover:border-blue-200 transition-all active:scale-[0.99] cursor-pointer group"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold relative ${
+                    hasMissingPermissions ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-blue-50 text-blue-600 border border-blue-200'
+                  }`}>
+                    <Sliders size={20} />
+                    {hasMissingPermissions && (
+                      <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 rounded-full border-2 border-white animate-pulse" />
                     )}
                   </div>
-                  <span className="text-[10px] font-bold text-slate-800 leading-tight">
-                    Nhắn Bố Mẹ
-                  </span>
-                </button>
-
-                {/* 3. Set KidCare as Home Launcher */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    openHomeLauncherSettings();
-                    showToast('📱 Đang mở cài đặt màn hình chính Launcher');
-                  }}
-                  className="relative flex flex-col items-center p-2.5 rounded-2xl bg-white border border-slate-200/70 shadow-xs hover:shadow-md hover:border-blue-200 transition-all active:scale-92 text-center group cursor-pointer"
-                >
-                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center mb-1.5 border shadow-2xs bg-amber-50 text-amber-600 border-amber-200 group-hover:scale-108 transition-all duration-200">
-                    <Home size={20} strokeWidth={2} />
+                  <div className="text-left">
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                      <span>Cài Đặt Máy & Quyền Hạn</span>
+                      {hasMissingPermissions ? (
+                        <span className="text-[10px] font-bold px-2 py-0.2 bg-rose-100 text-rose-700 rounded-full animate-pulse">
+                          Cần cấp quyền
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.2 bg-emerald-100 text-emerald-700 rounded-full">
+                          Đã tối ưu
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-[10.5px] text-slate-500 font-medium mt-0.5">
+                      Cấp quyền bảo vệ • Đặt làm Launcher • Âm lượng & Độ sáng
+                    </p>
                   </div>
-                  <span className="text-[10px] font-bold text-slate-800 leading-tight">
-                    Đặt Launcher
-                  </span>
-                  {targetSettings.isLauncherEnabled && (
-                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white" />
-                  )}
-                </button>
-
-                {/* 4. Pairing / Device Controls */}
-                <button
-                  type="button"
-                  onClick={() => setShowKidControlPanel(true)}
-                  className="flex flex-col items-center p-2.5 rounded-2xl bg-white border border-slate-200/70 shadow-xs hover:shadow-md hover:border-blue-200 transition-all active:scale-92 text-center group cursor-pointer"
-                >
-                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center mb-1.5 border shadow-2xs bg-indigo-50 text-indigo-600 border-indigo-200 group-hover:scale-108 transition-all duration-200">
-                    <Sliders size={20} strokeWidth={2} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-800 leading-tight">
-                    Cài Đặt Máy
-                  </span>
-                </button>
-              </div>
+                </div>
+                <div className="text-slate-400 group-hover:text-blue-600 transition text-sm font-black px-2">
+                  ➔
+                </div>
+              </button>
 
               {/* Launcher App Drawer & Safe Apps Section */}
               <div className="space-y-3 pt-2">
@@ -3208,7 +3225,24 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             )}
           </div>
 
-                    {/* EmergencyContactBar on Remote Lock Challenge */}
+          {/* Quick "Xin mở máy" button on Lock Screen */}
+          <div className="w-full max-w-sm mx-auto pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                haptics.selection();
+                setTimeExtensionTarget('Mở khóa điện thoại');
+                setShowTimeExtensionModal(true);
+              }}
+              className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-2xl font-black text-sm shadow-lg shadow-amber-500/25 flex items-center justify-center space-x-2 transition active:scale-95 cursor-pointer border border-amber-300/40"
+            >
+              <span>🙋</span>
+              <span>Xin Bố Mẹ Mở Máy</span>
+              <span className="text-[11px] font-bold bg-black/20 px-2 py-0.5 rounded-lg">1p - 12h</span>
+            </button>
+          </div>
+
+          {/* EmergencyContactBar on Remote Lock Challenge */}
           <div className="w-full max-w-sm mx-auto pt-3">
             <EmergencyContactBar
               parentPhone={targetSettings.emergencyContact?.parentPhone || '0987654321'}
@@ -3255,7 +3289,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 Ứng dụng {selectedBlockedApp} đang bị tạm khóa
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Bố/Mẹ đã đặt giới hạn để con tập trung học tập và bảo vệ mắt. Con có thể gửi lời nhắn xin thêm 15 phút nhé!
+                Bố/Mẹ đã đặt giới hạn để con tập trung học tập. Con có thể gửi yêu cầu xin mở máy hoặc thêm thời gian nhé!
               </p>
             </div>
 
@@ -3266,14 +3300,6 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               </div>
             ) : (
               <div className="space-y-2">
-                <input
-                  type="text"
-                  value={requestReason}
-                  onChange={(e) => setRequestReason(e.target.value)}
-                  placeholder="Lý do (VD: Con xem bài tập cô dặn...)"
-                  className="w-full px-3 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                />
-
                 <div className="flex space-x-2 pt-1">
                   <button
                     onClick={() => setSelectedBlockedApp(null)}
@@ -3282,11 +3308,16 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     Đóng lại
                   </button>
                   <button
-                    onClick={submitTimeExtension}
-                    className="flex-1 py-2.5 bg-blue-600 text-white font-bold text-xs rounded-xl shadow-md hover:bg-blue-700 flex items-center justify-center space-x-1"
+                    onClick={() => {
+                      const appName = selectedBlockedApp || 'Ứng dụng';
+                      setTimeExtensionTarget(appName);
+                      setSelectedBlockedApp(null);
+                      setShowTimeExtensionModal(true);
+                    }}
+                    className="flex-[2] py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black text-xs rounded-xl shadow-md hover:from-blue-700 hover:to-indigo-700 flex items-center justify-center space-x-1 cursor-pointer active:scale-95 transition"
                   >
                     <Send size={14} />
-                    <span>Xin bố mẹ 15 phút</span>
+                    <span>Xin Bố Mẹ Mở (1p - 12h)</span>
                   </button>
                 </div>
 
@@ -3308,196 +3339,209 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         </div>
       )}
 
-      {/* 9. KID HARDWARE QUICK CONTROL MODAL / SHEET */}
+      {/* 9. UNIFIED KID SETTINGS & SYSTEM CONTROLS MODAL */}
       {showKidControlPanel && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
-          <div className="w-full max-w-sm bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl p-5 space-y-4 border border-slate-100 animate-in slide-in-from-bottom-4">
+          <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl p-5 space-y-4 border border-slate-100 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black shadow-xs">
                   <Sliders size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Cài Đặt Thiết Bị Của Con</h3>
-                  <p className="text-[10px] text-slate-500">Âm lượng & Độ sáng màn hình</p>
+                  <h3 className="text-sm font-black text-slate-900 leading-tight">Cài Đặt Thiết Bị Của Con</h3>
+                  <p className="text-[10px] text-slate-500 font-medium">Quyền bảo vệ • Launcher • Phần cứng máy</p>
                 </div>
               </div>
               <button
                 onClick={() => setShowKidControlPanel(false)}
-                className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition active:scale-90"
               >
                 <X size={16} />
               </button>
             </div>
 
-            {/* If Hardware is Locked by Parents */}
-            {hardwareControls.isHardwareLocked ? (
-              <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 space-y-3 text-center">
-                <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-                  <Lock size={24} />
+            {/* Section 1: System Permissions Status */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                    hasMissingPermissions ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'
+                  }`}>
+                    <Shield size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800">Quyền Bảo Vệ Thiết Bị</h4>
+                    <p className="text-[10px] text-slate-500">Định vị GPS, Khóa ứng dụng, Vẽ đè màn hình</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-rose-900">Thiết Lập Phần Cứng Đang Bị Bố Mẹ Khóa!</h4>
-                  <p className="text-[11px] text-rose-700 mt-0.5">
-                    Bố mẹ đã cố định âm lượng ở mức {hardwareControls.volume}% và độ sáng ở mức {hardwareControls.brightness}% để con tập trung học tập.
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  hasMissingPermissions ? 'bg-rose-100 text-rose-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {hasMissingPermissions ? 'Chưa đủ quyền' : 'Đã tối ưu'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowKidControlPanel(false);
+                  setShowPermissionsScreen(true);
+                }}
+                className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs ${
+                  hasMissingPermissions
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                    : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                }`}
+              >
+                <span>{hasMissingPermissions ? '👉 Bấm vào để cấp quyền bảo vệ ngay' : 'Xem danh sách quyền hệ thống'}</span>
+                <span>➔</span>
+              </button>
+            </div>
+
+            {/* Section 2: Home Launcher Setup */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                    <Home size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800">Màn Hình Chính (Home Launcher)</h4>
+                    <p className="text-[10px] text-slate-500">Chặn thoát app trái phép khi bấm nút Home</p>
+                  </div>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  targetSettings.isLauncherEnabled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {targetSettings.isLauncherEnabled ? 'Đã cài đặt' : 'Chưa đặt'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  openHomeLauncherSettings();
+                  showToast('📱 Đang mở cài đặt màn hình chính Launcher');
+                }}
+                className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Home size={14} />
+                <span>Mở Cài Đặt Chọn KidCare Làm Màn Hình Chính</span>
+              </button>
+            </div>
+
+            {/* Section 3: Hardware Controls (Volume & Brightness) */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Sliders size={14} className="text-blue-600" />
+                  <span>Âm Lượng & Độ Sáng</span>
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">
+                  {hardwareControls.isHardwareLocked ? 'Bố mẹ đã khóa' : 'Đang cho phép'}
+                </span>
+              </div>
+
+              {hardwareControls.isHardwareLocked ? (
+                <div className="bg-rose-50 border border-rose-200/80 rounded-xl p-3 text-center space-y-2">
+                  <p className="text-[11px] text-rose-700 font-medium leading-relaxed">
+                    Bố Mẹ đã cố định âm lượng ở mức {hardwareControls.volume}% và độ sáng {hardwareControls.brightness}% để con tập trung học bài.
                   </p>
+                  {requestHwSent ? (
+                    <div className="p-2 bg-white text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">
+                      ✓ Đã gửi yêu cầu đến bố mẹ!
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        requestChildHardwareAdjustment('Con xin phép tự chỉnh âm lượng để nghe video bài giảng ạ!', 15);
+                        setRequestHwSent(true);
+                        setTimeout(() => setRequestHwSent(false), 4000);
+                        showToast('Đã gửi yêu cầu mở quyền đến điện thoại bố mẹ!');
+                      }}
+                      className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 transition"
+                    >
+                      Xin phép bố mẹ mở quyền điều chỉnh
+                    </button>
+                  )}
                 </div>
-
-                {requestHwSent ? (
-                  <div className="p-2.5 bg-white text-emerald-700 rounded-xl text-xs font-bold border border-emerald-200">
-                    ✓ Đã gửi yêu cầu đến bố mẹ! Hãy đợi bố mẹ duyệt nhé.
+              ) : (
+                <div className="space-y-3">
+                  {/* Volume Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                      <span className="flex items-center gap-1">
+                        <Volume2 size={14} className="text-blue-500" />
+                        <span>Âm lượng</span>
+                      </span>
+                      <span className="text-blue-600">{hardwareControls.volume}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max={hardwareControls.maxAllowedVolume || 75}
+                      value={hardwareControls.volume}
+                      onChange={(e) => setHardwareControls({ volume: Number(e.target.value), isMuted: false }, 'child')}
+                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <div className="flex items-center justify-between text-[9px] text-slate-400">
+                      <span>0%</span>
+                      <span className="text-amber-600">Tối đa an toàn: {hardwareControls.maxAllowedVolume}%</span>
+                    </div>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      requestChildHardwareAdjustment('Con xin phép tự chỉnh âm lượng để nghe video bài giảng ạ!', 15);
-                      setRequestHwSent(true);
-                      setTimeout(() => setRequestHwSent(false), 4000);
-                      showToast('Đã gửi yêu cầu mở quyền đến điện thoại bố mẹ!');
-                    }}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 flex items-center justify-center space-x-1.5"
-                  >
-                    <Sparkles size={14} />
-                    <span>Xin phép bố mẹ mở quyền điều chỉnh (15 phút)</span>
-                  </button>
-                )}
+
+                  {/* Brightness Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                      <span className="flex items-center gap-1">
+                        <Sun size={14} className="text-amber-500" />
+                        <span>Độ sáng</span>
+                      </span>
+                      <span className="text-amber-600">{hardwareControls.brightness}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={hardwareControls.minAllowedBrightness || 25}
+                      max="100"
+                      value={hardwareControls.brightness}
+                      onChange={(e) => setHardwareControls({ brightness: Number(e.target.value) }, 'child')}
+                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                    />
+                    <div className="flex items-center justify-between text-[9px] text-slate-400">
+                      <span className="text-amber-600">Bảo vệ mắt: {hardwareControls.minAllowedBrightness}%</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Section 4: Device Info & Unpair */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-left">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Smartphone size={14} className="text-blue-600" />
+                  <span>Thiết bị: {pairedInfo?.deviceName || 'Điện thoại của con'}</span>
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
+                  Đã ghép đôi
+                </span>
               </div>
-            ) : !hardwareControls.allowChildAdjustment ? (
-              <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-3 text-center">
-                <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
-                  <Lock size={24} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-amber-900">Bố Mẹ Chưa Cấp Quyền Tự Điều Chỉnh</h4>
-                  <p className="text-[11px] text-amber-700 mt-0.5">
-                    Con cần xin phép bố mẹ để được phép tự tăng giảm âm lượng và độ sáng.
-                  </p>
-                </div>
+              <button
+                type="button"
+                onClick={handleUnpairCurrentDevice}
+                className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <LogOut size={14} />
+                <span>Hủy liên kết / Đổi tài khoản máy này</span>
+              </button>
+            </div>
 
-                {requestHwSent ? (
-                  <div className="p-2.5 bg-white text-emerald-700 rounded-xl text-xs font-bold border border-emerald-200">
-                    ✓ Đã gửi yêu cầu đến bố mẹ! Hãy đợi bố mẹ duyệt nhé.
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      requestChildHardwareAdjustment('Con xin phép bố mẹ mở quyền chỉnh âm lượng và độ sáng trong 15 phút ạ!', 15);
-                      setRequestHwSent(true);
-                      setTimeout(() => setRequestHwSent(false), 4000);
-                      showToast('Đã gửi yêu cầu đến điện thoại bố mẹ!');
-                    }}
-                    className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 flex items-center justify-center space-x-1.5"
-                  >
-                    <Sparkles size={14} />
-                    <span>Xin phép bố mẹ cấp quyền (15 phút)</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              /* CHILD IS ALLOWED TO ADJUST HARDWARE */
-              <div className="space-y-4">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100">
-                  <ShieldCheck size={16} />
-                  <span>Con được phép tự điều chỉnh trong giới hạn an toàn!</span>
-                </div>
-
-                {/* Volume Slider */}
-                <div className="space-y-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                    <span className="flex items-center space-x-1.5">
-                      <Volume2 size={16} className="text-blue-500" />
-                      <span>Âm lượng của con</span>
-                    </span>
-                    <span className="text-blue-600 font-bold">{hardwareControls.volume}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max={hardwareControls.maxAllowedVolume || 75}
-                    value={hardwareControls.volume}
-                    onChange={(e) => setHardwareControls({ volume: Number(e.target.value), isMuted: false }, 'child')}
-                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                  />
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span>0% (Im lặng)</span>
-                    <span className="text-amber-600 font-bold">
-                      Tối đa an toàn: {hardwareControls.maxAllowedVolume}%
-                    </span>
-                  </div>
-                </div>
-
-                {/* Brightness Slider */}
-                <div className="space-y-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                    <span className="flex items-center space-x-1.5">
-                      <Sun size={16} className="text-amber-500" />
-                      <span>Độ sáng màn hình</span>
-                    </span>
-                    <span className="text-amber-600 font-bold">{hardwareControls.brightness}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={hardwareControls.minAllowedBrightness || 25}
-                    max="100"
-                    value={hardwareControls.brightness}
-                    onChange={(e) => setHardwareControls({ brightness: Number(e.target.value) }, 'child')}
-                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                  />
-                  <div className="flex items-center justify-between text-[10px] text-slate-400">
-                    <span className="text-amber-600 font-bold">
-                      Tối thiểu bảo vệ mắt: {hardwareControls.minAllowedBrightness}%
-                    </span>
-                    <span>100% (Sáng nhất)</span>
-                  </div>
-                </div>
-
-                {/* Device Info & Unlink Option */}
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-left">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                      <Smartphone size={14} className="text-blue-600" />
-                      <span>Thiết bị hiện tại:</span>
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
-                      Đang liên kết
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-600 space-y-0.5">
-                    <p><strong>Tên máy:</strong> {pairedInfo?.deviceName || 'Điện thoại của con'}</p>
-                    <p><strong>Bé sở hữu:</strong> {pairedInfo?.childName || child.name}</p>
-                    <p className="font-mono text-[10px] text-slate-400 truncate">ID: {pairedInfo?.deviceId || 'Tự nhận diện'}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleUnpairCurrentDevice}
-                    className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <LogOut size={14} />
-                    <span>Hủy liên kết / Đổi tài khoản máy này</span>
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowKidControlPanel(false);
-                    openHomeLauncherSettings();
-                    showToast('📱 Đang mở cài đặt màn hình chính Launcher');
-                  }}
-                  className="w-full py-2.5 px-3 mb-2 bg-indigo-600 bg-gradient-to-r from-indigo-500 to-blue-600 text-white font-bold rounded-xl text-xs shadow-xs hover:from-indigo-600 hover:to-blue-700 flex items-center justify-center space-x-2 transition active:scale-95 cursor-pointer"
-                >
-                  <Home size={16} />
-                  <span>Cài KidCare Làm Màn Hình Chính (Launcher)</span>
-                </button>
-
-                <button
-                  onClick={() => setShowKidControlPanel(false)}
-                  className="w-full py-2 bg-blue-600 text-white font-bold rounded-xl text-xs shadow-xs hover:bg-blue-700 transition"
-                >
-                  Xác nhận & Đóng
-                </button>
-              </div>
-            )}
+            <button
+              onClick={() => setShowKidControlPanel(false)}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition active:scale-95 cursor-pointer"
+            >
+              Đóng cài đặt
+            </button>
           </div>
         </div>
       )}
@@ -3636,6 +3680,45 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         childId={child.id}
         childName={child.name}
       />
+
+      {/* MODAL: Xin Mở Máy / Thêm Giờ Dùng với các mốc 1p, 5p, 15p, 30p, 1h, 3h, 5h, 8h, 12h, đến khi khóa */}
+      <TimeExtensionRequestModal
+        isOpen={showTimeExtensionModal}
+        targetAppOrDeviceName={timeExtensionTarget}
+        onClose={() => setShowTimeExtensionModal(false)}
+        onSubmit={(minutes, reason) => {
+          haptics.success();
+          requestTimeExtension(timeExtensionTarget, minutes, reason);
+          showToast(`Đã gửi yêu cầu xin ${minutes === -1 ? 'mở máy đến khi khóa' : `${minutes} phút`} đến Bố Mẹ!`);
+        }}
+      />
+
+      {/* FULL-SCREEN OVERLAY: Bắt Buộc Con Phản Hồi Lời Dặn Của Bố Mẹ */}
+      {compulsoryMessage && (
+        <CompulsoryResponseOverlay
+          messageText={compulsoryMessage.text}
+          senderName={compulsoryMessage.senderName || 'Bố Mẹ'}
+          onPlayAudio={() => {
+            speakVietnamese(`Bố mẹ dặn: ${compulsoryMessage.text}`);
+          }}
+          onSendReply={(replyText) => {
+            if (activeParentId && targetChildId) {
+              const replyMsg: CloudChatMessage = {
+                id: `msg_${Date.now()}`,
+                sender: 'kid',
+                senderName: child.name,
+                text: replyText,
+                time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                timestamp: Date.now(),
+              };
+              sendCloudChatMessage(activeParentId, targetChildId, replyMsg, child.name).catch(() => {});
+            }
+            speakVietnamese('Cảm ơn con đã phản hồi Bố Mẹ!');
+            setCompulsoryMessage(null);
+            showToast('✅ Đã gửi phản hồi đến Bố Mẹ thành công!');
+          }}
+        />
+      )}
     </div>
   );
 };

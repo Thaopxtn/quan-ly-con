@@ -108,12 +108,17 @@ export interface SafeZone {
 export interface AppItem {
   id: string;
   name: string;
-  icon: string;
-  category: 'social' | 'video' | 'chat' | 'game' | 'browser' | 'study';
+  icon?: string;
+  category: 'social' | 'video' | 'chat' | 'game' | 'browser' | 'study' | 'other';
   status: 'allowed' | 'blocked';
   timeUsedMinutes: number;
   dailyLimitMinutes: number; // 0 means no limit
   percentChange?: number;
+  packageName?: string;
+  isHidden?: boolean;
+  isFavorite?: boolean;
+  order?: number;
+  isSystem?: boolean;
 }
 
 export interface ScreenTimeData {
@@ -351,6 +356,13 @@ export interface SmartRoutines {
   bedtimeLock: boolean;
   bedtimeStart?: string; // "21:30"
   bedtimeEnd?: string; // "06:30"
+  schoolMorningStart?: string; // "07:30"
+  schoolMorningEnd?: string; // "11:30"
+  schoolAfternoonStart?: string; // "13:30"
+  schoolAfternoonEnd?: string; // "17:00"
+  homeStudyStart?: string; // "19:30"
+  homeStudyEnd?: string; // "21:30"
+  studyModeLock?: boolean;
   continuousLimitMinutes: number; // 0 = off, 30, 45, 60
   profanityDetection: boolean;
   profanityPenaltyMinutes: number; // 5, 10, 15, 30

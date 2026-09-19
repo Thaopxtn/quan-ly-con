@@ -362,6 +362,11 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                       <h4 className="text-xs font-black text-slate-900 leading-snug">{perm.name}</h4>
+                      {perm.id === 'overlay' && (
+                        <span className="text-[10px] bg-blue-100 text-blue-900 border border-blue-300 px-2 py-0.5 rounded-full font-black flex items-center gap-1 shadow-2xs">
+                          ⭐ Quyền hiển thị cốt lõi
+                        </span>
+                      )}
                       {perm.isGranted ? (
                         <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
                           <CheckCircle2 size={11} className="text-emerald-600" /> Đã cấp quyền
@@ -382,13 +387,15 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
                 className={`p-3 rounded-2xl border text-[11px] flex items-start space-x-2 ${
                   perm.isGranted
                     ? "bg-slate-50 border-slate-100 text-slate-600"
+                    : perm.id === 'overlay'
+                    ? "bg-blue-50/90 border-blue-200 text-blue-950 font-medium"
                     : "bg-rose-50/70 border-rose-100 text-rose-950 font-medium"
                 }`}
               >
                 <Info
                   size={15}
                   className={`shrink-0 mt-0.5 ${
-                    perm.isGranted ? "text-blue-500" : "text-rose-500"
+                    perm.isGranted ? "text-blue-500" : perm.id === 'overlay' ? "text-blue-600" : "text-rose-500"
                   }`}
                 />
                 <span className="leading-relaxed">
@@ -401,10 +408,14 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
                 {!perm.isGranted ? (
                   <button
                     onClick={() => handlePermissionAction(perm)}
-                    className="w-full py-2.5 bg-gradient-to-r from-rose-600 via-pink-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white rounded-2xl font-black text-xs shadow-md shadow-rose-500/20 flex items-center justify-center space-x-2 transition-all active:scale-[0.98] cursor-pointer"
+                    className={`w-full py-2.5 text-white rounded-2xl font-black text-xs shadow-md flex items-center justify-center space-x-2 transition-all active:scale-[0.98] cursor-pointer ${
+                      perm.id === 'overlay'
+                        ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 shadow-blue-500/25 ring-2 ring-blue-300'
+                        : 'bg-gradient-to-r from-rose-600 via-pink-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 shadow-rose-500/20'
+                    }`}
                   >
                     <ExternalLink size={14} />
-                    <span>Bấm để cấp quyền trong Cài đặt ➔</span>
+                    <span>{perm.id === 'overlay' ? '👉 Cấp quyền Hiển thị trên các ứng dụng khác ➔' : 'Bấm để cấp quyền trong Cài đặt ➔'}</span>
                   </button>
                 ) : (
                   <button

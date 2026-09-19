@@ -24,6 +24,7 @@ export interface ChatMessage {
   text: string;
   time: string;
   speakTTS?: boolean;
+  requireResponse?: boolean;
   timestamp?: number;
 }
 
@@ -62,6 +63,30 @@ function isSameChatMessage(a: ChatMessage, b: ChatMessage | CloudChatMessage): b
   return false;
 }
 
+// Helper to play message chime
+function playNotificationChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    const now = ctx.currentTime;
+    osc.frequency.setValueAtTime(587.33, now); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.15); // A5
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.35);
+  } catch (e) {}
+}
+
 // Helper to speak Vietnamese text aloud via Web Speech Synthesis
 function speakTextAloud(text: string) {
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -83,28 +108,27 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
   childName,
   onClose,
 }) => {
-  const { state, triggerVoiceGuide } = useAppState();
+  const { state } = useAppState();
   const [inputText, setInputText] = useState("");
   const [speakOnKid, setSpeakOnKid] = useState(true);
+  const [requireResponse, setRequireResponse] = useState(false);
 
   const storageKey = `${LOCAL_CHAT_STORAGE_KEY}${childId}`;
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    if (typeof window !== "undefined") {
+    try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        } catch (e) {}
+        return JSON.parse(saved);
       }
-    }
+    } catch (e) {}
+
     return [
       {
         id: "msg_1",
         sender: "parent",
         senderName: "Bố/Mẹ",
-        text: "Chào con! Chúc con ngày mới học tập thật tốt nhé! 🌟",
+        text: `Chào ${childName}! Con đã hoàn thành bài tập về nhà chưa? 🌟`,
         time: "07:30",
         timestamp: Date.now() - 3600000,
       },
@@ -140,8 +164,6 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
             // Remove mock messages once we have real cloud messages
             const base = prev.filter((m) => m.id !== "msg_1" && m.id !== "msg_2");
             const merged = [...base];
-            let hasNewParentVoice = false;
-            let latestVoiceText = "";
 
             cloudMsgs.forEach((cm) => {
               const idx = merged.findIndex((m) => isSameChatMessage(m, cm));
@@ -152,6 +174,7 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
                 text: cm.text,
                 time: cm.time,
                 speakTTS: cm.speakTTS,
+                requireResponse: cm.requireResponse,
                 timestamp: typeof cm.timestamp === "number" ? cm.timestamp : Date.now(),
               };
 
@@ -159,11 +182,13 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
                 merged[idx] = { ...merged[idx], ...formatted };
               } else {
                 merged.push(formatted);
-                // Only speak aloud if message is recent (sent within the last 60 seconds)
+                // Only speak aloud on KID device if message is recent
                 const isRecent = cm.timestamp && Date.now() - cm.timestamp < 60000;
-                if (cm.sender === "parent" && cm.speakTTS && isRecent) {
-                  hasNewParentVoice = true;
-                  latestVoiceText = cm.text;
+                if (currentRole === "kid" && cm.sender === "parent" && isRecent) {
+                  playNotificationChime();
+                  if (cm.speakTTS) {
+                    speakTextAloud(`Bố mẹ dặn: ${cm.text}`);
+                  }
                 }
               }
             });
@@ -195,6 +220,7 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
       text: textToSend,
       time: timeStr,
       speakTTS: currentRole === "parent" ? speakOnKid : false,
+      requireResponse: currentRole === "parent" ? requireResponse : false,
       timestamp: nowTs,
     };
 
@@ -209,11 +235,8 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
       console.warn("sendCloudChatMessage error:", e);
     });
 
-    // If parent sent with TTS voice option, trigger local speech for preview
-    if (currentRole === "parent" && speakOnKid) {
-      triggerVoiceGuide(textToSend);
-      speakTextAloud(textToSend);
-    }
+    // Parent UI feedback: DO NOT speak on Parent device!
+    // Parent device should stay quiet so voice only plays on Kid device.
   };
 
   return (
@@ -300,10 +323,10 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
           )}
         </div>
 
-        {/* Parent Option: Text-to-speech Voice guide on Kid Device */}
+        {/* Parent Option: Text-to-speech & Mandatory Response */}
         {currentRole === "parent" && (
-          <div className="px-4 py-1.5 bg-blue-50/60 border-t border-blue-100/50 flex items-center justify-between text-xs">
-            <label className="flex items-center space-x-2 text-[11px] text-blue-900 font-medium cursor-pointer">
+          <div className="px-4 py-1.5 bg-blue-50/60 border-t border-blue-100/50 flex items-center justify-between text-xs gap-2 flex-wrap">
+            <label className="flex items-center space-x-1.5 text-[11px] text-blue-900 font-medium cursor-pointer">
               <input
                 type="checkbox"
                 checked={speakOnKid}
@@ -312,10 +335,19 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
               />
               <span className="flex items-center gap-1">
                 <Volume2 size={12} className="text-blue-600" />
-                <span>Phát giọng nói TTS trên máy con</span>
+                <span>Đọc TTS máy con</span>
               </span>
             </label>
-            <span className="text-[10px] text-blue-500 font-bold">Giọng đọc Việt</span>
+
+            <label className="flex items-center space-x-1.5 text-[11px] text-amber-900 font-bold cursor-pointer bg-amber-100/60 px-2 py-0.5 rounded-lg border border-amber-200">
+              <input
+                type="checkbox"
+                checked={requireResponse}
+                onChange={(e) => setRequireResponse(e.target.checked)}
+                className="w-3.5 h-3.5 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+              />
+              <span>Bắt buộc con trả lời</span>
+            </label>
           </div>
         )}
 

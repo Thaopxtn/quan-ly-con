@@ -40,6 +40,7 @@ import { FamilyChatModal } from '../../../shared/components/FamilyChatModal';
 import { subscribeCloudChatMessages } from '../../../shared/firebase/cloudSyncService';
 import { Kids360ScreenTimeGauge } from './Kids360ScreenTimeGauge';
 import { Kids360DayTimeline } from './Kids360DayTimeline';
+import { ScheduleConfigModal } from './ScheduleConfigModal';
 
 const REWARD_PRESET_ICONS = [
   '🎁', '🎮', '🍦', '📚', '🍕', '🎡', '🧸', '🎟️', '🚲', '🎧', '🎨', '⚽', '👗', '🛹', '🎸', '📱', '🏊', '🍔', '🎬', '🏸', '🚀', '🏎️'
@@ -88,6 +89,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
     updateChildDeviceName,
     switchActiveChildDevice,
     markChatAlertsAsRead,
+    updateSmartRoutines,
   } = useAppState();
 
   const { children, selectedChildId, smartRoutines, lockChallenge, studyModeOnly } = state;
@@ -105,6 +107,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   const [showGiftModal, setShowGiftModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showRewardsModal, setShowRewardsModal] = useState(false);
+  const [showScheduleConfigModal, setShowScheduleConfigModal] = useState(false);
   const [showPairModal, setShowPairModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
@@ -773,17 +776,48 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
           </div>
         )}
 
-        {/* 5. Kids360 Visual 24-Hour Day-Planner Timeline */}
+        {/* 5. Kids360 Visual 24-Hour Day-Planner Timeline & One-Touch Controls */}
         {activeChild && (
           <div className="mt-3">
             <Kids360DayTimeline
               childName={activeChild.name}
+              childId={activeChild.id}
+              smartRoutines={activeChildSettings?.smartRoutines || smartRoutines}
               onNavigate={onNavigate}
+              onOpenConfig={() => setShowScheduleConfigModal(true)}
+              showQuickActions={true}
+              isMealtimeLocked={isMealtimeLockedAll}
+              isBedtimeLocked={isBedtimeLockedAll}
+              isStudyMode={studyModeOnly}
+              onToggleMealtime={() => {
+                if (isMealtimeLockedAll) {
+                  unlockAllChildren();
+                  showToast('Đã mở khóa các máy con sau giờ ăn cơm!');
+                } else {
+                  lockAllChildrenForMealtime();
+                  showToast('Đã khóa toàn bộ máy các con để ăn cơm gia đình!');
+                }
+              }}
+              onToggleBedtime={() => {
+                if (isBedtimeLockedAll) {
+                  unlockAllChildren();
+                  showToast('Đã mở khóa thiết bị cả nhà!');
+                } else {
+                  lockAllChildrenForBedtime();
+                  showToast('Đã kích hoạt giờ đi ngủ cho tất cả các máy!');
+                }
+              }}
+              onToggleStudyMode={() => {
+                toggleStudyModeAll(!studyModeOnly);
+                showToast(!studyModeOnly ? 'Đã bật chế độ học tập đồng loạt!' : 'Đã tắt chế độ học tập');
+              }}
+              onOpenBroadcast={() => setShowBroadcastModal(true)}
+              familyUsedMinutes={stats.totalUsedMinutes}
             />
           </div>
         )}
 
-        {/* 6. Quick Gamification / Star, Task, Rewards & Chat Actions */}
+        {/* 6. Quick Gamification / Star, Task, Rewards & Badges */}
         <div className="mt-3 bg-white rounded-2xl p-3 border border-slate-200/80 shadow-2xs space-y-2">
           <div className="flex items-center justify-between text-xs font-black text-slate-800 pb-1.5 border-b border-slate-100">
             <span className="flex items-center gap-1.5">
@@ -821,6 +855,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                setRewardsTab('catalog');
                 setShowRewardsModal(true);
               }}
               className="flex items-center justify-center space-x-1 py-2 px-1 bg-gradient-to-r from-pink-50 to-rose-50 hover:from-pink-100 hover:to-rose-100 text-pink-800 rounded-xl border border-pink-200 font-bold text-[10.5px] shadow-2xs transition active:scale-95 cursor-pointer relative"
@@ -838,113 +873,16 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setUnreadParentChatCount(0);
-                setShowChatModal(true);
+                setRewardsTab('history');
+                setShowRewardsModal(true);
               }}
-              className="relative flex items-center justify-center space-x-1 py-2 px-1 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 text-indigo-800 rounded-xl border border-indigo-200 font-bold text-[10.5px] shadow-2xs transition active:scale-95 cursor-pointer"
-              title="Nhắn tin trò chuyện với con"
+              className="flex items-center justify-center space-x-1 py-2 px-1 bg-gradient-to-r from-amber-50 to-orange-50 hover:from-amber-100 hover:to-orange-100 text-amber-900 rounded-xl border border-amber-200 font-bold text-[10.5px] shadow-2xs transition active:scale-95 cursor-pointer"
+              title="Lịch sử tặng thưởng & vinh danh sao"
             >
-              <MessageCircle size={12} className="text-indigo-600" />
-              <span>Nhắn tin</span>
-              {unreadParentChatCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center animate-bounce shadow-xs border border-white">
-                  {unreadParentChatCount > 9 ? '9+' : unreadParentChatCount}
-                </span>
-              )}
+              <Award size={12} className="text-amber-600" />
+              <span>Lịch sử sao</span>
             </button>
           </div>
-        </div>
-      </div>
-      )}
-
-      {/* 5. Consolidated Shared Family Overview & One-Touch Actions */}
-      {totalChildren > 0 && (
-      <div className="bg-slate-50/70 rounded-2xl p-2.5 border border-slate-100 space-y-2">
-        {/* Family Aggregated Stats Summary */}
-        <div className="flex items-center justify-between px-1">
-          <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-            <Sparkles size={12} className="text-blue-500" />
-            Tổng quan cả nhà hôm nay:
-          </span>
-          <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100/60">
-            ⏱️ {Math.floor(stats.totalUsedMinutes / 60)}h {stats.totalUsedMinutes % 60}p / cả nhà
-          </span>
-        </div>
-
-        {/* 4 Family-wide One-Touch Action Buttons */}
-        <div className="grid grid-cols-4 gap-1.5">
-          {/* Action 1: Mealtime Lock All */}
-          <button
-            onClick={() => {
-              if (isMealtimeLockedAll) {
-                unlockAllChildren();
-                showToast('Đã mở khóa các máy con sau giờ ăn cơm!');
-              } else {
-                lockAllChildrenForMealtime();
-                showToast('Đã khóa toàn bộ máy các con để ăn cơm gia đình!');
-              }
-            }}
-            className={`p-2 rounded-xl border text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 ${
-              isMealtimeLockedAll
-                ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
-                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-2xs'
-            }`}
-          >
-            <Utensils size={16} className={isMealtimeLockedAll ? 'text-white' : 'text-amber-600'} />
-            <span className="text-[10px] font-bold leading-tight">
-              {isMealtimeLockedAll ? 'Mở giờ cơm' : 'Giờ cơm'}
-            </span>
-          </button>
-
-          {/* Action 2: Bedtime Lock All */}
-          <button
-            onClick={() => {
-              if (isBedtimeLockedAll) {
-                unlockAllChildren();
-                showToast('Đã mở khóa thiết bị cả nhà!');
-              } else {
-                lockAllChildrenForBedtime();
-                showToast('Đã kích hoạt giờ đi ngủ cho tất cả các máy!');
-              }
-            }}
-            className={`p-2 rounded-xl border text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 ${
-              isBedtimeLockedAll
-                ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
-                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-2xs'
-            }`}
-          >
-            <Moon size={16} className={isBedtimeLockedAll ? 'text-white' : 'text-indigo-600'} />
-            <span className="text-[10px] font-bold leading-tight">
-              {isBedtimeLockedAll ? 'Mở giờ ngủ' : 'Giờ ngủ'}
-            </span>
-          </button>
-
-          {/* Action 3: Study Mode All */}
-          <button
-            onClick={() => {
-              toggleStudyModeAll(!studyModeOnly);
-              showToast(!studyModeOnly ? 'Đã bật chế độ học tập đồng loạt!' : 'Đã tắt chế độ học tập');
-            }}
-            className={`p-2 rounded-xl border text-center transition active:scale-95 flex flex-col items-center justify-center gap-1 ${
-              studyModeOnly
-                ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
-                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80 shadow-2xs'
-            }`}
-          >
-            <BookOpen size={16} className={studyModeOnly ? 'text-white' : 'text-blue-600'} />
-            <span className="text-[10px] font-bold leading-tight">
-              {studyModeOnly ? 'Đang học' : 'Giờ học'}
-            </span>
-          </button>
-
-          {/* Action 4: Family Broadcast */}
-          <button
-            onClick={() => setShowBroadcastModal(true)}
-            className="p-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/80 shadow-2xs text-center transition active:scale-95 flex flex-col items-center justify-center gap-1"
-          >
-            <Megaphone size={16} className="text-emerald-600" />
-            <span className="text-[10px] font-bold leading-tight">Nhắc nhở</span>
-          </button>
         </div>
       </div>
       )}
@@ -1715,6 +1653,22 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
       {showCloudModal && (
         <CloudSettingsModal
           onClose={() => setShowCloudModal(false)}
+        />
+      )}
+
+      {/* MODAL: Cấu Hình Lịch Biểu & Thói Quen 24H */}
+      {showScheduleConfigModal && activeChild && (
+        <ScheduleConfigModal
+          isOpen={showScheduleConfigModal}
+          onClose={() => setShowScheduleConfigModal(false)}
+          childName={activeChild.name}
+          childId={activeChild.id}
+          initialRoutines={activeChildSettings?.smartRoutines || smartRoutines}
+          onSave={(updatedRoutines) => {
+            updateSmartRoutines(updatedRoutines, activeChild.id);
+            showToast(`Đã lưu cấu hình lịch biểu & thói quen cho ${activeChild.name}! 🌟`);
+          }}
+          onNavigate={onNavigate}
         />
       )}
 

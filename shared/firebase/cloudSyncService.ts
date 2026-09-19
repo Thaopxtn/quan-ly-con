@@ -37,6 +37,7 @@ export interface CloudChatMessage {
   text: string;
   time: string;
   speakTTS?: boolean;
+  requireResponse?: boolean;
   timestamp?: any;
 }
 
