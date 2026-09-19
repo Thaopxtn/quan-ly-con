@@ -5,6 +5,11 @@ import './index.css';
 
 const AppSimulator = lazy(() => import('./AppSimulator').then((m) => ({ default: m.AppSimulator })));
 
+// Explicitly declare application role
+if (typeof window !== 'undefined') {
+  (window as any).__APP_ROLE__ = 'parent';
+}
+
 // Check if user or developer explicitly requested developer simulator
 const isSimulator = typeof window !== 'undefined' && (
   window.location.search.includes('simulator') ||

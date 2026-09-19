@@ -165,6 +165,10 @@ class DebugLogService {
     return this.logs.filter((l) => l.status === 'error');
   }
 
+  public getErrorCount(childId?: string): number {
+    return this.logs.filter((l) => l.status === 'error' && (!childId || l.childId === childId)).length;
+  }
+
   public clearLogs() {
     this.logs = [];
     if (this.isStorageAvailable) {

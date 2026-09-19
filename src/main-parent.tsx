@@ -1,7 +1,10 @@
-﻿import React from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ParentApp } from '@appchame/ParentApp';
 import './index.css';
+if (typeof window !== 'undefined') {
+  (window as any).__APP_ROLE__ = 'parent';
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

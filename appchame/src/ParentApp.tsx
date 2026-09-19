@@ -29,6 +29,7 @@ import { haptics } from '@shared/utils/haptics';
 import { BellRing, FileText } from 'lucide-react';
 import { getCurrentParentAccount, logoutParentAccount } from '@shared/firebase/firebaseService';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
+import { debugLogService } from '@shared/services/debugLogService';
 
 export type ScreenId =
   | 'welcome'
@@ -87,6 +88,13 @@ export const ParentApp: React.FC<ParentAppProps> = ({
   const currentChild = children?.find((c) => c.id === selectedChildId) || child;
   const [isSosBannerDismissed, setIsSosBannerDismissed] = useState(false);
   const [showDebugModal, setShowDebugModal] = useState(false);
+  const [errorCount, setErrorCount] = useState(() => debugLogService.getErrorCount());
+
+  useEffect(() => {
+    return debugLogService.subscribe(() => {
+      setErrorCount(debugLogService.getErrorCount());
+    });
+  }, []);
 
   // Sync with Cloud for active parent and children (deferred 300ms to free up launch thread)
   useEffect(() => {
@@ -443,11 +451,16 @@ export const ParentApp: React.FC<ParentAppProps> = ({
         <button
           type="button"
           onClick={() => setShowDebugModal(true)}
-          className="fixed bottom-20 right-4 z-40 p-2.5 bg-slate-900/90 hover:bg-slate-900 text-white rounded-2xl shadow-xl backdrop-blur-md border border-slate-700/50 flex items-center gap-1.5 text-[11px] font-bold cursor-pointer active:scale-95 transition-all"
+          className="relative fixed bottom-20 right-4 z-40 p-2.5 bg-slate-900/90 hover:bg-slate-900 text-white rounded-2xl shadow-xl backdrop-blur-md border border-slate-700/50 flex items-center gap-1.5 text-[11px] font-bold cursor-pointer active:scale-95 transition-all"
           title="Nhật ký truyền nhận dữ liệu 2 chiều & Gỡ lỗi"
         >
-          <FileText size={15} className="text-emerald-400" />
+          <FileText size={15} className={errorCount > 0 ? "text-rose-400" : "text-emerald-400"} />
           <span className="text-[10px]">Debug</span>
+          {errorCount > 0 && (
+            <span className="px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[9px] font-black animate-pulse">
+              {errorCount}
+            </span>
+          )}
         </button>
       )}
 

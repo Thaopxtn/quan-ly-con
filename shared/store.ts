@@ -110,27 +110,28 @@ import { showSystemNotification, playNotificationSound, NotificationSoundType } 
 
 export function isSimulatorMode(): boolean {
   if (typeof window === 'undefined') return false;
-  // 1. Native platform (Capacitor Android/iOS) -> ALWAYS Real Production mode
   if (Capacitor.isNativePlatform()) return false;
-
-  // 2. Standalone web entry points (parent.html / kid.html)
-  const pathname = window.location.pathname || '';
-  if (pathname.includes('parent.html') || pathname.includes('kid.html')) return false;
-
-  // 3. Explicit query parameters
   const search = window.location.search || '';
-  if (search.includes('real=true') || search.includes('standalone=true') || search.includes('mode=parent') || search.includes('mode=child')) return false;
-
-  return true; // Local desktop simulator default (AppSimulator at localhost:3000)
+  return (
+    search.includes('simulator') ||
+    search.includes('mode=simulator') ||
+    search.includes('mode=dual')
+  );
 }
 
 export function isKidAppMode(): boolean {
   if (typeof window === 'undefined') return false;
+  if ((window as any).__APP_ROLE__ === 'kid') return true;
+  if ((window as any).__APP_ROLE__ === 'parent') return false;
   if (window.location.pathname.includes('kid.html')) return true;
+  if (window.location.pathname.includes('parent.html')) return false;
   const search = window.location.search || '';
   if (search.includes('mode=child') || search.includes('role=kid') || search.includes('app=kid')) return true;
-  const paired = getKidDevicePairedInfo();
-  if (paired?.deviceId && !getCurrentParentAccount()?.uid) return true;
+  if (search.includes('mode=parent') || search.includes('role=parent') || search.includes('app=parent')) return false;
+  if (Capacitor.isNativePlatform()) {
+    const paired = getKidDevicePairedInfo();
+    if (paired?.deviceId) return true;
+  }
   return false;
 }
 
@@ -817,16 +818,24 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
       // Ứng dụng Con CHỈ gửi số liệu thời gian đã dùng (Telemetry), KHÔNG ĐƯỢC ghi đè cài đặt của cha mẹ lên Cloud!
       if (!isApplyingCloudUpdate && !isKidAppMode()) {
         const activeParentId = getActiveParentId();
+        const stripUsedTime = (settings: ChildSpecificSettings) => {
+          const clone = { ...settings };
+          if (clone.screenTime) {
+            clone.screenTime = { ...clone.screenTime, todayTotalMinutes: undefined as any };
+          }
+          return clone;
+        };
+
         if (curId && curId !== 'child_default') {
           const curChild = newState.children.find((c) => c.id === curId) || newState.child;
-          syncChildSettingsToCloud(activeParentId, curId, updatedChildSettings[curId], curChild?.name).catch(() => {});
+          syncChildSettingsToCloud(activeParentId, curId, stripUsedTime(updatedChildSettings[curId]), curChild?.name).catch(() => {});
           if (curChild) {
             registerActiveChildInCloud(activeParentId, curChild).catch(() => {});
           }
         }
         if (targetChildId && targetChildId !== curId && updatedChildSettings[targetChildId]) {
           const tChild = newState.children.find((c) => c.id === targetChildId);
-          syncChildSettingsToCloud(activeParentId, targetChildId, updatedChildSettings[targetChildId], tChild?.name).catch(() => {});
+          syncChildSettingsToCloud(activeParentId, targetChildId, stripUsedTime(updatedChildSettings[targetChildId]), tChild?.name).catch(() => {});
         }
       }
     } catch (e) {
@@ -2011,7 +2020,7 @@ export const useAppState = () => {
     const parentId = getActiveParentId();
     const targetChildId = state.selectedChildId;
     const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-    if (parentId && targetChildId) {
+    if (parentId && targetChildId && !isKidAppMode()) {
       sendRemoteCommandToKid(parentId, targetChildId, 'lock_now', {
         lockType,
         title: challengeData.title,
@@ -2032,7 +2041,7 @@ export const useAppState = () => {
     const parentId = getActiveParentId();
     const targetChildId = state.selectedChildId;
     const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-    if (parentId && targetChildId) {
+    if (parentId && targetChildId && !isKidAppMode()) {
       sendRemoteCommandToKid(parentId, targetChildId, 'unlock_now', undefined, targetChild?.name).catch(() => {});
     }
   };
@@ -2400,7 +2409,7 @@ export const useAppState = () => {
         },
       },
     });
-    if (parentId && targetId) {
+    if (parentId && targetId && !isKidAppMode()) {
       sendRemoteCommandToKid(parentId, targetId, 'unlock_now', undefined, targetChild?.name).catch(() => {});
     }
   };
@@ -2430,7 +2439,7 @@ export const useAppState = () => {
         },
       },
     });
-    if (parentId && targetId) {
+    if (parentId && targetId && !isKidAppMode()) {
       sendRemoteCommandToKid(parentId, targetId, 'extend_time', { minutes }, targetChild?.name).catch(() => {});
     }
   };

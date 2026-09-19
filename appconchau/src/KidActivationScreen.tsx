@@ -55,6 +55,7 @@ import { parentProEventBus } from '@shared/eventBus';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { ref as rtdbRef, onValue as rtdbOnValue, get as rtdbGet } from 'firebase/database';
 import confetti from 'canvas-confetti';
+import { debugLogService } from '@shared/services/debugLogService';
 
 interface KidActivationScreenProps {
   onActivationComplete: (parentName: string, childName: string) => void;
@@ -124,6 +125,9 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
 
   // Auto fetch real Android hardware info (IMEI, MAC, Serial, Phone Number)
   useEffect(() => {
+    ensureKidAnonymousAuth().catch((err) => {
+      console.warn('[KidActivation] ensureKidAnonymousAuth warning:', err);
+    });
     getNativeDeviceInfo().then((info) => {
       setDeviceInfo(info);
       setDeviceName(info.deviceName || `${info.manufacturer} ${info.model}`.trim() || 'Điện thoại của con');
@@ -402,7 +406,25 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       const remaining = Math.max(0, Math.floor((newSession.expiresAt - Date.now()) / 1000));
       setTimeLeft(remaining);
       setMode('waiting_parent');
-    } catch (err) {
+      debugLogService.log({
+        direction: 'kid->cloud',
+        category: 'network',
+        action: 'create_pairing_code',
+        status: 'success',
+        summary: `Máy con đã tạo mã kết nối 6 số: ${newSession.code}`,
+        childName: childName.trim(),
+        payload: { code: newSession.code, expiresAt: newSession.expiresAt },
+      });
+    } catch (err: any) {
+      debugLogService.log({
+        direction: 'kid->cloud',
+        category: 'network',
+        action: 'create_pairing_code_failed',
+        status: 'error',
+        summary: `Không thể tạo mã kết nối: ${err?.message || err}`,
+        childName: childName.trim(),
+        error: err,
+      });
       setErrorMsg('Không thể tạo mã kết nối. Vui lòng kiểm tra kết nối mạng.');
     } finally {
       setLoading(false);
@@ -420,6 +442,15 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
         const pName = data.parentName || 'Bố/Mẹ';
         setPendingParentName(pName);
         setShowApprovalModal(true);
+        debugLogService.log({
+          direction: 'cloud->kid',
+          category: 'network',
+          action: 'pairing_approval_received',
+          status: 'info',
+          summary: `Máy con đã nhận yêu cầu kết nối từ phụ huynh: ${pName}`,
+          childName: session.childName,
+          payload: { parentId: data.parentId, parentName: pName, code: session.code },
+        });
 
         // Phát âm báo chuông kết nối và rung nhẹ
         try {
@@ -438,6 +469,15 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
         } catch (_) {}
       } else if (data.status === 'paired') {
         setShowApprovalModal(false);
+        debugLogService.log({
+          direction: 'cloud->kid',
+          category: 'network',
+          action: 'pairing_completed',
+          status: 'success',
+          summary: `Ghép đôi máy con thành công với phụ huynh: ${data.parentName || 'Bố/Mẹ'}`,
+          childName: session.childName,
+          payload: { parentId: data.parentId, childId: session.childId },
+        });
         try {
           const pairedData: KidPairedInfo = {
             isPaired: true,

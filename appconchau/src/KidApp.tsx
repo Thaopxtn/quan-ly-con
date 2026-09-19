@@ -46,6 +46,7 @@ import {
 } from 'lucide-react';
 import { useAppState, syncWithCloudForChild, isSimulatorMode } from '@shared/store';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
+import { debugLogService } from '@shared/services/debugLogService';
 import confetti from 'canvas-confetti';
 import { KidPairingModal } from './KidPairingModal';
 import { KidActivationScreen } from './KidActivationScreen';
@@ -299,6 +300,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const [hasMissingPermissions, setHasMissingPermissions] = useState(false);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showDebugModal, setShowDebugModal] = useState(false);
+  const [errorCount, setErrorCount] = useState(() => debugLogService.getErrorCount());
+
+  useEffect(() => {
+    return debugLogService.subscribe(() => {
+      setErrorCount(debugLogService.getErrorCount());
+    });
+  }, []);
 
   // Hardware back button & gesture navigation handler
   useEffect(() => {
@@ -545,6 +553,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   };
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__APP_ROLE__ = 'kid';
+    }
     // Check permissions on mount and update state without hijacking the screen
     checkPermissions();
 
@@ -734,6 +745,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   realInstalledAppsRef.current = realInstalledApps;
   const pairedInfoRef = useRef(pairedInfo);
   pairedInfoRef.current = pairedInfo;
+  const trackingConfigRef = useRef(trackingConfig);
+  trackingConfigRef.current = trackingConfig;
 
   // Active Cloud Firestore sync for kid device (Runs only when identity changes)
   useEffect(() => {
@@ -1068,10 +1081,19 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     }
   }, [activeReminder?.title, activeReminder?.message]);
 
-  // Core helper: Upload fresh telemetry snapshot with screen & sync mode
+  // Core helper: Upload fresh telemetry snapshot with screen & sync mode (stabilized with refs)
   const uploadCurrentTelemetrySnapshot = React.useCallback(
     async (reason?: string) => {
       if (!activeParentId || !targetChildId) return;
+
+      const curTrackingConfig = trackingConfigRef.current;
+      const curChild = childRef.current;
+      const curPairedInfo = pairedInfoRef.current;
+      const curTargetSettings = targetSettingsRef.current;
+      const curScreenTime = screenTimeRef.current;
+      const curActiveApp = activeOpenedAppRef.current;
+      const curRealApps = realInstalledAppsRef.current;
+      const curApps = appsRef.current;
 
       const screenOn = lastTelemetryRef.current.isScreenOn;
       const inForeground = lastTelemetryRef.current.isAppInForeground;
@@ -1080,12 +1102,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const curLat = lastTelemetryRef.current.lat;
       const curLng = lastTelemetryRef.current.lng;
 
-      const isMasterOn = trackingConfig.isMasterTrackingEnabled !== false;
-      const isGpsOn = isMasterOn && trackingConfig.enableGpsTracking !== false;
-      const isSensorOn = isMasterOn && trackingConfig.enableSensorMonitoring !== false;
-      const isAppUsageOn = isMasterOn && trackingConfig.enableAppUsageTracking !== false;
-      const isScreenStateOn = isMasterOn && trackingConfig.enableScreenStateSync !== false;
-      const isNetworkOn = isMasterOn && trackingConfig.enableNetworkMonitoring !== false;
+      const isMasterOn = curTrackingConfig.isMasterTrackingEnabled !== false;
+      const isGpsOn = isMasterOn && curTrackingConfig.enableGpsTracking !== false;
+      const isSensorOn = isMasterOn && curTrackingConfig.enableSensorMonitoring !== false;
+      const isAppUsageOn = isMasterOn && curTrackingConfig.enableAppUsageTracking !== false;
+      const isScreenStateOn = isMasterOn && curTrackingConfig.enableScreenStateSync !== false;
+      const isNetworkOn = isMasterOn && curTrackingConfig.enableNetworkMonitoring !== false;
 
       // If master tracking is disabled and this is an automated tick, do not upload (sleep mode)
       if (!isMasterOn && reason !== 'tracking_reenabled' && reason !== 'manual_flush' && reason !== 'screen_off') {
@@ -1101,29 +1123,26 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         appStatus = 'screen_off';
         screenState = 'screen_off';
       } else if (inForeground && screenOn) {
-        // Con đang trực tiếp mở phần mềm KidCare
         syncMode = 'realtime';
         appStatus = 'active_in_app';
         screenState = 'active';
       } else if (screenOn) {
-        // Màn hình vẫn bật nhưng đang dùng ứng dụng khác
         syncMode = 'balanced';
         appStatus = 'in_background';
         screenState = 'active';
       } else {
-        // Màn hình đã tắt (Khóa máy / Tiết kiệm pin tối đa)
         syncMode = 'power_saving';
         appStatus = 'screen_off';
         screenState = 'screen_off';
       }
 
-      let effectiveAddress = child.currentAddress;
+      let effectiveAddress = curChild.currentAddress;
       if (!isMasterOn) {
         effectiveAddress = 'Chế độ ngủ đông - Tiết kiệm pin tối đa (Tạm dừng thu thập)';
       } else if (!isGpsOn) {
         effectiveAddress = 'Đang tạm dừng định vị GPS theo cài đặt của cha mẹ';
       } else {
-        effectiveAddress = child.currentAddress || (
+        effectiveAddress = curChild.currentAddress || (
           inForeground && screenOn
             ? `Bé đang mở ứng dụng (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
             : !screenOn
@@ -1132,7 +1151,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         );
       }
 
-      const sensorsData = targetSettings.sensorValues || {
+      const sensorsData = curTargetSettings.sensorValues || {
         noiseLevel: 35,
         ambientLight: 280,
         isExcessiveNoise: false,
@@ -1158,39 +1177,25 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             screenState: isScreenStateOn ? screenState : 'background',
             appStatus: isScreenStateOn ? appStatus : 'in_background',
             syncMode,
-            childName: child.name,
-            deviceId: pairedInfo?.deviceId,
-            deviceName: pairedInfo?.deviceName,
-            model: pairedInfo?.model,
+            childName: curChild.name,
+            deviceId: curPairedInfo?.deviceId,
+            deviceName: curPairedInfo?.deviceName,
+            model: curPairedInfo?.model,
             sensors: isSensorOn ? sensorsData : null,
             network: isNetworkOn ? networkInfo : null,
-            screenTimeUsedMinutes: isAppUsageOn ? (screenTime?.todayTotalMinutes || 0) : undefined,
-            activeOpenedApp: isAppUsageOn && isScreenStateOn ? (typeof activeOpenedApp === 'object' && activeOpenedApp ? activeOpenedApp.name : (typeof activeOpenedApp === 'string' ? activeOpenedApp : '')) : '',
-            installedAppsCount: isAppUsageOn ? (realInstalledApps.length || apps.length) : undefined,
+            screenTimeUsedMinutes: isAppUsageOn ? (curScreenTime?.todayTotalMinutes || 0) : undefined,
+            activeOpenedApp: isAppUsageOn && isScreenStateOn ? (typeof curActiveApp === 'object' && curActiveApp ? curActiveApp.name : (typeof curActiveApp === 'string' ? curActiveApp : '')) : '',
+            installedAppsCount: isAppUsageOn ? (curRealApps.length || curApps.length) : undefined,
           },
           true,
-          child.name
+          curChild.name
         );
         lastTelemetryRef.current.lastSent = Date.now();
       } catch (err) {
         console.warn('Telemetry upload error:', err);
       }
     },
-    [
-      activeParentId,
-      targetChildId,
-      child.name,
-      child.currentAddress,
-      pairedInfo?.deviceId,
-      pairedInfo?.deviceName,
-      pairedInfo?.model,
-      targetSettings.sensorValues,
-      targetSettings.trackingConfig,
-      screenTime?.todayTotalMinutes,
-      activeOpenedApp,
-      realInstalledApps.length,
-      apps.length,
-    ]
+    [activeParentId, targetChildId]
   );
 
   // Compute adaptive interval based on user requirement:
@@ -1840,10 +1845,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             <button
               type="button"
               onClick={() => setShowDebugModal(true)}
-              className="w-10 h-10 rounded-2xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer"
+              className="relative w-10 h-10 rounded-2xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer"
               title="Nhật ký truyền nhận & Gỡ lỗi đồng bộ"
             >
-              <FileText size={18} strokeWidth={2.2} />
+              <FileText size={18} strokeWidth={2.2} className={errorCount > 0 ? "text-rose-300" : "text-white"} />
+              {errorCount > 0 && (
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[9px] font-black animate-pulse shadow-sm">
+                  {errorCount}
+                </span>
+              )}
             </button>
           </div>
         </div>
