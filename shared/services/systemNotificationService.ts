@@ -124,6 +124,12 @@ export function playNotificationSound(type: NotificationSoundType = 'info') {
       osc2.start(now + 0.12);
       osc2.stop(now + 0.45);
     }
+
+    setTimeout(() => {
+      try {
+        ctx.close().catch(() => {});
+      } catch (err) {}
+    }, 1500);
   } catch (e) {
     // Audio unsupported or autoplay restrictions
   }

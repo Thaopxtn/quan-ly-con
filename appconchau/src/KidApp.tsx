@@ -97,6 +97,11 @@ function speakVietnamese(text: string) {
       utterance.lang = 'vi-VN';
       utterance.rate = 0.95;
       utterance.pitch = 1.0;
+      utterance.onerror = () => {
+        try {
+          window.speechSynthesis.cancel();
+        } catch (err) {}
+      };
       window.speechSynthesis.speak(utterance);
     } catch (e) {
       console.warn('SpeechSynthesis error:', e);
@@ -851,7 +856,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
         case 'broadcast_msg':
           setIsBroadcastDismissed(false);
-          broadcastOverlay(cmd.payload?.title || 'Lời dặn từ Bố Mẹ', cmd.payload?.message || '', cmd.payload?.imageUrl);
+          broadcastOverlay(cmd.payload?.title || 'Lời dặn từ Bố Mẹ', cmd.payload?.message || '', cmd.payload?.imageUrl, true);
           if (cmd.payload?.speakTTS || cmd.payload?.message) {
             speakVietnamese(cmd.payload?.message || cmd.payload?.title || '');
           }
@@ -3018,6 +3023,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         }}
         onReply={(replyText) => {
           sendKidResponseToParent(broadcastMessage?.title || 'Lời dặn từ Bố Mẹ', replyText);
+          if (replyText.includes('5 phút') || replyText.includes('5p')) {
+            requestTimeExtension('Thời gian dùng máy', 5, 'Con xin thêm 5 phút khi bố mẹ dặn');
+          }
           showToast(`✅ Đã gửi phản hồi: "${replyText}"`);
         }}
       />

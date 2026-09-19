@@ -101,6 +101,8 @@ import {
   autoDiscoverMatchingChild,
   syncSafeZonesToCloud,
   subscribeSafeZonesFromCloud,
+  sendCloudChatMessage,
+  CloudChatMessage,
 } from './firebase/cloudSyncService';
 import { getCurrentParentAccount, getFirebaseInstance } from './firebase/firebaseService';
 import { getKidDevicePairedInfo } from './firebase/pairingService';
@@ -2093,7 +2095,7 @@ export const useAppState = () => {
   };
 
   // Broadcast message overlay
-  const broadcastOverlay = (title: string, message: string, imageUrl?: string) => {
+  const broadcastOverlay = (title: string, message: string, imageUrl?: string, isIncomingOnKid: boolean = false) => {
     const msg: BroadcastMessage = {
       isShowing: true,
       title,
@@ -2102,27 +2104,35 @@ export const useAppState = () => {
       timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
     };
     saveAndNotify({ ...state, broadcastMessage: msg });
-    eventBus.publish('BROADCAST_MESSAGE_SENT', msg, 'parent');
-    const parentId = getActiveParentId();
-    const targetChildId = state.selectedChildId;
-    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-    if (parentId && targetChildId) {
-      sendRemoteCommandToKid(parentId, targetChildId, 'broadcast_msg', { title, message, imageUrl }, targetChild?.name).catch(() => {});
+    eventBus.publish('BROADCAST_MESSAGE_SENT', msg, isIncomingOnKid ? 'child' : 'parent');
+
+    // ONLY parent sends remote command to cloud; incoming on kid or kid mode MUST NEVER send command to itself!
+    if (!isIncomingOnKid && !isKidAppMode()) {
+      const parentId = getActiveParentId();
+      const targetChildId = state.selectedChildId;
+      const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+      if (parentId && targetChildId) {
+        sendRemoteCommandToKid(parentId, targetChildId, 'broadcast_msg', { title, message, imageUrl }, targetChild?.name).catch(() => {});
+      }
     }
   };
 
   const clearBroadcastOverlay = () => {
     saveAndNotify({ ...state, broadcastMessage: null });
     eventBus.publish('BROADCAST_MESSAGE_CLEARED', {}, 'parent');
-    const parentId = getActiveParentId();
-    const kidPaired = getKidDevicePairedInfo();
-    const targetChildId = kidPaired?.childId || state.selectedChildId || state.child?.id || '';
-    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-    const targetChildName = kidPaired?.childName || targetChild?.name;
 
-    if (parentId && targetChildId) {
-      sendRemoteCommandToKid(parentId, targetChildId, 'clear_broadcast', undefined, targetChildName).catch(() => {});
-      clearRemoteCommand(parentId, targetChildId, targetChildName).catch(() => {});
+    // ONLY parent sends clear_broadcast to cloud; Kid dismissing locally MUST NOT command itself!
+    if (!isKidAppMode()) {
+      const parentId = getActiveParentId();
+      const kidPaired = getKidDevicePairedInfo();
+      const targetChildId = kidPaired?.childId || state.selectedChildId || state.child?.id || '';
+      const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+      const targetChildName = kidPaired?.childName || targetChild?.name;
+
+      if (parentId && targetChildId) {
+        sendRemoteCommandToKid(parentId, targetChildId, 'clear_broadcast', undefined, targetChildName).catch(() => {});
+        clearRemoteCommand(parentId, targetChildId, targetChildName).catch(() => {});
+      }
     }
   };
 
@@ -3904,17 +3914,17 @@ export const useAppState = () => {
 
     const parentId = getActiveParentId();
     if (parentId && currentChildId) {
-      sendRemoteCommandToKid(
-        parentId,
-        currentChildId,
-        'broadcast_msg',
-        {
-          title: `Bé phản hồi: ${responseText}`,
-          message: `${childName} đã nhấn "${responseText}" lúc ${timeStr}`,
-          imageUrl: '💬',
-        },
-        childName
-      ).catch(() => {});
+      // Transmit response to parent via Cloud Chat stream (Parent receives this in Alerts & Family Chat)
+      // NEVER send a remote command back to the Kid device itself!
+      const chatMsg: CloudChatMessage = {
+        id: `resp_${Date.now()}`,
+        sender: 'kid',
+        senderName: childName,
+        text: `[Phản hồi lời dặn]: ${responseText}`,
+        time: timeStr,
+        timestamp: Date.now(),
+      };
+      sendCloudChatMessage(parentId, currentChildId, chatMsg, childName).catch(() => {});
     }
 
     playNotificationSound('success');

@@ -39,16 +39,22 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
     timestamp || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   const handleReplyClick = (replyText: string) => {
-    if (onReply) {
-      onReply(replyText);
+    try {
+      if (onReply) {
+        onReply(replyText);
+      }
+    } catch (err) {
+      console.warn('Error in onReply:', err);
+    } finally {
+      onDismiss();
     }
-    onDismiss();
   };
 
   return (
     <div
       role="alert"
       aria-live="assertive"
+      onClick={(e) => e.stopPropagation()}
       className="fixed top-3 inset-x-3 sm:inset-x-auto sm:right-4 sm:max-w-sm z-50 pointer-events-auto transition-all animate-in slide-in-from-top-4 duration-300 select-none"
     >
       <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-2 border-blue-400 dark:border-blue-500 rounded-3xl p-4 shadow-2xl ring-2 ring-blue-500/20 flex flex-col gap-3">
@@ -71,7 +77,11 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
             </span>
             {onSpeak && (
               <button
-                onClick={onSpeak}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSpeak();
+                }}
                 aria-label="Đọc lời nhắn"
                 className="p-1 rounded-full text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
               >
@@ -79,7 +89,11 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
               </button>
             )}
             <button
-              onClick={onDismiss}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss();
+              }}
               aria-label="Đóng thông báo"
               className="p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer"
             >
@@ -115,7 +129,11 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
           <p className="text-[10px] font-bold text-slate-400">Trả lời nhanh cho Bố Mẹ:</p>
           <div className="grid grid-cols-3 gap-1.5">
             <button
-              onClick={() => handleReplyClick('Con biết rồi ạ')}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleReplyClick('Con biết rồi ạ');
+              }}
               className="py-1.5 px-1 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-xl text-[10.5px] font-bold border border-blue-200/60 dark:border-blue-800 flex items-center justify-center gap-1 active:scale-95 transition-all cursor-pointer truncate"
             >
               <CheckCircle2 size={12} className="shrink-0" />
@@ -123,7 +141,11 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
             </button>
 
             <button
-              onClick={() => handleReplyClick('Con làm ngay')}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleReplyClick('Con làm ngay');
+              }}
               className="py-1.5 px-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded-xl text-[10.5px] font-bold border border-emerald-200/60 dark:border-emerald-800 flex items-center justify-center gap-1 active:scale-95 transition-all cursor-pointer truncate"
             >
               <ThumbsUp size={12} className="shrink-0" />
@@ -131,7 +153,11 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
             </button>
 
             <button
-              onClick={() => handleReplyClick('Cho con thêm 5 phút nhé')}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleReplyClick('Cho con thêm 5 phút nhé');
+              }}
               className="py-1.5 px-1 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900 text-amber-700 dark:text-amber-300 rounded-xl text-[10.5px] font-bold border border-amber-200/60 dark:border-amber-800 flex items-center justify-center gap-1 active:scale-95 transition-all cursor-pointer truncate"
             >
               <Clock size={12} className="shrink-0" />
