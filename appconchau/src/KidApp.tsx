@@ -2937,18 +2937,6 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               </div>
             </div>
           )}
-
-          {/* Persistent 1-Tap SOS Emergency Button across all views */}
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={() => handleKidTriggerSOS('button')}
-              className="w-full py-4 bg-red-600 bg-gradient-to-r from-rose-600 via-red-600 to-rose-600 hover:from-rose-700 hover:to-red-700 text-white font-black text-sm rounded-3xl shadow-xl shadow-rose-600/35 flex items-center justify-center space-x-2.5 transition-all active:scale-[0.97] ring-4 ring-rose-500/20 cursor-pointer"
-            >
-              <AlertOctagon size={24} className="animate-bounce" strokeWidth={2.5} />
-              <span className="tracking-tight">SOS BÁO ĐỘNG KHẨN CẤP (BẤM KHI CẦN GIÚP ĐỠ)</span>
-            </button>
-          </div>
         </div>
       )}
 

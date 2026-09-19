@@ -87,6 +87,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
     triggerFamilyBroadcast,
     updateChildDeviceName,
     switchActiveChildDevice,
+    markChatAlertsAsRead,
   } = useAppState();
 
   const { children, selectedChildId, smartRoutines, lockChallenge, studyModeOnly } = state;
@@ -328,7 +329,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   }, [activeChild?.id, activeChild?.name, showChatModal]);
 
   return (
-    <div className="bg-white rounded-3xl p-4 border border-slate-100 shadow-soft space-y-3.5 select-none relative overflow-hidden">
+    <div className="bg-white rounded-3xl p-3.5 border border-slate-100 shadow-soft space-y-2.5 select-none relative overflow-hidden">
       {/* Toast Notification */}
       {toastMessage && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 backdrop-blur-md text-white px-3.5 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-bounce flex items-center space-x-1.5 whitespace-nowrap">
@@ -378,29 +379,48 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
 
         {/* Right Icon Action Buttons */}
         <div className="flex items-center space-x-1.5 shrink-0">
+          {/* Trò chuyện với bé */}
           <button
-            onClick={() => setShowCloudModal(true)}
-            className="w-8 h-8 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-600 flex items-center justify-center transition active:scale-95 border border-indigo-100 shadow-2xs cursor-pointer"
-            title="Hạ tầng Cloud Backend & SaaS"
+            type="button"
+            onClick={() => {
+              markChatAlertsAsRead(activeChild?.id);
+              setUnreadParentChatCount(0);
+              setShowChatModal(true);
+            }}
+            className="relative w-8 h-8 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 flex items-center justify-center transition active:scale-95 border border-blue-100 shadow-2xs cursor-pointer"
+            title={`Nhắn tin trò chuyện với ${activeChild?.name || 'con'}`}
           >
-            <Cloud size={15} />
+            <MessageCircle size={15} />
+            {unreadParentChatCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center ring-1 ring-white animate-bounce">
+                {unreadParentChatCount > 9 ? '9+' : unreadParentChatCount}
+              </span>
+            )}
           </button>
+
+          {/* Ghép đôi thiết bị (1 nút duy nhất thay vì 2 nút trùng) */}
           <button
+            type="button"
             onClick={() => setShowPairModal(true)}
             className="w-8 h-8 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-600 flex items-center justify-center transition active:scale-95 border border-purple-100 shadow-2xs cursor-pointer"
             title="Ghép đôi thiết bị con (Mã 6 số / QR)"
           >
             <KeyRound size={15} />
           </button>
+
+          {/* Cài đặt Cloud */}
           <button
-            onClick={() => setShowPairModal(true)}
-            className="w-8 h-8 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 flex items-center justify-center transition active:scale-95 border border-blue-100 shadow-2xs cursor-pointer"
-            title="Ghép đôi thiết bị con mới (Mã 6 số)"
+            type="button"
+            onClick={() => setShowCloudModal(true)}
+            className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center transition active:scale-95 border border-slate-100 shadow-2xs cursor-pointer"
+            title="Hạ tầng Cloud Backend & SaaS"
           >
-            <Plus size={16} />
+            <Cloud size={15} />
           </button>
+
           {onNavigate && (
             <button
+              type="button"
               onClick={() => onNavigate('family')}
               className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition active:scale-95 border border-slate-100 shadow-2xs cursor-pointer"
               title="Xem tất cả thiết bị gia đình"

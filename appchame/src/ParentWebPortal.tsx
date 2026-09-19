@@ -25,10 +25,12 @@ import {
   CheckCircle2,
   ExternalLink,
   Wifi,
-  FileText
+  FileText,
+  MessageCircle
 } from 'lucide-react';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
+import { FamilyChatModal } from '../../shared/components/FamilyChatModal';
 
 export const ParentWebPortal: React.FC = () => {
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -37,6 +39,7 @@ export const ParentWebPortal: React.FC = () => {
   const [activeScreen, setActiveScreen] = useState<ScreenId>('dashboard');
   const [quickActionFeedback, setQuickActionFeedback] = useState<string | null>(null);
   const [showDebugModal, setShowDebugModal] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
   const [errorCount, setErrorCount] = useState(() => debugLogService.getErrorCount());
 
   useEffect(() => {
@@ -45,12 +48,13 @@ export const ParentWebPortal: React.FC = () => {
     });
   }, []);
 
-  const { state, switchChild, lockChildDeviceNow, buzzKidPhone } = useAppState();
+  const { state, switchChild, lockChildDeviceNow, buzzKidPhone, markChatAlertsAsRead } = useAppState();
   const { children, selectedChildId, child, alerts, activeSOS } = state;
   const currentParent = getCurrentParentAccount();
   const currentChild = children.find((c) => c.id === selectedChildId) || children[0] || child;
 
   const unreadAlertCount = alerts.filter((a) => !a.isRead).length;
+  const unreadChatCount = alerts.filter((a) => !a.isRead && (a.id.startsWith('chat_') || a.type === 'parent_message')).length;
 
   useEffect(() => {
     const handleResize = () => {
@@ -348,6 +352,25 @@ export const ParentWebPortal: React.FC = () => {
               )}
             </button>
 
+            {/* Chat With Child Button */}
+            <button
+              type="button"
+              onClick={() => {
+                markChatAlertsAsRead(currentChild?.id);
+                setShowChatModal(true);
+              }}
+              className="relative px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+              title={`Nhắn tin trò chuyện với ${currentChild?.name || 'con'}`}
+            >
+              <MessageCircle size={15} />
+              <span>Nhắn tin với bé</span>
+              {unreadChatCount > 0 && (
+                <span className="px-1.5 py-0.2 bg-gradient-to-r from-rose-500 to-red-600 text-white rounded-full text-[10px] font-black animate-pulse shadow-xs">
+                  {unreadChatCount > 9 ? '9+' : unreadChatCount}
+                </span>
+              )}
+            </button>
+
             {/* Quick Lock Button */}
             <button
               type="button"
@@ -402,6 +425,16 @@ export const ParentWebPortal: React.FC = () => {
         childId={currentChild?.id}
         childName={currentChild?.name}
       />
+
+      {/* Family Chat Modal for Desktop Web */}
+      {showChatModal && (
+        <FamilyChatModal
+          currentRole="parent"
+          childId={currentChild?.id || 'child_1'}
+          childName={currentChild?.name || 'Bé'}
+          onClose={() => setShowChatModal(false)}
+        />
+      )}
     </div>
   );
 };

@@ -16,7 +16,9 @@ import {
   Battery,
   ShieldAlert,
   ShieldCheck,
-  Plus
+  Plus,
+  MessageCircle,
+  KeyRound
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
@@ -24,19 +26,28 @@ import { UnifiedChildHub } from '../../components/UnifiedChildHub';
 import { EmptyState } from '@shared/components/EmptyState';
 import { haptics } from '@shared/utils/haptics';
 import { CreateNotificationModal } from '../../components/CreateNotificationModal';
+import { FamilyChatModal } from '../../../../shared/components/FamilyChatModal';
+import { PairChildDeviceModal } from '../../components/PairChildDeviceModal';
 
 interface DashboardScreenProps {
   onNavigate: (screenKey: string) => void;
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) => {
-  const { state } = useAppState();
-  const { child, alerts } = state;
+  const { state, markChatAlertsAsRead } = useAppState();
+  const { child, alerts, children, selectedChildId } = state;
+  const currentChild = children?.find((c) => c.id === selectedChildId) || children?.[0] || child;
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [showPairModal, setShowPairModal] = useState(false);
 
   const currentParent = getCurrentParentAccount();
   const parentName = currentParent?.displayName || 'Phụ huynh';
   const parentAvatar = currentParent?.photoURL || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&auto=format&fit=crop&q=80';
+
+  const unreadAlertCount = alerts.filter((a) => !a.isRead).length;
+  const unreadChatCount = alerts.filter((a) => !a.isRead && (a.id.startsWith('chat_') || a.type === 'parent_message')).length;
 
   const quickShortcuts = [
     { id: 'tracking', label: 'Vị trí & An toàn', icon: MapPin, color: 'bg-blue-50 text-blue-600 border-blue-100' },
@@ -50,48 +61,88 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
   ];
 
   return (
-    <div className="flex-1 p-4 space-y-4 select-none pb-6">
-      {/* Top Greeting Bar */}
-      <div className="flex items-center justify-between pt-1">
-        <div className="flex items-center space-x-3">
-          <div className="relative">
+    <div className="flex-1 p-3.5 space-y-3.5 select-none pb-6">
+      {/* Sleek Compact Integrated Top Header */}
+      <div className="flex items-center justify-between pt-0.5">
+        {/* Left: Parent Avatar & Compact Info */}
+        <div className="flex items-center space-x-2.5 min-w-0">
+          <div className="relative shrink-0">
             <img
               src={parentAvatar}
               alt={parentName}
-              className="w-11 h-11 rounded-2xl border-2 border-white shadow-md object-cover ring-2 ring-slate-100"
+              className="w-9 h-9 rounded-xl border border-white shadow-xs object-cover ring-1 ring-slate-200"
             />
-            <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full"></span>
+            <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></span>
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Phụ huynh</span>
-              <span className="px-1.5 py-0.2 bg-blue-50 text-blue-700 text-[9px] font-black rounded-md border border-blue-100">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1">
+              <h2 className="text-xs font-black text-slate-900 leading-tight truncate">
+                {parentName}
+              </h2>
+              <span className="px-1 py-0.2 bg-blue-50 text-blue-700 text-[8.5px] font-black rounded border border-blue-100/80 uppercase">
                 PRO
               </span>
             </div>
-            <h2 className="text-base font-black text-slate-900 leading-tight">
-              {parentName} 👋
-            </h2>
+            <p className="text-[10.5px] text-slate-500 font-medium truncate flex items-center gap-1 mt-0.5">
+              <span>Đang quản lý:</span>
+              <strong className="text-blue-700 font-bold">{currentChild?.name || 'Bé'}</strong>
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        {/* Right: Unified Action Icon Cluster (Chat, Bell, Quick Message, Pair) */}
+        <div className="flex items-center space-x-1.5 shrink-0">
+          {/* 1. Chat with Child Button with Live Unread Badge */}
           <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 text-white text-[11px] font-bold shadow-xs active:scale-95 transition cursor-pointer"
+            type="button"
+            onClick={() => {
+              markChatAlertsAsRead(currentChild?.id);
+              setShowChatModal(true);
+            }}
+            className="relative w-9 h-9 rounded-xl bg-white hover:bg-blue-50/80 border border-slate-200/80 text-slate-700 hover:text-blue-600 shadow-2xs flex items-center justify-center transition-all active:scale-90 cursor-pointer"
+            title={`Nhắn tin trò chuyện với ${currentChild?.name || 'bé'}`}
           >
-            <Plus size={14} />
-            <span>Tạo thông báo</span>
+            <MessageCircle size={18} strokeWidth={2} className={unreadChatCount > 0 ? 'text-blue-600' : ''} />
+            {unreadChatCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 bg-gradient-to-r from-rose-500 to-red-600 text-white text-[9.5px] font-black rounded-full flex items-center justify-center ring-2 ring-white shadow-xs animate-bounce">
+                {unreadChatCount > 9 ? '9+' : unreadChatCount}
+              </span>
+            )}
           </button>
 
+          {/* 2. Notification / Alerts Bell */}
           <button
+            type="button"
             onClick={() => onNavigate('alerts')}
-            className="relative w-10 h-10 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-center text-slate-700 hover:bg-slate-50 hover:text-blue-600 active:scale-90 transition-all cursor-pointer"
+            className="relative w-9 h-9 rounded-xl bg-white hover:bg-slate-50 border border-slate-200/80 text-slate-700 hover:text-blue-600 shadow-2xs flex items-center justify-center transition-all active:scale-90 cursor-pointer"
+            title="Cảnh báo & Thông báo"
           >
-            <Bell size={18} strokeWidth={2} />
-            {alerts.some((a) => !a.isRead) && (
-              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-white animate-subtle-pulse"></span>
+            <Bell size={17} strokeWidth={2} />
+            {unreadAlertCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-0.5 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-white">
+                {unreadAlertCount > 9 ? '9+' : unreadAlertCount}
+              </span>
             )}
+          </button>
+
+          {/* 3. Fast Create Notification / Message to Kid */}
+          <button
+            type="button"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xs shadow-blue-500/25 flex items-center justify-center transition-all active:scale-90 cursor-pointer"
+            title="Tạo & gửi lời dặn / thông báo tới con"
+          >
+            <Plus size={18} strokeWidth={2.5} />
+          </button>
+
+          {/* 4. Quick Pair Child Device */}
+          <button
+            type="button"
+            onClick={() => setShowPairModal(true)}
+            className="w-9 h-9 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200/70 shadow-2xs flex items-center justify-center transition-all active:scale-90 cursor-pointer"
+            title="Ghép đôi thiết bị con cái (Mã 6 số)"
+          >
+            <KeyRound size={16} strokeWidth={2} />
           </button>
         </div>
       </div>
@@ -222,6 +273,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
       />
+
+      {/* Modal Trò Chuyện Gia Đình 2 Chiều */}
+      {showChatModal && (
+        <FamilyChatModal
+          currentRole="parent"
+          childId={currentChild?.id || 'child_1'}
+          childName={currentChild?.name || 'Bé'}
+          onClose={() => setShowChatModal(false)}
+        />
+      )}
+
+      {/* Modal Ghép Đôi Thiết Bị Con */}
+      {showPairModal && (
+        <PairChildDeviceModal
+          onClose={() => setShowPairModal(false)}
+          onSuccess={(cid, cname) => {
+            setShowPairModal(false);
+          }}
+        />
+      )}
     </div>
   );
 };

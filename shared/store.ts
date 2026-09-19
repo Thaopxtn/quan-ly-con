@@ -2819,6 +2819,17 @@ export const useAppState = () => {
     saveAndNotify({ ...state, alerts: updated });
   };
 
+  const markChatAlertsAsRead = (childId?: string) => {
+    const updated = state.alerts.map((a) => {
+      const isChat = a.id.startsWith('chat_') || a.type === 'parent_message';
+      if (isChat && (!childId || !a.childId || a.childId === childId)) {
+        return { ...a, isRead: true };
+      }
+      return a;
+    });
+    saveAndNotify({ ...state, alerts: updated });
+  };
+
   const clearAllAlerts = () => {
     saveAndNotify({ ...state, alerts: [] });
   };
@@ -4183,6 +4194,7 @@ export const useAppState = () => {
     syncAllChildrenFromCloud,
     toggleTaskCompleted,
     markAlertAsRead,
+    markChatAlertsAsRead,
     clearAllAlerts,
     toggleTheme,
     getFamilyAggregatedStats,
