@@ -240,8 +240,18 @@ function syncKid() {
   };
   fs.writeFileSync(capKidConfigFile, JSON.stringify(capKidConfigContent, null, 2));
 
+  const capKidPluginsFile = path.join(root, 'android-kid', 'app', 'src', 'main', 'assets', 'capacitor.plugins.json');
+  const capKidPluginsContent = [
+    {
+      pkg: '@capacitor-firebase/authentication',
+      classpath: 'io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin'
+    }
+  ];
+  fs.writeFileSync(capKidPluginsFile, JSON.stringify(capKidPluginsContent, null, 2));
+
   console.log('✅ Đã đồng bộ dist-kid -> android-kid/app/src/main/assets/public/');
 }
+
 
 if (target === 'parent' || target === 'all') syncParent();
 if (target === 'kid' || target === 'all') syncKid();

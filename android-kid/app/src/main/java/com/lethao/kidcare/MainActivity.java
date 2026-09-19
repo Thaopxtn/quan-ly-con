@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(KidPermissionsPlugin.class);
         registerPlugin(SystemNotificationPlugin.class);
+        registerPlugin(io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Configure Status Bar color to match Kid app title header (#0ea5e9) with white icons
