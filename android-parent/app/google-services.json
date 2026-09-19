@@ -8,17 +8,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:594726838584:android:7a124bb24cfd34c83221cd",
+        "mobilesdk_app_id": "1:594726838584:android:d3b252689e81ccaa3221cd",
         "android_client_info": {
-          "package_name": "com.lethao.parentpro"
+          "package_name": "com.lethao.kidcare"
         }
       },
       "oauth_client": [
         {
-          "client_id": "594726838584-i3ioq2tqs06bdapauarqfe612ahgjqmn.apps.googleusercontent.com",
+          "client_id": "594726838584-l2qgissn1eeo6o2709iab72vu7646op8.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.lethao.parentpro",
+            "package_name": "com.lethao.kidcare",
             "certificate_hash": "5fa989485e2a428416612d759766bf3adf1640ad"
           }
         },
@@ -45,17 +45,17 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:594726838584:android:7a124bb24cfd34c83221cd",
+        "mobilesdk_app_id": "1:594726838584:android:d8b38fb755761a9e3221cd",
         "android_client_info": {
-          "package_name": "com.lethao.kidcare"
+          "package_name": "com.lethao.parentpro"
         }
       },
       "oauth_client": [
         {
-          "client_id": "594726838584-i3ioq2tqs06bdapauarqfe612ahgjqmn.apps.googleusercontent.com",
+          "client_id": "594726838584-8pfo9v4t0fgcvargcnfothnttkp52vb4.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.lethao.kidcare",
+            "package_name": "com.lethao.parentpro",
             "certificate_hash": "5fa989485e2a428416612d759766bf3adf1640ad"
           }
         },

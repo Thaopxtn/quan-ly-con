@@ -230,6 +230,12 @@ function syncKid() {
     },
     android: {
       allowMixedContent: true
+    },
+    plugins: {
+      FirebaseAuthentication: {
+        skipNativeAuth: false,
+        providers: ['google.com']
+      }
     }
   };
   fs.writeFileSync(capKidConfigFile, JSON.stringify(capKidConfigContent, null, 2));
