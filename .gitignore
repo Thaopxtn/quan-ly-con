@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 .pnp
 .pnp.js
@@ -17,6 +17,9 @@ parent_phone_home.png
 **/build/
 *.apk
 *.aab
+*.keystore
+*.jks
+keystore*
 local.properties
 .idea/
 *.iml
