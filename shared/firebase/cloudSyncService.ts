@@ -28,6 +28,7 @@ import {
 import { getFirebaseInstance } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
 import { ChildSpecificSettings, TimeRequest, RoutePoint, SafeZone, ChildDeviceInfo } from "../types";
+import { debugLogService } from "../services/debugLogService";
 
 export interface CloudChatMessage {
   id?: string;
@@ -122,41 +123,89 @@ export async function syncChildSettingsToCloud(
     updatedAt: now,
   });
 
-  // RTDB sync
-  if (rtdb) {
-    // Open sync channels (always accessible without parent auth barrier)
-    rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/settings`), payload).catch(() => {});
-    if (slug && slug !== childId) {
-      rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${slug}/settings`), payload).catch(() => {});
-    }
+  let syncSuccess = false;
+  let syncError: any = null;
 
-    if (parentId && parentId !== "family_primary") {
-      rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/settings`), payload).catch(() => {});
-      if (auth?.currentUser && auth.currentUser.uid === parentId) {
-        try {
-          await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/settings`), payload);
-        } catch (err) {
-          // Can fail if non-auth, open channels above already succeeded
+  try {
+    // RTDB sync
+    if (rtdb) {
+      // Open sync channels (always accessible without parent auth barrier)
+      rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/settings`), payload).catch((e) => {
+        debugLogService.log({
+          direction: 'parent->cloud',
+          category: 'settings',
+          action: 'sync_settings_rtdb_error',
+          status: 'warning',
+          summary: `Lỗi cập nhật RTDB channel pairings/sync/${childId}/settings: ${e?.message || e}`,
+          childId,
+          childName,
+          error: e,
+        });
+      });
+      if (slug && slug !== childId) {
+        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${slug}/settings`), payload).catch(() => {});
+      }
+
+      if (parentId && parentId !== "family_primary") {
+        rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${parentId}_${childId}/settings`), payload).catch(() => {});
+        if (auth?.currentUser && auth.currentUser.uid === parentId) {
+          try {
+            await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/settings`), payload);
+          } catch (err) {
+            // Can fail if non-auth, open channels above already succeeded
+          }
         }
       }
+      syncSuccess = true;
     }
-  }
 
-  // Firestore sync fallback
-  if (db && parentId && parentId !== "family_primary") {
-    try {
-      const docRef = doc(db, "users", parentId, "children", childId, "config", "settings");
-      await setDoc(
-        docRef,
-        {
-          ...payload,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      // ignore
+    // Firestore sync fallback
+    if (db && parentId && parentId !== "family_primary") {
+      try {
+        const docRef = doc(db, "users", parentId, "children", childId, "config", "settings");
+        await setDoc(
+          docRef,
+          {
+            ...payload,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        syncSuccess = true;
+      } catch (err) {
+        syncError = err;
+      }
     }
+
+    debugLogService.log({
+      direction: 'parent->cloud',
+      category: 'settings',
+      action: 'sync_settings',
+      status: syncSuccess ? 'success' : 'error',
+      summary: syncSuccess
+        ? `Đã đồng bộ cài đặt xuống con: ${settings.screenTimeLimitMinutes !== undefined ? `hạn mức ${settings.screenTimeLimitMinutes} phút, ` : ''}${settings.apps?.length ? `${settings.apps.length} ứng dụng` : 'cài đặt thiết bị'}`
+        : `Lỗi đồng bộ cài đặt phụ huynh lên cloud`,
+      childId,
+      childName,
+      payload: {
+        screenTimeLimitMinutes: settings.screenTimeLimitMinutes,
+        lockChallenge: settings.lockChallenge?.isLocked,
+        appsCount: settings.apps?.length,
+        hardwareControls: settings.hardwareControls,
+      },
+      error: syncError,
+    });
+  } catch (err) {
+    debugLogService.log({
+      direction: 'parent->cloud',
+      category: 'settings',
+      action: 'sync_settings_exception',
+      status: 'error',
+      summary: `Ngoại lệ khi đồng bộ cài đặt: ${err instanceof Error ? err.message : String(err)}`,
+      childId,
+      childName,
+      error: err,
+    });
   }
 }
 
@@ -198,6 +247,17 @@ export async function syncChildStarsToCloud(
       await setDoc(docRef, { stars, transaction: transaction || null, updatedAt: serverTimestamp() }, { merge: true });
     } catch (_) {}
   }
+
+  debugLogService.log({
+    direction: 'parent->cloud',
+    category: 'stars',
+    action: 'sync_stars',
+    status: 'success',
+    summary: `Cập nhật sao cho bé ${childName || childId}: ${stars} ⭐`,
+    childId,
+    childName,
+    payload: { stars, transaction },
+  });
 }
 
 export function subscribeChildStarsFromCloud(
@@ -544,11 +604,22 @@ export async function uploadChildTelemetryToCloud(
   autoQueue: boolean = true,
   childName?: string
 ): Promise<void> {
+  const effectiveChildName = childName || telemetry.childName || "";
   // Offline check: If device is offline, immediately save to offline queue
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     if (autoQueue) {
       queueOfflineTelemetry(childId, telemetry);
     }
+    debugLogService.log({
+      direction: 'kid->cloud',
+      category: 'telemetry',
+      action: 'upload_telemetry_offline',
+      status: 'warning',
+      summary: `Mạng ngoại tuyến, đã lưu hàng đợi telemetry (${effectiveChildName || childId})`,
+      childId,
+      childName: effectiveChildName,
+      payload: { battery: telemetry.battery, screenTimeUsed: telemetry.screenTimeUsedMinutes },
+    });
     return;
   }
 
@@ -557,11 +628,19 @@ export async function uploadChildTelemetryToCloud(
     if (autoQueue) {
       queueOfflineTelemetry(childId, telemetry);
     }
+    debugLogService.log({
+      direction: 'kid->cloud',
+      category: 'telemetry',
+      action: 'upload_telemetry_no_config',
+      status: 'warning',
+      summary: `Chưa cấu hình Firebase hoặc thiếu childId (${childId})`,
+      childId,
+      childName: effectiveChildName,
+    });
     return;
   }
 
   const now = Date.now();
-  const effectiveChildName = childName || telemetry.childName || "";
   const slug = normalizeChildSlug(effectiveChildName);
   const payload = sanitizeForRtdb({
     ...telemetry,
@@ -650,6 +729,36 @@ export async function uploadChildTelemetryToCloud(
   // If both network writes failed, queue telemetry for retry
   if (!uploadSuccess && autoQueue) {
     queueOfflineTelemetry(childId, telemetry);
+  }
+
+  if (uploadSuccess) {
+    debugLogService.log({
+      direction: 'kid->cloud',
+      category: 'telemetry',
+      action: 'upload_telemetry',
+      status: 'success',
+      summary: `Đã gửi báo cáo máy con: Pin ${telemetry.battery}%, Đã dùng: ${telemetry.screenTimeUsedMinutes ?? 0} phút, Tốc độ: ${telemetry.speed || 0} km/h`,
+      childId,
+      childName: effectiveChildName,
+      payload: {
+        battery: telemetry.battery,
+        screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes,
+        lat: telemetry.lat,
+        lng: telemetry.lng,
+        activeApp: telemetry.activeOpenedApp,
+      },
+    });
+  } else {
+    debugLogService.log({
+      direction: 'kid->cloud',
+      category: 'telemetry',
+      action: 'upload_telemetry_failed',
+      status: 'error',
+      summary: `Không thể gửi telemetry lên cloud, đã lưu vào hàng đợi offline`,
+      childId,
+      childName: effectiveChildName,
+      payload: telemetry,
+    });
   }
 }
 
@@ -784,6 +893,17 @@ export async function triggerCloudSOS(
     updatedAt: now,
   };
 
+  debugLogService.log({
+    direction: 'kid->cloud',
+    category: 'sos',
+    action: 'trigger_sos',
+    status: 'warning',
+    summary: `🚨 Phát tín hiệu SOS khẩn cấp: ${effectiveName} tại ${sosInfo.address || 'vị trí hiện tại'}`,
+    childId,
+    childName: effectiveName,
+    payload: sosInfo,
+  });
+
   if (rtdb) {
     rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/sos`), sosData).catch(() => {});
     if (slug && slug !== childId) {
@@ -815,6 +935,16 @@ export async function resolveCloudSOS(parentId: string, childId: string, childNa
     active: false,
     resolvedAt: now,
   };
+
+  debugLogService.log({
+    direction: 'parent->cloud',
+    category: 'sos',
+    action: 'resolve_sos',
+    status: 'info',
+    summary: `✅ Đã tắt tín hiệu báo động SOS cho bé ${childName || childId}`,
+    childId,
+    childName,
+  });
 
   if (rtdb) {
     try {
@@ -983,11 +1113,31 @@ export async function sendRemoteCommandToKid(
     childName: childName || "",
   };
 
+  debugLogService.log({
+    direction: 'parent->cloud',
+    category: 'command',
+    action: `remote_cmd_${command}`,
+    status: 'info',
+    summary: `Phụ huynh gửi lệnh từ xa [${command}] đến thiết bị ${childName || childId}`,
+    childId,
+    childName,
+    payload,
+  });
+
   if (rtdb) {
     // 1. Open sync channel by childId
-    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/commands/active`), cmdData).catch((e) =>
-      console.warn("RTDB sendRemoteCommand childId error:", e)
-    );
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/commands/active`), cmdData).catch((e) => {
+      debugLogService.log({
+        direction: 'parent->cloud',
+        category: 'command',
+        action: `remote_cmd_${command}_rtdb_err`,
+        status: 'warning',
+        summary: `Lỗi gửi lệnh RTDB: ${e?.message || e}`,
+        childId,
+        childName,
+        error: e,
+      });
+    });
 
     // 2. Open sync channel by slug (e.g. 'bach')
     if (slug && slug !== childId) {
@@ -1176,6 +1326,17 @@ export async function sendCloudTimeRequest(
     createdAt: Date.now(),
   };
 
+  debugLogService.log({
+    direction: 'kid->cloud',
+    category: 'time_request',
+    action: 'request_screentime_extension',
+    status: 'info',
+    summary: `Bé ${req.childName} gửi yêu cầu xin thêm ${req.requestedMinutes} phút cho ${req.appName} (Lý do: "${req.reason || 'Con xin thêm giờ'}")`,
+    childId,
+    childName: req.childName,
+    payload: req,
+  });
+
   if (rtdb) {
     rtdbSet(rtdbRef(rtdb, `pairings/sync/${childId}/time_requests/${reqId}`), timeReqData).catch(() => {});
     const slug = normalizeChildSlug(req.childName);
@@ -1300,6 +1461,17 @@ export async function resolveCloudTimeRequest(
 
   const now = Date.now();
   const slug = normalizeChildSlug(childName);
+
+  debugLogService.log({
+    direction: 'parent->cloud',
+    category: 'time_request',
+    action: `resolve_time_request_${status}`,
+    status: 'info',
+    summary: `Phụ huynh đã ${status === 'approved' ? 'CHẤP THUẬN' : 'TỪ CHỐI'} yêu cầu thêm giờ (${reqId})`,
+    childId,
+    childName,
+    payload: { reqId, status },
+  });
 
   if (rtdb) {
     rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${childId}/time_requests/${reqId}`), {

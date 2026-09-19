@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Star,
   Clock,
@@ -45,6 +45,7 @@ import {
   LogOut,
 } from 'lucide-react';
 import { useAppState, syncWithCloudForChild, isSimulatorMode } from '@shared/store';
+import { DebugLogModal } from '@shared/components/DebugLogModal';
 import confetti from 'canvas-confetti';
 import { KidPairingModal } from './KidPairingModal';
 import { KidActivationScreen } from './KidActivationScreen';
@@ -242,9 +243,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     );
   };
 
-  // Ensure store selectedChildId matches Kid device targetChildId
+  // Ensure store selectedChildId matches Kid device targetChildId once on load
+  const hasSyncedChildRef = useRef(false);
   useEffect(() => {
-    if (targetChildId && state.selectedChildId !== targetChildId) {
+    if (targetChildId && state.selectedChildId !== targetChildId && !hasSyncedChildRef.current) {
+      hasSyncedChildRef.current = true;
       switchChild(targetChildId);
     }
   }, [targetChildId, state.selectedChildId, switchChild]);
@@ -295,6 +298,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
   const [hasMissingPermissions, setHasMissingPermissions] = useState(false);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showDebugModal, setShowDebugModal] = useState(false);
 
   // Hardware back button & gesture navigation handler
   useEffect(() => {
@@ -710,147 +714,180 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     updateNativeEnforcementRules(rulesPayload).catch((e) => console.warn('updateNativeEnforcementRules error:', e));
   }, [lockChallenge.isLocked, kioskMode.isEnabled, kioskMode.pinnedAppId, apps, studyModeOnly]);
 
-  // Active Cloud Firestore sync for kid device & Remote Control Commands Execution
+  const appsRef = useRef(apps);
+  appsRef.current = apps;
+  const studyModeOnlyRef = useRef(studyModeOnly);
+  studyModeOnlyRef.current = studyModeOnly;
+  const kioskModeRef = useRef(kioskMode);
+  kioskModeRef.current = kioskMode;
+  const hardwareControlsRef = useRef(hardwareControls);
+  hardwareControlsRef.current = hardwareControls;
+  const childRef = useRef(child);
+  childRef.current = child;
+  const targetSettingsRef = useRef(targetSettings);
+  targetSettingsRef.current = targetSettings;
+  const screenTimeRef = useRef(screenTime);
+  screenTimeRef.current = screenTime;
+  const activeOpenedAppRef = useRef(activeOpenedApp);
+  activeOpenedAppRef.current = activeOpenedApp;
+  const realInstalledAppsRef = useRef(realInstalledApps);
+  realInstalledAppsRef.current = realInstalledApps;
+  const pairedInfoRef = useRef(pairedInfo);
+  pairedInfoRef.current = pairedInfo;
+
+  // Active Cloud Firestore sync for kid device (Runs only when identity changes)
   useEffect(() => {
     if (activeParentId && targetChildId) {
       syncWithCloudForChild(activeParentId, targetChildId, child.name);
-
-      const unsubCmd = subscribeRemoteCommandsOnKid(activeParentId, targetChildId, (cmd) => {
-        if (!cmd || !cmd.command || cmd.command === 'none') return;
-
-        switch (cmd.command) {
-          case 'buzz_siren':
-            playBuzzSirenAudio();
-            showToast('🚨 BỐ MẸ ĐANG PHÁT TÍN HIỆU CÒI TÌM MÁY!');
-            break;
-          case 'ping':
-            if (lastTelemetryRef.current && lastTelemetryRef.current.lat && lastTelemetryRef.current.lng) {
-              uploadChildTelemetryToCloud(
-                activeParentId,
-                targetChildId,
-                {
-                  lat: lastTelemetryRef.current.lat,
-                  lng: lastTelemetryRef.current.lng,
-                  speed: lastTelemetryRef.current.speed,
-                  battery: lastTelemetryRef.current.battery,
-                  currentAddress: child.currentAddress || 'Đang hoạt động',
-                  childName: child.name,
-                  deviceId: pairedInfo?.deviceId,
-                  deviceName: pairedInfo?.deviceName,
-                  model: pairedInfo?.model,
-                  sensors: targetSettings.sensorValues,
-                  screenTimeUsedMinutes: screenTime?.todayTotalMinutes || 0,
-                  activeOpenedApp: typeof activeOpenedApp === 'object' && activeOpenedApp ? activeOpenedApp.name : (typeof activeOpenedApp === 'string' ? activeOpenedApp : ''),
-                  installedAppsCount: realInstalledApps.length || apps.length,
-                },
-                true,
-                child.name
-              ).catch(() => {});
-            }
-            break;
-          case 'lock_now':
-            setLockChallenge(
-              cmd.payload?.lockType || 'instant',
-              cmd.payload?.title || 'Thiết bị đang bị khóa từ xa',
-              cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!'
-            );
-            updateNativeEnforcementRules({
-              isLocked: true,
-              kioskEnabled: false,
-              kioskPackage: '',
-              blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
-            }).catch(() => {});
-            showToast('🔒 BỐ MẸ ĐÃ TẠM KHÓA MÁY TỪ XA!');
-            break;
-          case 'unlock_now':
-            unlockDevice();
-            updateNativeEnforcementRules({
-              isLocked: false,
-              kioskEnabled: Boolean(kioskMode.isEnabled),
-              kioskPackage: kioskMode.pinnedAppId || '',
-              blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
-            }).catch(() => {});
-            showToast('🔓 BỐ MẸ ĐÃ MỞ KHÓA THIẾT BỊ CHO CON!');
-            break;
-          case 'extend_time':
-            const extra = cmd.payload?.minutes || 15;
-            extendChildTimeNow(extra, targetChildId);
-            showToast(`⏱️ BỐ MẸ ĐÃ CỘNG THÊM +${extra} PHÚT DÙNG MÁY!`);
-            break;
-          case 'kiosk_lock':
-            const kioskPkg = cmd.payload?.appId || 'study_app';
-            setKioskMode(true, kioskPkg, cmd.payload?.appName || 'Ứng dụng học tập');
-            updateNativeEnforcementRules({
-              isLocked: false,
-              kioskEnabled: true,
-              kioskPackage: kioskPkg,
-              blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
-            }).catch(() => {});
-            showToast(`📌 BỐ MẸ ĐÃ BẬT CHẾ ĐỘ GHIM: ${cmd.payload?.appName || 'Học tập'}`);
-            break;
-          case 'kiosk_unlock':
-            setKioskMode(false);
-            updateNativeEnforcementRules({
-              isLocked: false,
-              kioskEnabled: false,
-              kioskPackage: '',
-              blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
-            }).catch(() => {});
-            showToast('🔓 Chế độ ghim ứng dụng đã được tắt');
-            break;
-          case 'broadcast_msg':
-            setIsBroadcastDismissed(false);
-            broadcastOverlay(cmd.payload?.title || 'Lời dặn từ Bố Mẹ', cmd.payload?.message || '', cmd.payload?.imageUrl);
-            if (cmd.payload?.speakTTS || cmd.payload?.message) {
-              speakVietnamese(cmd.payload?.message || cmd.payload?.title || '');
-            }
-            showToast('💬 THÔNG ĐIỆP MỚI TỪ BỐ MẸ!');
-            break;
-          case 'clear_broadcast':
-            setIsBroadcastDismissed(true);
-            clearBroadcastOverlay();
-            break;
-          case 'flash_toggle':
-            setHardwareControls({ flashlight: cmd.payload?.flashlight !== undefined ? cmd.payload.flashlight : !hardwareControls.flashlight }, 'child');
-            showToast('⚡ Đã cập nhật trạng thái đèn flash từ xa');
-            break;
-          case 'hardware_control':
-            if (typeof cmd.payload?.volume === 'number' || typeof cmd.payload?.brightness === 'number') {
-              setHardwareControls({
-                volume: cmd.payload?.volume !== undefined ? cmd.payload.volume : hardwareControls.volume,
-                brightness: cmd.payload?.brightness !== undefined ? cmd.payload.brightness : hardwareControls.brightness,
-              }, 'child');
-              showToast('🎛️ Bố mẹ đã điều chỉnh âm lượng / độ sáng màn hình');
-            }
-            break;
-          case 'open_shared_link':
-            if (cmd.payload?.url) {
-              setActiveSharedLesson({
-                id: cmd.payload?.id || `link_${Date.now()}`,
-                url: cmd.payload.url,
-                title: cmd.payload.title || 'Bài học Bố Mẹ gửi',
-                note: cmd.payload.note || '',
-                forcedMinutes: cmd.payload.forcedMinutes || 0,
-                createdAt: cmd.payload.createdAt || Date.now(),
-                isOpen: true,
-              });
-              showToast('🎓 BỐ MẸ VỪA GỬI BÀI HỌC CHO CON!');
-            }
-            break;
-          case 'close_shared_link':
-            setActiveSharedLesson(null);
-            showToast('✅ Bố mẹ đã đóng bài học từ xa');
-            break;
-          default:
-            break;
-        }
-
-        clearRemoteCommand(activeParentId, targetChildId, child.name).catch(() => {});
-      }, child.name);
-
-      return () => unsubCmd();
     }
-  }, [activeParentId, targetChildId, child.name, hardwareControls.flashlight, hardwareControls.volume, hardwareControls.brightness, apps, studyModeOnly, kioskMode.isEnabled, kioskMode.pinnedAppId]);
+  }, [activeParentId, targetChildId, child.name]);
+
+  // Remote Control Commands Execution (Decoupled from local state changes to prevent re-render loops)
+  useEffect(() => {
+    if (!activeParentId || !targetChildId) return;
+
+    const unsubCmd = subscribeRemoteCommandsOnKid(activeParentId, targetChildId, (cmd) => {
+      if (!cmd || !cmd.command || cmd.command === 'none') return;
+
+      const curApps = appsRef.current;
+      const curStudyModeOnly = studyModeOnlyRef.current;
+      const curKioskMode = kioskModeRef.current;
+      const curHw = hardwareControlsRef.current;
+      const curChild = childRef.current;
+      const curPairedInfo = pairedInfoRef.current;
+
+      switch (cmd.command) {
+        case 'buzz_siren':
+          playBuzzSirenAudio();
+          showToast('🚨 BỐ MẸ ĐANG PHÁT TÍN HIỆU CÒI TÌM MÁY!');
+          break;
+        case 'ping':
+          if (lastTelemetryRef.current && lastTelemetryRef.current.lat && lastTelemetryRef.current.lng) {
+            uploadChildTelemetryToCloud(
+              activeParentId,
+              targetChildId,
+              {
+                lat: lastTelemetryRef.current.lat,
+                lng: lastTelemetryRef.current.lng,
+                speed: lastTelemetryRef.current.speed,
+                battery: lastTelemetryRef.current.battery,
+                currentAddress: curChild.currentAddress || 'Đang hoạt động',
+                childName: curChild.name,
+                deviceId: curPairedInfo?.deviceId,
+                deviceName: curPairedInfo?.deviceName,
+                model: curPairedInfo?.model,
+                sensors: targetSettingsRef.current.sensorValues,
+                screenTimeUsedMinutes: screenTimeRef.current?.todayTotalMinutes || 0,
+                activeOpenedApp: typeof activeOpenedAppRef.current === 'object' && activeOpenedAppRef.current ? activeOpenedAppRef.current.name : (typeof activeOpenedAppRef.current === 'string' ? activeOpenedAppRef.current : ''),
+                installedAppsCount: realInstalledAppsRef.current.length || curApps.length,
+              },
+              true,
+              curChild.name
+            ).catch(() => {});
+          }
+          break;
+        case 'lock_now':
+          setLockChallenge(
+            cmd.payload?.lockType || 'instant',
+            cmd.payload?.title || 'Thiết bị đang bị khóa từ xa',
+            cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!'
+          );
+          updateNativeEnforcementRules({
+            isLocked: true,
+            kioskEnabled: false,
+            kioskPackage: '',
+            blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
+          }).catch(() => {});
+          showToast('🔒 BỐ MẸ ĐÃ TẠM KHÓA MÁY TỪ XA!');
+          break;
+        case 'unlock_now':
+          unlockDevice();
+          updateNativeEnforcementRules({
+            isLocked: false,
+            kioskEnabled: Boolean(curKioskMode.isEnabled),
+            kioskPackage: curKioskMode.pinnedAppId || '',
+            blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
+          }).catch(() => {});
+          showToast('🔓 BỐ MẸ ĐÃ MỞ KHÓA THIẾT BỊ CHO CON!');
+          break;
+        case 'extend_time':
+          const extra = cmd.payload?.minutes || 15;
+          extendChildTimeNow(extra, targetChildId);
+          showToast(`⏱️ BỐ MẸ ĐÃ CỘNG THÊM +${extra} PHÚT DÙNG MÁY!`);
+          break;
+        case 'kiosk_lock':
+          const kioskPkg = cmd.payload?.appId || 'study_app';
+          setKioskMode(true, kioskPkg, cmd.payload?.appName || 'Ứng dụng học tập');
+          updateNativeEnforcementRules({
+            isLocked: false,
+            kioskEnabled: true,
+            kioskPackage: kioskPkg,
+            blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
+          }).catch(() => {});
+          showToast(`📌 BỐ MẸ ĐÃ BẬT CHẾ ĐỘ GHIM: ${cmd.payload?.appName || 'Học tập'}`);
+          break;
+        case 'kiosk_unlock':
+          setKioskMode(false);
+          updateNativeEnforcementRules({
+            isLocked: false,
+            kioskEnabled: false,
+            kioskPackage: '',
+            blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
+          }).catch(() => {});
+          showToast('🔓 Chế độ ghim ứng dụng đã được tắt');
+          break;
+        case 'broadcast_msg':
+          setIsBroadcastDismissed(false);
+          broadcastOverlay(cmd.payload?.title || 'Lời dặn từ Bố Mẹ', cmd.payload?.message || '', cmd.payload?.imageUrl);
+          if (cmd.payload?.speakTTS || cmd.payload?.message) {
+            speakVietnamese(cmd.payload?.message || cmd.payload?.title || '');
+          }
+          showToast('💬 THÔNG ĐIỆP MỚI TỪ BỐ MẸ!');
+          break;
+        case 'clear_broadcast':
+          setIsBroadcastDismissed(true);
+          clearBroadcastOverlay();
+          break;
+        case 'flash_toggle':
+          setHardwareControls({ flashlight: cmd.payload?.flashlight !== undefined ? cmd.payload.flashlight : !curHw.flashlight }, 'child');
+          showToast('⚡ Đã cập nhật trạng thái đèn flash từ xa');
+          break;
+        case 'hardware_control':
+          if (typeof cmd.payload?.volume === 'number' || typeof cmd.payload?.brightness === 'number') {
+            setHardwareControls({
+              volume: cmd.payload?.volume !== undefined ? cmd.payload.volume : curHw.volume,
+              brightness: cmd.payload?.brightness !== undefined ? cmd.payload.brightness : curHw.brightness,
+            }, 'child');
+            showToast('🎛️ Bố mẹ đã điều chỉnh âm lượng / độ sáng màn hình');
+          }
+          break;
+        case 'open_shared_link':
+          if (cmd.payload?.url) {
+            setActiveSharedLesson({
+              id: cmd.payload?.id || `link_${Date.now()}`,
+              url: cmd.payload.url,
+              title: cmd.payload.title || 'Bài học Bố Mẹ gửi',
+              note: cmd.payload.note || '',
+              forcedMinutes: cmd.payload.forcedMinutes || 0,
+              createdAt: cmd.payload.createdAt || Date.now(),
+              isOpen: true,
+            });
+            showToast('🎓 BỐ MẸ VỪA GỬI BÀI HỌC CHO CON!');
+          }
+          break;
+        case 'close_shared_link':
+          setActiveSharedLesson(null);
+          showToast('✅ Bố mẹ đã đóng bài học từ xa');
+          break;
+        default:
+          break;
+      }
+
+      clearRemoteCommand(activeParentId, targetChildId, curChild.name).catch(() => {});
+    }, child.name);
+
+    return () => unsubCmd();
+  }, [activeParentId, targetChildId, child.name]);
 
   // Background Real-time Chat Listener on Kid Device
   // Receives parent messages even when FamilyChatModal is closed,
@@ -1797,6 +1834,16 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               title="Cài đặt âm lượng & độ sáng màn hình"
             >
               <Sliders size={18} strokeWidth={2.2} />
+            </button>
+
+            {/* Debug Logs Button */}
+            <button
+              type="button"
+              onClick={() => setShowDebugModal(true)}
+              className="w-10 h-10 rounded-2xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer"
+              title="Nhật ký truyền nhận & Gỡ lỗi đồng bộ"
+            >
+              <FileText size={18} strokeWidth={2.2} />
             </button>
           </div>
         </div>
@@ -3574,6 +3621,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           showToast('✅ Đã đồng ý với Chính sách quyền riêng tư');
         }}
         onClose={() => setShowPrivacyPolicy(false)}
+      />
+
+      {/* MODAL: Nhật Ký Truyền Nhận Dữ Liệu & Gỡ Lỗi */}
+      <DebugLogModal
+        isOpen={showDebugModal}
+        onClose={() => setShowDebugModal(false)}
+        childId={child.id}
+        childName={child.name}
       />
     </div>
   );

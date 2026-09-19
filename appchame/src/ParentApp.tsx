@@ -26,8 +26,9 @@ import { notifyEmergencyAlert, requestSystemNotificationPermission } from '@shar
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
 import { OfflineBanner } from '@shared/components/OfflineBanner';
 import { haptics } from '@shared/utils/haptics';
-import { BellRing } from 'lucide-react';
+import { BellRing, FileText } from 'lucide-react';
 import { getCurrentParentAccount, logoutParentAccount } from '@shared/firebase/firebaseService';
+import { DebugLogModal } from '@shared/components/DebugLogModal';
 
 export type ScreenId =
   | 'welcome'
@@ -85,6 +86,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
   const { activeSOS, alerts, timeRequests, selectedChildId, children, child, sosDetails } = state;
   const currentChild = children?.find((c) => c.id === selectedChildId) || child;
   const [isSosBannerDismissed, setIsSosBannerDismissed] = useState(false);
+  const [showDebugModal, setShowDebugModal] = useState(false);
 
   // Sync with Cloud for active parent and children (deferred 300ms to free up launch thread)
   useEffect(() => {
@@ -434,6 +436,27 @@ export const ParentApp: React.FC<ParentAppProps> = ({
         role="parent"
         isViewOnly={false}
         onAccept={() => setIsPrivacyAccepted(true)}
+      />
+
+      {/* Floating Diagnostics / Debug Button for Mobile Parent App */}
+      {!isDesktopWeb && currentScreen !== 'welcome' && (
+        <button
+          type="button"
+          onClick={() => setShowDebugModal(true)}
+          className="fixed bottom-20 right-4 z-40 p-2.5 bg-slate-900/90 hover:bg-slate-900 text-white rounded-2xl shadow-xl backdrop-blur-md border border-slate-700/50 flex items-center gap-1.5 text-[11px] font-bold cursor-pointer active:scale-95 transition-all"
+          title="Nhật ký truyền nhận dữ liệu 2 chiều & Gỡ lỗi"
+        >
+          <FileText size={15} className="text-emerald-400" />
+          <span className="text-[10px]">Debug</span>
+        </button>
+      )}
+
+      {/* Real-time Diagnostics & Debug Log Modal */}
+      <DebugLogModal
+        isOpen={showDebugModal}
+        onClose={() => setShowDebugModal(false)}
+        childId={currentChild?.id}
+        childName={currentChild?.name}
       />
     </div>
   );

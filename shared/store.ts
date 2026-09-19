@@ -813,7 +813,9 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(getStorageKey(), JSON.stringify(newState));
-      if (!isApplyingCloudUpdate) {
+      // PHÂN LUỒNG RÕ RÀNG: Chỉ ứng dụng Phụ huynh mới được đồng bộ cấu hình cài đặt (Settings, Giới hạn giờ) lên Cloud.
+      // Ứng dụng Con CHỈ gửi số liệu thời gian đã dùng (Telemetry), KHÔNG ĐƯỢC ghi đè cài đặt của cha mẹ lên Cloud!
+      if (!isApplyingCloudUpdate && !isKidAppMode()) {
         const activeParentId = getActiveParentId();
         if (curId && curId !== 'child_default') {
           const curChild = newState.children.find((c) => c.id === curId) || newState.child;
@@ -864,59 +866,64 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
   activeUnsubscribers = [];
 
   try {
-    // 1. Children List Listener from parent (always active as long as parentId exists)
-    const currentParentAcc = getCurrentParentAccount();
-    const unsubChildren = subscribeChildrenListFromCloud(
-      parentId,
-      (cloudChildren) => {
-        applyCloudStateUpdate((prev) => {
-          if (!cloudChildren || cloudChildren.length === 0) {
-            // NEVER wipe out existing children if cloud returns empty!
-            return prev;
-          }
+    const isKid = isKidAppMode();
 
-          const cloudIds = new Set(cloudChildren.map((c) => c.id));
-          const preservedLocal = prev.children.filter((c) => !cloudIds.has(c.id));
-          const mergedChildren = [
-            ...preservedLocal,
-            ...cloudChildren.map((cc) => {
-              const existing = prev.children.find((c) => c.id === cc.id);
-              const existingDevices = existing?.devices || [];
-              const cloudDevices = cc.devices || [];
-              const devMap = new Map<string, ChildDeviceInfo>();
-              existingDevices.forEach((d: ChildDeviceInfo) => { if (d && d.deviceId) devMap.set(d.deviceId, d); });
-              cloudDevices.forEach((d: ChildDeviceInfo) => {
-                if (d && d.deviceId) {
-                  const ex = devMap.get(d.deviceId);
-                  devMap.set(d.deviceId, { ...(ex || {}), ...d });
-                }
-              });
-              const allDevs = Array.from(devMap.values());
+    // 1. Children List Listener from parent (only active on Parent App)
+    // Kid device should NOT subscribe to full children list to avoid child switching conflicts
+    if (!isKid) {
+      const currentParentAcc = getCurrentParentAccount();
+      const unsubChildren = subscribeChildrenListFromCloud(
+        parentId,
+        (cloudChildren) => {
+          applyCloudStateUpdate((prev) => {
+            if (!cloudChildren || cloudChildren.length === 0) {
+              // NEVER wipe out existing children if cloud returns empty!
+              return prev;
+            }
 
-              return {
-                ...(existing || {}),
-                ...cc,
-                devices: allDevs,
-                activeDeviceId: cc.activeDeviceId || existing?.activeDeviceId || (allDevs[0]?.deviceId),
-              };
-            }),
-          ];
+            const cloudIds = new Set(cloudChildren.map((c) => c.id));
+            const preservedLocal = prev.children.filter((c) => !cloudIds.has(c.id));
+            const mergedChildren = [
+              ...preservedLocal,
+              ...cloudChildren.map((cc) => {
+                const existing = prev.children.find((c) => c.id === cc.id);
+                const existingDevices = existing?.devices || [];
+                const cloudDevices = cc.devices || [];
+                const devMap = new Map<string, ChildDeviceInfo>();
+                existingDevices.forEach((d: ChildDeviceInfo) => { if (d && d.deviceId) devMap.set(d.deviceId, d); });
+                cloudDevices.forEach((d: ChildDeviceInfo) => {
+                  if (d && d.deviceId) {
+                    const ex = devMap.get(d.deviceId);
+                    devMap.set(d.deviceId, { ...(ex || {}), ...d });
+                  }
+                });
+                const allDevs = Array.from(devMap.values());
 
-          const curIdValid = mergedChildren.some((c) => c.id === prev.selectedChildId);
-          const nextSelectedChildId = curIdValid ? prev.selectedChildId : (mergedChildren[0]?.id || '');
-          const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
+                return {
+                  ...(existing || {}),
+                  ...cc,
+                  devices: allDevs,
+                  activeDeviceId: cc.activeDeviceId || existing?.activeDeviceId || (allDevs[0]?.deviceId),
+                };
+              }),
+            ];
 
-          return {
-            ...prev,
-            children: mergedChildren,
-            selectedChildId: nextSelectedChildId,
-            child: nextChild,
-          };
-        });
-      },
-      currentParentAcc?.displayName
-    );
-    activeUnsubscribers.push(unsubChildren);
+            const curIdValid = mergedChildren.some((c) => c.id === prev.selectedChildId);
+            const nextSelectedChildId = curIdValid ? prev.selectedChildId : (mergedChildren[0]?.id || '');
+            const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
+
+            return {
+              ...prev,
+              children: mergedChildren,
+              selectedChildId: nextSelectedChildId,
+              child: nextChild,
+            };
+          });
+        },
+        currentParentAcc?.displayName
+      );
+      activeUnsubscribers.push(unsubChildren);
+    }
 
     // If a specific childId is selected, listen to its specific subcollections & telemetry
     if (childId) {
@@ -927,48 +934,55 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
         registerActiveChildInCloud(parentId, curChild).catch(() => {});
       }
 
-      // 2. SOS Listener (Real-time sirens and alert coordinates)
-      let lastHandledSosTimestamp = 0;
-      const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
-        if (sosData && sosData.active) {
-          const sosTimeMs = getSosTimeMs(sosData.updatedAt) || Date.now();
-          if (dismissedSosTimestamp && sosTimeMs <= dismissedSosTimestamp) {
-            return;
+      // 2. SOS Listener (Real-time sirens and alert coordinates) - Parent App only
+      // Kid App is the SOS emitter; Parent receives and sounds the alarm
+      if (!isKid) {
+        let lastHandledSosTimestamp = 0;
+        const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
+          if (sosData && sosData.active) {
+            const sosTimeMs = getSosTimeMs(sosData.updatedAt) || Date.now();
+            if (dismissedSosTimestamp && sosTimeMs <= dismissedSosTimestamp) {
+              return;
+            }
+            const sosInfo = {
+              time: sosData.time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+              lat: sosData.lat || 10.762622,
+              lng: sosData.lng || 106.682245,
+              address: sosData.address || 'Đang cập nhật vị trí...',
+            };
+
+            const wasActive = globalState.activeSOS;
+            const isRecent = Date.now() - lastHandledSosTimestamp < 15000;
+
+            applyCloudStateUpdate((prev) => ({
+              ...prev,
+              activeSOS: true,
+              sosDetails: sosInfo,
+            }));
+
+            // Only broadcast new SOS_TRIGGERED event if not already active or cooldown has passed
+            if (!wasActive || !isRecent) {
+              lastHandledSosTimestamp = Date.now();
+              eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
+            }
+          } else if (sosData && sosData.active === false && globalState.activeSOS) {
+            lastHandledSosTimestamp = 0;
+            applyCloudStateUpdate((prev) => ({
+              ...prev,
+              activeSOS: false,
+            }));
+            eventBus.publish('SOS_CANCELLED', {}, 'parent');
           }
-          const sosInfo = {
-            time: sosData.time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-            lat: sosData.lat || 10.762622,
-            lng: sosData.lng || 106.682245,
-            address: sosData.address || 'Đang cập nhật vị trí...',
-          };
+        }, childName);
+        activeUnsubscribers.push(unsubSOS);
+      }
 
-          const wasActive = globalState.activeSOS;
-          const isRecent = Date.now() - lastHandledSosTimestamp < 15000;
-
-          applyCloudStateUpdate((prev) => ({
-            ...prev,
-            activeSOS: true,
-            sosDetails: sosInfo,
-          }));
-
-          // Only broadcast new SOS_TRIGGERED event if not already active or cooldown has passed
-          if (!wasActive || !isRecent) {
-            lastHandledSosTimestamp = Date.now();
-            eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
-          }
-        } else if (sosData && sosData.active === false && globalState.activeSOS) {
-          lastHandledSosTimestamp = 0;
-          applyCloudStateUpdate((prev) => ({
-            ...prev,
-            activeSOS: false,
-          }));
-          eventBus.publish('SOS_CANCELLED', {}, 'parent');
-        }
-      }, childName);
-      activeUnsubscribers.push(unsubSOS);
-
-      // 3. Real-time Telemetry Listener (GPS, Battery, Speed, Sensors, Screen Time, Active App from Kid Phone)
-      const unsubTelemetry = subscribeChildTelemetryFromCloud(parentId, childId, (telemetry) => {
+      // 3. Real-time Telemetry Listener (GPS, Battery, Speed, Sensors, Screen Time, Active App from Kid Phone) - Parent App only!
+      // STREAMS PHÂN LUỒNG RÕ RÀNG: Kid device calculates its own telemetry and screen time used,
+      // and uploads it to Cloud. Kid MUST NOT subscribe to its own telemetry (avoids re-entry & feedback loops).
+      // Only Parent subscribes to telemetry to display on dashboard/gauges.
+      if (!isKid) {
+        const unsubTelemetry = subscribeChildTelemetryFromCloud(parentId, childId, (telemetry) => {
         if (telemetry && (telemetry.lat || telemetry.battery !== undefined)) {
           applyCloudStateUpdate((prev) => {
             const updatedChildren = prev.children.map((c) => {
@@ -1073,15 +1087,16 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
         }
       }, childName);
       activeUnsubscribers.push(unsubTelemetry);
+    }
 
-      // 4. Settings Listener (Cloud to local child/parent state)
-      const unsubSettings = subscribeChildSettingsFromCloud(parentId, childId, (cloudSettings) => {
-        if (cloudSettings && Object.keys(cloudSettings).length > 0) {
-          applyCloudStateUpdate((prev) => {
-            const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
-            const mergedSettings = { ...curSettings, ...cloudSettings };
-            const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
-            const newStars = mergedSettings.kidStars !== undefined ? mergedSettings.kidStars : curSettings.kidStars;
+    // 4. Settings Listener (Cloud to local child/parent state)
+    const unsubSettings = subscribeChildSettingsFromCloud(parentId, childId, (cloudSettings) => {
+      if (cloudSettings && Object.keys(cloudSettings).length > 0) {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
+          const mergedSettings = { ...curSettings, ...cloudSettings };
+          const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
+          const newStars = mergedSettings.kidStars !== undefined ? mergedSettings.kidStars : curSettings.kidStars;
             return {
               ...prev,
               childSettings: {
@@ -1298,6 +1313,10 @@ eventBus.subscribe('REWARD_CATALOG_UPDATED', (catalog: RewardItem[]) => {
 });
 
 eventBus.subscribe('CHILD_SWITCHED', ({ childId }: { childId: string }) => {
+  if (isKidAppMode()) {
+    // Thiết bị con đã gắn cứng với tài khoản máy con, bỏ qua sự kiện chuyển bé từ tab phụ huynh
+    return;
+  }
   if (childId && childId !== globalState.selectedChildId) {
     const targetChild = globalState.children.find((c) => c.id === childId);
     if (!targetChild) return;
@@ -2639,7 +2658,9 @@ export const useAppState = () => {
       lastVoiceGuide: settings.lastVoiceGuide || '',
     };
     saveAndNotify(nextState);
-    eventBus.publish('CHILD_SWITCHED', { childId, name: targetChild.name }, 'parent');
+    if (!isKidAppMode()) {
+      eventBus.publish('CHILD_SWITCHED', { childId, name: targetChild.name }, 'parent');
+    }
   };
 
   const addChild = (profile: Partial<ChildProfile>, initialSettings?: Partial<ChildSpecificSettings>) => {

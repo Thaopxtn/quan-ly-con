@@ -24,8 +24,10 @@ import {
   Layers,
   CheckCircle2,
   ExternalLink,
-  Wifi
+  Wifi,
+  FileText
 } from 'lucide-react';
+import { DebugLogModal } from '@shared/components/DebugLogModal';
 
 export const ParentWebPortal: React.FC = () => {
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -33,6 +35,7 @@ export const ParentWebPortal: React.FC = () => {
   });
   const [activeScreen, setActiveScreen] = useState<ScreenId>('dashboard');
   const [quickActionFeedback, setQuickActionFeedback] = useState<string | null>(null);
+  const [showDebugModal, setShowDebugModal] = useState(false);
 
   const { state, switchChild, lockChildDeviceNow, buzzKidPhone } = useAppState();
   const { children, selectedChildId, child, alerts, activeSOS } = state;
@@ -321,6 +324,17 @@ export const ParentWebPortal: React.FC = () => {
               <span>Cloud Realtime Online</span>
             </div>
 
+            {/* Debug Logs Button */}
+            <button
+              type="button"
+              onClick={() => setShowDebugModal(true)}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-slate-100 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-xs"
+              title="Xem nhật ký truyền nhận dữ liệu 2 chiều & gỡ lỗi"
+            >
+              <FileText size={14} className="text-emerald-400" />
+              <span>Debug Log</span>
+            </button>
+
             {/* Quick Lock Button */}
             <button
               type="button"
@@ -367,6 +381,14 @@ export const ParentWebPortal: React.FC = () => {
           />
         </main>
       </div>
+
+      {/* Real-time Diagnostics & Debug Log Modal */}
+      <DebugLogModal
+        isOpen={showDebugModal}
+        onClose={() => setShowDebugModal(false)}
+        childId={currentChild?.id}
+        childName={currentChild?.name}
+      />
     </div>
   );
 };
