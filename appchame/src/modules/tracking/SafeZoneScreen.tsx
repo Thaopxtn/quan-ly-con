@@ -25,6 +25,7 @@ import {
 import { useAppState } from '@shared/store';
 import { InteractiveMap } from '@shared/components/InteractiveMap';
 import { SafeZone } from '@shared/types';
+import { makePhoneCall } from '@shared/utils/phoneCall';
 
 interface SafeZoneScreenProps {
   onBack: () => void;
@@ -526,13 +527,14 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
             </div>
 
             <div className="flex items-center space-x-2 pt-1">
-              <a
-                href={`tel:${currentChild.phone || '0987654321'}`}
+              <button
+                type="button"
+                onClick={() => makePhoneCall(currentChild.phone || '0987654321')}
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5 shadow-md shadow-emerald-500/20 transition cursor-pointer"
               >
                 <PhoneCall size={14} />
                 <span>Gọi cho con</span>
-              </a>
+              </button>
 
               <button
                 onClick={() => setShowSimModal(false)}

@@ -34,6 +34,7 @@ import {
 import { useAppState, getActiveParentId, DEFAULT_TRACKING_CONFIG } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
 import { PrivacyPolicyModal } from '@shared/components/PrivacyPolicyModal';
+import { makePhoneCall } from '@shared/utils/phoneCall';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -672,14 +673,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, onLogout
 
             {/* Quick contact buttons */}
             <div className="grid grid-cols-2 gap-2">
-              <a
-                href="tel:19006868"
+              <button
+                type="button"
+                onClick={() => makePhoneCall('19006868')}
                 className="p-3 bg-emerald-50 hover:bg-emerald-100 rounded-2xl border border-emerald-200 flex flex-col items-center justify-center text-center transition cursor-pointer text-emerald-800"
               >
                 <Phone size={18} className="mb-1 text-emerald-600 animate-bounce" />
                 <span className="text-xs font-black">1900-6868</span>
                 <span className="text-[9.5px] text-emerald-600">Hotline 24/7 (Miễn phí)</span>
-              </a>
+              </button>
 
               <a
                 href="mailto:support@parentpro.vn?subject=Yêu cầu hỗ trợ ParentPro"

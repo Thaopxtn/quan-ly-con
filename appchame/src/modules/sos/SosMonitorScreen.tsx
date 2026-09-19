@@ -14,6 +14,7 @@ import {
   HeartHandshake
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
+import { makePhoneCall } from '@shared/utils/phoneCall';
 
 interface SosMonitorScreenProps {
   onBack: () => void;
@@ -158,12 +159,13 @@ export const SosMonitorScreen: React.FC<SosMonitorScreenProps> = ({ onBack, onNa
 
           <div className="space-y-1.5">
             {/* Call Child's Device */}
-            <a
-              href="tel:0987654321"
-              className="p-3 bg-emerald-950/40 border border-emerald-500/40 hover:bg-emerald-900/50 rounded-2xl flex items-center justify-between text-white transition active:scale-[0.98]"
+            <button
+              type="button"
+              onClick={() => makePhoneCall(currentChild.phone || '0987654321')}
+              className="w-full p-3 bg-emerald-950/40 border border-emerald-500/40 hover:bg-emerald-900/50 rounded-2xl flex items-center justify-between text-white transition active:scale-[0.98] cursor-pointer"
             >
-              <div className="flex items-center space-x-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+              <div className="flex items-center space-x-2.5 text-left">
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0">
                   <PhoneCall size={18} />
                 </div>
                 <div>
@@ -173,23 +175,24 @@ export const SosMonitorScreen: React.FC<SosMonitorScreenProps> = ({ onBack, onNa
                       Ưu tiên 1
                     </span>
                   </h4>
-                  <p className="text-[11px] text-emerald-300 font-mono">0987 654 321</p>
+                  <p className="text-[11px] text-emerald-300 font-mono">{currentChild.phone || '0987 654 321'}</p>
                 </div>
               </div>
-              <span className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-xl font-bold">
+              <span className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-xl font-bold shrink-0">
                 Gọi ngay
               </span>
-            </a>
+            </button>
 
             {/* National Hotlines */}
             {EMERGENCY_CONTACTS.map((c) => (
-              <a
+              <button
                 key={c.number}
-                href={`tel:${c.number}`}
-                className="p-2.5 bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl flex items-center justify-between text-white transition active:scale-[0.98]"
+                type="button"
+                onClick={() => makePhoneCall(c.number)}
+                className="w-full p-2.5 bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl flex items-center justify-between text-white transition active:scale-[0.98] cursor-pointer"
               >
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-rose-600/20 text-rose-400 border border-rose-500/30 flex items-center justify-center font-black text-xs">
+                <div className="flex items-center space-x-2.5 text-left">
+                  <div className="w-8 h-8 rounded-xl bg-rose-600/20 text-rose-400 border border-rose-500/30 flex items-center justify-center font-black text-xs shrink-0">
                     {c.number}
                   </div>
                   <div>
@@ -197,11 +200,11 @@ export const SosMonitorScreen: React.FC<SosMonitorScreenProps> = ({ onBack, onNa
                     <p className="text-[10px] text-slate-400">{c.desc}</p>
                   </div>
                 </div>
-                <span className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2.5 py-1 rounded-xl font-bold flex items-center space-x-1">
+                <span className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2.5 py-1 rounded-xl font-bold flex items-center space-x-1 shrink-0">
                   <PhoneCall size={12} />
                   <span>Gọi {c.number}</span>
                 </span>
-              </a>
+              </button>
             ))}
           </div>
         </div>

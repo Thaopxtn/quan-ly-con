@@ -27,6 +27,7 @@ import { InteractiveMap, MapChildItem } from '@shared/components/InteractiveMap'
 import { subscribeChildTelemetryFromCloud, sendRemoteCommandToKid } from '@shared/firebase/cloudSyncService';
 import { ChildDeviceInfo, ChildProfile } from '@shared/types';
 import { haptics } from '@shared/utils/haptics';
+import { makePhoneCall } from '@shared/utils/phoneCall';
 
 interface RealtimeGpsScreenProps {
   onBack: () => void;
@@ -655,14 +656,15 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                           <span className="text-[9.5px]">{buzzingChildId === kid.id ? 'Đang rung...' : 'Tìm máy'}</span>
                         </button>
 
-                        <a
-                          href={`tel:${kid.phone || '0987654321'}`}
+                        <button
+                          type="button"
+                          onClick={() => makePhoneCall(kid.phone || '0987654321')}
                           className="py-2 px-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/80 rounded-xl flex flex-col items-center justify-center transition active:scale-95 cursor-pointer font-bold text-center"
                           title="Gọi cho con"
                         >
                           <PhoneCall size={14} className="mb-0.5 text-emerald-600" />
                           <span className="text-[9.5px]">Gọi con</span>
-                        </a>
+                        </button>
 
                         <a
                           href={`https://www.google.com/maps/dir/?api=1&destination=${kid.lat},${kid.lng}`}
@@ -878,13 +880,14 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                 <span>{buzzingChildId === currentChild.id ? 'Đang rung...' : 'Tìm máy'}</span>
               </button>
 
-              <a
-                href={`tel:${currentChild.phone || '0987654321'}`}
+              <button
+                type="button"
+                onClick={() => makePhoneCall(currentChild.phone || '0987654321')}
                 className="p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition cursor-pointer"
                 title="Gọi cho con"
               >
                 <PhoneCall size={17} />
-              </a>
+              </button>
             </div>
           </div>
 

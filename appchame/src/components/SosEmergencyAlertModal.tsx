@@ -12,6 +12,7 @@ import {
   ExternalLink,
   ShieldAlert,
 } from 'lucide-react';
+import { makePhoneCall } from '@shared/utils/phoneCall';
 
 interface SosEmergencyAlertModalProps {
   isOpen: boolean;
@@ -248,31 +249,34 @@ export const SosEmergencyAlertModal: React.FC<SosEmergencyAlertModalProps> = ({
             </a>
 
             {/* Direct Call to Child */}
-            <a
-              href={`tel:${childPhone}`}
-              className="py-3 px-3 bg-emerald-600 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-2xl font-bold text-xs flex items-center justify-center space-x-2 shadow-lg shadow-emerald-900/30 transition active:scale-[0.98]"
+            <button
+              type="button"
+              onClick={() => makePhoneCall(childPhone)}
+              className="py-3 px-3 bg-emerald-600 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-2xl font-bold text-xs flex items-center justify-center space-x-2 shadow-lg shadow-emerald-900/30 transition active:scale-[0.98] cursor-pointer"
             >
               <PhoneCall size={17} />
               <span>Gọi Cho Con</span>
-            </a>
+            </button>
 
             {/* Call 113 Police */}
-            <a
-              href="tel:113"
-              className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-rose-400 border border-rose-500/30 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98]"
+            <button
+              type="button"
+              onClick={() => makePhoneCall('113')}
+              className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-rose-400 border border-rose-500/30 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
             >
               <AlertTriangle size={15} />
               <span>Gọi Cảnh Sát 113</span>
-            </a>
+            </button>
 
             {/* Call 115 Ambulance */}
-            <a
-              href="tel:115"
-              className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98]"
+            <button
+              type="button"
+              onClick={() => makePhoneCall('115')}
+              className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
             >
               <PhoneCall size={15} />
               <span>Gọi Cấp Cứu 115</span>
-            </a>
+            </button>
           </div>
 
           {/* Remote Camera & Environmental Audio */}
