@@ -842,6 +842,9 @@ let dismissedSosTimestamp = typeof window !== 'undefined'
   ? parseInt(localStorage.getItem('parentpro_dismissed_sos_time') || '0', 10) || 0
   : 0;
 
+// Debounce timestamp for triggerSOS to avoid multiple triggers on rapid clicks
+let lastTriggerSosCallTimestamp = 0;
+
 function getSosTimeMs(val: any): number {
   if (!val) return 0;
   if (typeof val === 'number') return val;
@@ -925,6 +928,7 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
       }
 
       // 2. SOS Listener (Real-time sirens and alert coordinates)
+      let lastHandledSosTimestamp = 0;
       const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
         if (sosData && sosData.active) {
           const sosTimeMs = getSosTimeMs(sosData.updatedAt) || Date.now();
@@ -937,13 +941,23 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             lng: sosData.lng || 106.682245,
             address: sosData.address || 'Đang cập nhật vị trí...',
           };
+
+          const wasActive = globalState.activeSOS;
+          const isRecent = Date.now() - lastHandledSosTimestamp < 15000;
+
           applyCloudStateUpdate((prev) => ({
             ...prev,
             activeSOS: true,
             sosDetails: sosInfo,
           }));
-          eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
+
+          // Only broadcast new SOS_TRIGGERED event if not already active or cooldown has passed
+          if (!wasActive || !isRecent) {
+            lastHandledSosTimestamp = Date.now();
+            eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
+          }
         } else if (sosData && sosData.active === false && globalState.activeSOS) {
+          lastHandledSosTimestamp = 0;
           applyCloudStateUpdate((prev) => ({
             ...prev,
             activeSOS: false,
@@ -1355,9 +1369,22 @@ eventBus.subscribe('LIVE_STREAM_TOGGLED', (live: LiveMonitoring) => {
   saveAndNotify({ ...globalState, liveMonitoring: live });
 });
 
+let lastSosAlertCreatedTime = 0;
 eventBus.subscribe('SOS_TRIGGERED', (sosInfo: { time: string; lat: number; lng: number; address: string }) => {
+  const now = Date.now();
+  // Deduplicate and debounce: if an SOS is already active or an alert was created < 15 seconds ago,
+  // simply update sosDetails without prepending duplicate alert cards to globalState.alerts.
+  if (globalState.activeSOS && now - lastSosAlertCreatedTime < 15000) {
+    saveAndNotify({
+      ...globalState,
+      sosDetails: sosInfo,
+    });
+    return;
+  }
+  lastSosAlertCreatedTime = now;
+
   const newAlert: AlertNotification = {
-    id: 'sos_' + Date.now(),
+    id: 'sos_' + now,
     type: 'sos',
     title: '🚨 KHẨN CẤP: Con đã nhấn nút SOS!',
     message: `Vị trí tại: ${sosInfo.address}`,
@@ -1375,6 +1402,7 @@ eventBus.subscribe('SOS_TRIGGERED', (sosInfo: { time: string; lat: number; lng: 
 });
 
 eventBus.subscribe('SOS_CANCELLED', () => {
+  lastSosAlertCreatedTime = 0;
   saveAndNotify({ ...globalState, activeSOS: false });
 });
 
@@ -2217,6 +2245,13 @@ export const useAppState = () => {
   };
 
   const triggerSOS = (customSos?: { childId?: string; lat?: number; lng?: number; address?: string }) => {
+    const now = Date.now();
+    // 5s cooldown to prevent double taps / rapid button spam
+    if (now - lastTriggerSosCallTimestamp < 5000 && state.activeSOS) {
+      return;
+    }
+    lastTriggerSosCallTimestamp = now;
+
     const kidPaired = getKidDevicePairedInfo();
     const effectiveChildId = customSos?.childId || kidPaired?.childId || state.selectedChildId;
     const targetChild = state.children?.find((c) => c.id === effectiveChildId) || state.child;
@@ -2232,6 +2267,7 @@ export const useAppState = () => {
   };
 
   const cancelSOS = (childId?: string) => {
+    lastTriggerSosCallTimestamp = 0;
     const now = Date.now();
     dismissedSosTimestamp = now;
     if (typeof window !== 'undefined') {

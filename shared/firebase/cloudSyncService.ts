@@ -863,13 +863,41 @@ export function subscribeCloudSOS(
   const unsubs: Array<() => void> = [];
   const slug = normalizeChildSlug(childName);
 
+  // Deduplicate rapid successive updates from the 3-4 redundant listeners (RTDB + Firestore)
+  let lastForwardedFingerprint = '';
+  let lastForwardedTime = 0;
+
+  const handleSOSUpdate = (rawVal: any) => {
+    if (!rawVal) return;
+    const sosData = rawVal as CloudSOSAlert;
+    const now = Date.now();
+    const isActive = !!sosData.active;
+    const updatedAtVal = sosData.updatedAt
+      ? typeof sosData.updatedAt === 'number'
+        ? sosData.updatedAt
+        : (typeof (sosData.updatedAt as any)?.toMillis === 'function'
+          ? (sosData.updatedAt as any).toMillis()
+          : String(sosData.updatedAt))
+      : '';
+    const fingerprint = `${isActive}_${updatedAtVal}_${sosData.time || ''}_${sosData.address || ''}_${sosData.lat || ''}_${sosData.lng || ''}`;
+
+    // If identical payload is received within 8 seconds, discard redundant callbacks from other listeners
+    if (fingerprint === lastForwardedFingerprint && now - lastForwardedTime < 8000) {
+      return;
+    }
+
+    lastForwardedFingerprint = fingerprint;
+    lastForwardedTime = now;
+    onSOSUpdate(sosData);
+  };
+
   if (rtdb) {
     try {
       const u1 = rtdbOnValue(
         rtdbRef(rtdb, `pairings/sync/${childId}/sos`),
         (snap) => {
           if (snap.exists()) {
-            onSOSUpdate(snap.val() as CloudSOSAlert);
+            handleSOSUpdate(snap.val());
           }
         },
         () => {}
@@ -883,7 +911,7 @@ export function subscribeCloudSOS(
           rtdbRef(rtdb, `pairings/sync/${slug}/sos`),
           (snap) => {
             if (snap.exists()) {
-              onSOSUpdate(snap.val() as CloudSOSAlert);
+              handleSOSUpdate(snap.val());
             }
           },
           () => {}
@@ -898,7 +926,7 @@ export function subscribeCloudSOS(
           rtdbRef(rtdb, `users/${parentId}/children/${childId}/sos`),
           (snap) => {
             if (snap.exists()) {
-              onSOSUpdate(snap.val() as CloudSOSAlert);
+              handleSOSUpdate(snap.val());
             }
           },
           () => {}
@@ -915,7 +943,7 @@ export function subscribeCloudSOS(
         docRef,
         (snapshot) => {
           if (snapshot.exists()) {
-            onSOSUpdate(snapshot.data() as CloudSOSAlert);
+            handleSOSUpdate(snapshot.data());
           }
         },
         () => {}

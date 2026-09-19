@@ -215,6 +215,32 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   };
 
   const geofenceStateRef = React.useRef<Record<string, boolean>>({});
+  const lastGeofenceAlertTimeRef = React.useRef<Record<string, number>>({});
+  const [isSosButtonCooldown, setIsSosButtonCooldown] = useState(false);
+
+  const handleKidTriggerSOS = (source: 'header' | 'button') => {
+    if (isSosButtonCooldown) {
+      showToast('⏳ Tín hiệu SOS đã được gửi đi, đang chờ Bố Mẹ kết nối...');
+      return;
+    }
+    setIsSosButtonCooldown(true);
+    setTimeout(() => {
+      setIsSosButtonCooldown(false);
+    }, 8000);
+
+    haptics.warning();
+    triggerSOS({
+      childId: targetChildId,
+      lat: child.lat,
+      lng: child.lng,
+      address: child.currentAddress,
+    });
+    showToast(
+      source === 'header'
+        ? '🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN BỐ MẸ!'
+        : '🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN ĐIỆN THOẠI BỐ MẸ VÀ NGƯỜI THÂN!'
+    );
+  };
 
   // Ensure store selectedChildId matches Kid device targetChildId
   useEffect(() => {
@@ -1403,16 +1429,22 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
                   if (wasInside && !isInside) {
                     geofenceStateRef.current[zone.id] = false;
-                    showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
-                    haptics.warning();
-                    if (zone.notifyOnExit !== false) {
-                      triggerCloudSOS(activeParentId, targetChildId, {
-                        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-                        lat: latitude,
-                        lng: longitude,
-                        address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
-                        childName: child.name,
-                      }, child.name).catch(() => {});
+                    const now = Date.now();
+                    const lastAlertTime = lastGeofenceAlertTimeRef.current[zone.id] || 0;
+                    // Debounce geofence exit alert to at least 60 seconds interval to prevent GPS jitter loops
+                    if (now - lastAlertTime > 60000) {
+                      lastGeofenceAlertTimeRef.current[zone.id] = now;
+                      showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
+                      haptics.warning();
+                      if (zone.notifyOnExit !== false) {
+                        triggerCloudSOS(activeParentId, targetChildId, {
+                          time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                          lat: latitude,
+                          lng: longitude,
+                          address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
+                          childName: child.name,
+                        }, child.name).catch(() => {});
+                      }
                     }
                   } else if (!wasInside && isInside) {
                     geofenceStateRef.current[zone.id] = true;
@@ -1749,16 +1781,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             {/* Prominent Quick SOS Button */}
             <button
               type="button"
-              onClick={() => {
-                haptics.warning();
-                triggerSOS({
-                  childId: targetChildId,
-                  lat: child.lat,
-                  lng: child.lng,
-                  address: child.currentAddress,
-                });
-                showToast('🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN BỐ MẸ!');
-              }}
+              onClick={() => handleKidTriggerSOS('header')}
               className="px-2.5 py-1.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/80 shadow-sm flex items-center gap-1 font-black text-xs active:scale-90 transition-all cursor-pointer animate-subtle-pulse"
               title="Báo động cứu hộ khẩn cấp cho Bố Mẹ"
             >
@@ -2857,16 +2880,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           <div className="pt-2">
             <button
               type="button"
-              onClick={() => {
-                haptics.warning();
-                triggerSOS({
-                  childId: targetChildId,
-                  lat: child.lat,
-                  lng: child.lng,
-                  address: child.currentAddress,
-                });
-                showToast('🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN ĐIỆN THOẠI BỐ MẸ VÀ NGƯỜI THÂN!');
-              }}
+              onClick={() => handleKidTriggerSOS('button')}
               className="w-full py-4 bg-red-600 bg-gradient-to-r from-rose-600 via-red-600 to-rose-600 hover:from-rose-700 hover:to-red-700 text-white font-black text-sm rounded-3xl shadow-xl shadow-rose-600/35 flex items-center justify-center space-x-2.5 transition-all active:scale-[0.97] ring-4 ring-rose-500/20 cursor-pointer"
             >
               <AlertOctagon size={24} className="animate-bounce" strokeWidth={2.5} />

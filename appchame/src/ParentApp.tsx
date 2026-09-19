@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useAppState, syncWithCloudForChild, syncAllChildrenFromCloud, isSimulatorMode } from '@shared/store';
 import { ParentBottomNav, ParentTab } from './components/ParentBottomNav';
 import { WelcomeAuthScreen } from './modules/auth/WelcomeAuthScreen';
@@ -134,15 +134,24 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     }
   }, [isAuthenticated]);
 
+  const lastEmergencyNotifiedTimeRef = useRef<number>(0);
+
   // When child triggers SOS, post standard system notification & show floating banner
   useEffect(() => {
     if (activeSOS) {
       setIsSosBannerDismissed(false);
-      notifyEmergencyAlert(
-        currentChild?.name || 'Bé',
-        sosDetails?.address,
-        sosDetails?.time
-      );
+      const now = Date.now();
+      // Debounce siren & notification popups: fire only once per SOS episode (minimum 15s interval)
+      if (now - lastEmergencyNotifiedTimeRef.current > 15000) {
+        lastEmergencyNotifiedTimeRef.current = now;
+        notifyEmergencyAlert(
+          currentChild?.name || 'Bé',
+          sosDetails?.address,
+          sosDetails?.time
+        );
+      }
+    } else {
+      lastEmergencyNotifiedTimeRef.current = 0;
     }
   }, [activeSOS, currentChild?.name, sosDetails?.address, sosDetails?.time]);
 

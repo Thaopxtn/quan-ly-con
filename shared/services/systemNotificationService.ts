@@ -182,10 +182,11 @@ export function showSystemNotification(title: string, options?: SystemNotificati
 export function notifyEmergencyAlert(childName: string, address?: string, time?: string) {
   const notifTime = time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
   const notifAddress = address || 'Đang xác định toạ độ...';
+  const childTag = childName.toLowerCase().replace(/\s+/g, '_');
 
   showSystemNotification(`🚨 Báo động SOS: ${childName}`, {
     body: `Lúc ${notifTime} tại: ${notifAddress}. Nhấn để xem vị trí.`,
-    tag: `sos_${Date.now()}`,
+    tag: `sos_alert_${childTag}`,
     silent: false,
     soundType: 'emergency',
   });
