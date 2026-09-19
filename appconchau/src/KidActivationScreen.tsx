@@ -30,6 +30,7 @@ import {
 } from './services/nativePermissionsService';
 import {
   createKidInitiatedPairingCode,
+  submitChildPairingCode,
   getKidPendingPairing,
   approveParentPairing,
   rejectParentPairing,
@@ -108,6 +109,13 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
   const [pendingParentName, setPendingParentName] = useState<string>('Bố/Mẹ');
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
+
+  // 6-digit PIN input state for parent-initiated pairing (Primary Easy Mode)
+  const [parentPinDigits, setParentPinDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [isSubmittingParentPin, setIsSubmittingParentPin] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [showAdvancedAuth, setShowAdvancedAuth] = useState(false);
+  const pinInputRefs = React.useRef<Array<HTMLInputElement | null>>([]);
 
   const currentYear = new Date().getFullYear();
   const validBirthYear = Number(birthYear) || 2017;
@@ -195,6 +203,91 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     const m = Math.floor(sec / 60);
     const s = sec % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleDigitChange = (index: number, val: string) => {
+    const cleanVal = val.replace(/\D/g, '').slice(-1);
+    const newDigits = [...parentPinDigits];
+    newDigits[index] = cleanVal;
+    setParentPinDigits(newDigits);
+    setPinError(null);
+
+    if (cleanVal && index < 5) {
+      pinInputRefs.current[index + 1]?.focus();
+    }
+
+    // Auto submit when all 6 digits entered
+    if (cleanVal && index === 5 && newDigits.every((d) => d.length === 1)) {
+      handleConnectUsingParentCode(newDigits.join(''));
+    }
+  };
+
+  const handleDigitKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !parentPinDigits[index] && index > 0) {
+      pinInputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handlePastePin = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+    const newDigits = [...parentPinDigits];
+    for (let i = 0; i < 6; i++) {
+      newDigits[i] = pasted[i] || '';
+    }
+    setParentPinDigits(newDigits);
+    setPinError(null);
+    if (pasted.length === 6) {
+      handleConnectUsingParentCode(pasted);
+    } else {
+      pinInputRefs.current[Math.min(5, pasted.length)]?.focus();
+    }
+  };
+
+  const handleConnectUsingParentCode = async (codeToSubmit?: string) => {
+    const code = (codeToSubmit || parentPinDigits.join('')).trim();
+    if (code.length !== 6) {
+      setPinError('Vui lòng nhập đủ 6 chữ số mã kết nối hiển thị trên máy Bố Mẹ.');
+      return;
+    }
+
+    setIsSubmittingParentPin(true);
+    setPinError(null);
+
+    try {
+      const hwInfo = deviceInfo || (await getNativeDeviceInfo());
+      const activeDevName = (deviceName.trim() || `${hwInfo.manufacturer || ''} ${hwInfo.model}`.trim() || 'Điện thoại của con');
+      const activeDevId = hwInfo.hardwareId || ('dev_' + Date.now());
+
+      const res = await submitChildPairingCode(code, {
+        deviceId: activeDevId,
+        hardwareIdType: (hwInfo.hardwareIdType as any) || 'android_id',
+        deviceName: activeDevName,
+        model: hwInfo.model || getDeviceModel(),
+        manufacturer: hwInfo.manufacturer || 'Android',
+        androidId: hwInfo.androidId,
+        serial: hwInfo.serial,
+        mac: hwInfo.mac,
+        imei: hwInfo.imei,
+        phoneNumber: hwInfo.phoneNumber,
+        osVersion: hwInfo.osVersion || 'Android',
+        battery: 100,
+      });
+
+      if (res.success && res.session) {
+        confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+        setTimeout(() => {
+          onActivationComplete(res.session!.parentName || 'Bố/Mẹ', res.session!.childName || 'Bé');
+        }, 500);
+      } else {
+        setPinError(res.error || 'Mã kết nối không chính xác hoặc đã hết hạn.');
+      }
+    } catch (e: any) {
+      setPinError('Lỗi kết nối. Vui lòng kiểm tra Internet và thử lại.');
+    } finally {
+      setIsSubmittingParentPin(false);
+    }
   };
 
   // Google Sign-In Action
@@ -710,70 +803,119 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
               </p>
             </div>
 
-            {/* Google Sign In Card */}
-            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xl space-y-4">
+            {/* PRIMARY HERO CARD: ENTER 6-DIGIT CODE FROM PARENT APP */}
+            <div className="bg-white border-2 border-blue-500/20 rounded-3xl p-5 shadow-xl space-y-4">
               <div className="text-center space-y-1">
-                <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-black">
+                <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-black">
                   <Sparkles size={12} />
-                  KHUYÊN DÙNG (NHANH & TỰ ĐỒNG BỘ)
+                  KẾT NỐI 1 CHẠM • KHÔNG CẦN TÀI KHOẢN
                 </span>
-                <h2 className="text-base font-black text-slate-900">Đăng Nhập Tài Khoản Google</h2>
+                <h2 className="text-base font-black text-slate-900">Nhập Mã Kết Nối Từ Máy Bố Mẹ</h2>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Sử dụng tài khoản Google của <strong>Bố/Mẹ</strong> hoặc của <strong>Con</strong>. Sau khi đăng nhập, bạn chọn bé sẽ sở hữu chiếc điện thoại này.
+                  Nhìn mã 6 số trên ứng dụng <strong>ParentPro của Bố Mẹ</strong> và nhập vào đây:
                 </p>
               </div>
 
-              {errorMsg && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold text-center flex items-center gap-2 justify-center">
+              {pinError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold text-center flex items-center gap-2 justify-center animate-in fade-in">
                   <AlertCircle size={15} className="shrink-0" />
-                  <span>{errorMsg}</span>
+                  <span>{pinError}</span>
                 </div>
               )}
 
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                disabled={loadingGoogle}
-                className="w-full py-3.5 px-4 bg-white hover:bg-slate-50 text-slate-800 font-black text-sm rounded-2xl border-2 border-slate-200 shadow-md hover:shadow-lg transition-all active:scale-98 flex items-center justify-center gap-3 cursor-pointer disabled:opacity-60"
-              >
-                {loadingGoogle ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin text-blue-600" />
-                    <span>Đang xác thực Google...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                    </svg>
-                    <span>Tiếp tục với Google</span>
-                    <ArrowRight size={16} className="text-slate-400" />
-                  </>
-                )}
-              </button>
-
-              <div className="relative flex py-1 items-center">
-                <div className="flex-grow border-t border-slate-200" />
-                <span className="shrink mx-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  HOẶC KẾT NỐI KHÔNG CẦN TÀI KHOẢN
-                </span>
-                <div className="flex-grow border-t border-slate-200" />
+              {/* 6 Big PIN Digits Input */}
+              <div className="flex justify-center items-center gap-2 sm:gap-2.5 py-1">
+                {parentPinDigits.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={(el) => { pinInputRefs.current[idx] = el; }}
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleDigitChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleDigitKeyDown(idx, e)}
+                    onPaste={idx === 0 ? handlePastePin : undefined}
+                    disabled={isSubmittingParentPin}
+                    className="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-black rounded-2xl border-2 border-slate-200 bg-slate-50/50 text-slate-900 focus:bg-white focus:border-blue-600 focus:ring-4 focus:ring-blue-100 outline-hidden transition-all shadow-inner disabled:opacity-50"
+                  />
+                ))}
               </div>
 
               <button
                 type="button"
-                onClick={() => setMode('kid_setup')}
-                className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-2xl border border-slate-200 transition-all active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => handleConnectUsingParentCode()}
+                disabled={isSubmittingParentPin || parentPinDigits.some((d) => !d)}
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-sm rounded-2xl shadow-lg shadow-blue-500/25 transition-all active:scale-98 flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
               >
-                <KeyRound size={16} className="text-amber-500" />
-                <span>Ghép đôi bằng mã 6 số (15 phút)</span>
+                {isSubmittingParentPin ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    <span>Đang kết nối vào máy Bố Mẹ...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck size={18} />
+                    <span>Xác Nhận & Kết Nối Ngay</span>
+                    <ArrowRight size={16} />
+                  </>
+                )}
               </button>
+            </div>
+
+            {/* SECONDARY / ADVANCED OPTIONS */}
+            <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-3.5 space-y-2.5">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedAuth(!showAdvancedAuth)}
+                className="w-full flex items-center justify-between text-xs font-bold text-slate-600 hover:text-slate-900 px-1 py-0.5 cursor-pointer"
+              >
+                <span>Tùy chọn kết nối khác</span>
+                <span className="text-[11px] text-blue-600">{showAdvancedAuth ? 'Thu gọn ▲' : 'Mở rộng ▼'}</span>
+              </button>
+
+              {showAdvancedAuth && (
+                <div className="pt-2 border-t border-slate-200 space-y-2 animate-in fade-in">
+                  {/* Google Login Option */}
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={loadingGoogle}
+                    className="w-full py-2.5 px-3 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-60"
+                  >
+                    {loadingGoogle ? (
+                      <>
+                        <Loader2 size={15} className="animate-spin text-blue-600" />
+                        <span>Đang xác thực Google...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                        </svg>
+                        <span>Đăng nhập tài khoản Google</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Kid-Generated Code Option */}
+                  <button
+                    type="button"
+                    onClick={() => setMode('kid_setup')}
+                    className="w-full py-2.5 px-3 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <KeyRound size={15} className="text-amber-500" />
+                    <span>Máy con tự tạo mã cho Bố Mẹ quét</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
+
 
         {mode === 'select_child' && loggedUser && (
           /* =========================================================================

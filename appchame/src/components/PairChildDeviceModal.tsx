@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   X,
   Smartphone,
@@ -13,21 +13,25 @@ import {
   UserCheck,
   Share2,
   Clock,
-  Radio
+  Radio,
+  Copy,
+  CheckCheck,
+  Plus,
+  User,
+  Zap,
+  CheckCircle2
 } from "lucide-react";
 import {
+  createChildPairingCode,
+  subscribePairingSession,
   requestPairingWithKidCode,
   loadChildDataFromCloud,
   PairingSession
 } from "@shared/firebase/pairingService";
 import { ChildDeviceInfo } from "@shared/types";
 import { acceptShareCode } from "@shared/firebase/sharingService";
-import { getCurrentParentAccount, getFirebaseInstance } from "@shared/firebase/firebaseService";
-import { isFirebaseConfigured } from "@shared/firebase/firebaseConfig";
-import { getActiveParentId, useAppState } from "@shared/store";
-import { parentProEventBus } from "@shared/eventBus";
-import { doc, onSnapshot } from "firebase/firestore";
-import { ref as rtdbRef, onValue as rtdbOnValue, get as rtdbGet } from "firebase/database";
+import { getCurrentParentAccount } from "@shared/firebase/firebaseService";
+import { getActiveParentId, useAppState, syncAllChildrenFromCloud } from "@shared/store";
 import confetti from "canvas-confetti";
 
 interface PairChildDeviceModalProps {
@@ -37,62 +41,148 @@ interface PairChildDeviceModalProps {
   onSuccess?: (childId: string, childName: string) => void;
 }
 
+const DEFAULT_AVATARS = [
+  "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150",
+  "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150",
+  "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150",
+  "https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=150",
+];
+
 export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
+  childId: propChildId,
+  childName: propChildName,
   onClose,
   onSuccess,
 }) => {
   const { state, addChild, addOrUpdateChildDevice } = useAppState();
   const currentParent = getCurrentParentAccount();
 
-  // Multi-device target mode: 'new' child or 'existing' child
-  const [targetChildMode, setTargetChildMode] = useState<'new' | 'existing'>(
-    state.children.length > 0 ? 'existing' : 'new'
+  // Tabs:
+  // 1. 'parent_generate': Bố mẹ tạo mã PIN 6 số cho con nhập (CHÍNH - KHUYẾN NGHỊ)
+  // 2. 'from_kid': Nhập mã do máy con tạo (Dự phòng)
+  // 3. 'from_share': Nhận chia sẻ từ phụ huynh khác
+  const [activeTab, setActiveTab] = useState<'parent_generate' | 'from_kid' | 'from_share'>('parent_generate');
+
+  // Multi-device target mode: 'existing' or 'new'
+  const initialChildId = propChildId || (state.children.length > 0 ? state.children[0].id : 'new');
+  const [targetChildMode, setTargetChildMode] = useState<'existing' | 'new'>(
+    initialChildId === 'new' || state.children.length === 0 ? 'new' : 'existing'
   );
-  const [selectedExistingChildId, setSelectedExistingChildId] = useState<string>(
-    state.children[0]?.id || ''
+  const [selectedChildId, setSelectedChildId] = useState<string>(
+    initialChildId === 'new' ? '' : initialChildId
   );
 
-  // Tab: 'from_kid' (Nhập mã từ máy con - DUY NHẤT) vs 'from_share' (Nhận chia sẻ từ phụ huynh khác)
-  const [activeTab, setActiveTab] = useState<'from_kid' | 'from_share'>('from_kid');
+  // New child form fields
+  const [newChildName, setNewChildName] = useState(propChildName || '');
+  const [newChildAge, setNewChildAge] = useState<number>(8);
+  const [newChildGender, setNewChildGender] = useState<'boy' | 'girl'>('boy');
+  const [newChildAvatar, setNewChildAvatar] = useState(DEFAULT_AVATARS[0]);
 
-  // Input state
+  // Tab 1 state: Generated PIN session for child to enter
+  const [generatedSession, setGeneratedSession] = useState<PairingSession | null>(null);
+  const [isGeneratingPin, setIsGeneratingPin] = useState(false);
+  const [pinTimeLeft, setPinTimeLeft] = useState(15 * 60);
+  const [copiedPin, setCopiedPin] = useState(false);
+
+  // Tab 2 state: Parent enters kid's code
   const [kidCode, setKidCode] = useState('');
-  const [isRequesting, setIsRequesting] = useState(false);
-  const [kidError, setKidError] = useState<string | null>(null);
+  const [isRequestingKidCode, setIsRequestingKidCode] = useState(false);
+  const [kidCodeError, setKidCodeError] = useState<string | null>(null);
+  const [isWaitingKidApproval, setIsWaitingKidApproval] = useState(false);
+  const [pendingKidSession, setPendingKidSession] = useState<PairingSession | null>(null);
+  const [kidCodeTimeLeft, setKidCodeTimeLeft] = useState(15 * 60);
 
-  // Waiting for child device approval state
-  const [isWaitingApproval, setIsWaitingApproval] = useState(false);
-  const [pendingSession, setPendingSession] = useState<PairingSession | null>(null);
-  const [timeLeft, setTimeLeft] = useState(15 * 60);
-
-  // Co-parent share state
+  // Tab 3 state: Co-parent share
   const [shareCode, setShareCode] = useState('');
   const [isAcceptingShare, setIsAcceptingShare] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
 
-  // Successful paired child info for celebration view
+  // Celebration state
+  const [isPairedSuccess, setIsPairedSuccess] = useState(false);
   const [pairedChildSummary, setPairedChildSummary] = useState<{
     name: string;
     avatar?: string;
     age?: number;
-    birthYear?: number;
     deviceModel?: string;
+    deviceId?: string;
   } | null>(null);
-  const [isPairedSuccess, setIsPairedSuccess] = useState(false);
 
-  // 15-minute countdown timer when waiting for approval
+  const selectedChildObj = state.children.find((c) => c.id === selectedChildId);
+
+  // ─── Auto-generate PIN for Tab 1 ──────────────────────────────────────────
+  const handleGeneratePin = async () => {
+    setIsGeneratingPin(true);
+    setCopiedPin(false);
+    try {
+      const parentId = currentParent?.uid || getActiveParentId();
+      const parentName = currentParent?.displayName || "Bố/Mẹ";
+
+      let finalChildId = selectedChildId;
+      let finalChildName = selectedChildObj?.name || newChildName.trim() || "Bé yêu";
+      let finalAge = selectedChildObj?.age || newChildAge || 8;
+      let finalAvatar = selectedChildObj?.avatar || newChildAvatar;
+      let finalBirthYear = selectedChildObj?.birthYear || (new Date().getFullYear() - finalAge);
+      let finalGender = selectedChildObj ? undefined : newChildGender;
+
+      if (targetChildMode === 'new' || !finalChildId) {
+        finalChildId = 'child_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
+      }
+
+      const session = await createChildPairingCode(
+        parentId,
+        parentName,
+        finalChildId,
+        finalChildName,
+        {
+          age: finalAge,
+          birthYear: finalBirthYear,
+          avatar: finalAvatar,
+          gender: finalGender,
+        }
+      );
+
+      setGeneratedSession(session);
+      setPinTimeLeft(15 * 60);
+    } catch (err) {
+      console.error("Failed to generate child PIN:", err);
+    } finally {
+      setIsGeneratingPin(false);
+    }
+  };
+
+  // Generate PIN on mount or when switching to existing child / setting new child
   useEffect(() => {
-    if (!isWaitingApproval || !pendingSession) return;
+    if (activeTab === 'parent_generate' && !generatedSession && !isPairedSuccess) {
+      handleGeneratePin();
+    }
+  }, [activeTab, targetChildMode, selectedChildId]);
+
+  // Countdown timer for generated PIN (Tab 1)
+  useEffect(() => {
+    if (!generatedSession || activeTab !== 'parent_generate' || isPairedSuccess) return;
     const interval = setInterval(() => {
-      const remaining = Math.max(0, Math.floor((pendingSession.expiresAt - Date.now()) / 1000));
-      setTimeLeft(remaining);
+      const remaining = Math.max(0, Math.floor((generatedSession.expiresAt - Date.now()) / 1000));
+      setPinTimeLeft(remaining);
       if (remaining <= 0) {
-        setIsWaitingApproval(false);
-        setKidError("Mã kết nối đã hết hạn (quá 15 phút). Vui lòng tạo mã mới trên máy con.");
+        // Expired
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [isWaitingApproval, pendingSession]);
+  }, [generatedSession, activeTab, isPairedSuccess]);
+
+  // Countdown timer for waiting kid approval (Tab 2)
+  useEffect(() => {
+    if (!isWaitingKidApproval || !pendingKidSession) return;
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.floor((pendingKidSession.expiresAt - Date.now()) / 1000));
+      setKidCodeTimeLeft(remaining);
+      if (remaining <= 0) {
+        setIsWaitingKidApproval(false);
+        setKidCodeError("Mã kết nối đã hết hạn. Vui lòng tạo mã mới trên máy con.");
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isWaitingKidApproval, pendingKidSession]);
 
   const formatTimer = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -100,17 +190,110 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  // Step 1: Parent submits kid code -> sends connection request to child device
+  // ─── Real-time listener when Kid enters the PIN (Tab 1) ───────────────────
+  useEffect(() => {
+    if (!generatedSession?.code || activeTab !== 'parent_generate' || isPairedSuccess) return;
+
+    let isHandled = false;
+
+    const finalizePinSuccess = async (session: PairingSession) => {
+      if (isHandled) return;
+      isHandled = true;
+
+      const devData = session.childDeviceInfo;
+      const deviceName = devData?.deviceName || devData?.model || "Điện thoại của con";
+      const fullDevice: ChildDeviceInfo = {
+        deviceId: devData?.deviceId || ("dev_" + session.childId),
+        hardwareIdType: devData?.hardwareIdType || "android_id",
+        deviceName: deviceName,
+        model: devData?.model || "Android Device",
+        manufacturer: devData?.manufacturer || "Android",
+        phoneNumber: devData?.phoneNumber || "",
+        imei: devData?.imei || "",
+        mac: devData?.mac || "",
+        serial: devData?.serial || "",
+        androidId: devData?.androidId || "",
+        osVersion: devData?.osVersion || "Android",
+        pairedAt: new Date().toISOString(),
+        status: "online",
+        battery: devData?.battery || 100,
+        isPrimary: true,
+      };
+
+      const finalChildName = selectedChildObj?.name || session.childName || newChildName.trim() || "Bé yêu";
+      const finalAvatar = selectedChildObj?.avatar || session.childAvatar || newChildAvatar;
+      const finalAge = selectedChildObj?.age || session.childAge || newChildAge || 8;
+      const finalBirthYear = selectedChildObj?.birthYear || session.childBirthYear || (new Date().getFullYear() - finalAge);
+
+      if (targetChildMode === 'existing' && selectedChildId) {
+        addOrUpdateChildDevice(selectedChildId, fullDevice);
+        setPairedChildSummary({
+          name: selectedChildObj?.name || finalChildName,
+          avatar: selectedChildObj?.avatar || finalAvatar,
+          age: selectedChildObj?.age || finalAge,
+          deviceModel: `${deviceName} (${fullDevice.model})`,
+          deviceId: fullDevice.deviceId,
+        });
+        if (onSuccess) onSuccess(selectedChildId, selectedChildObj?.name || finalChildName);
+      } else {
+        addChild({
+          id: session.childId,
+          name: finalChildName,
+          avatar: finalAvatar,
+          age: finalAge,
+          birthYear: finalBirthYear,
+          status: "online",
+          battery: fullDevice.battery || 100,
+          devices: [fullDevice],
+          activeDeviceId: fullDevice.deviceId,
+        });
+        setPairedChildSummary({
+          name: finalChildName,
+          avatar: finalAvatar,
+          age: finalAge,
+          deviceModel: `${deviceName} (${fullDevice.model})`,
+          deviceId: fullDevice.deviceId,
+        });
+        if (onSuccess) onSuccess(session.childId, finalChildName);
+      }
+
+      setIsPairedSuccess(true);
+      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+      syncAllChildrenFromCloud();
+
+      setTimeout(() => {
+        onClose();
+      }, 3000);
+    };
+
+    const unsub = subscribePairingSession(generatedSession.code, (session) => {
+      if (session && session.status === 'paired') {
+        finalizePinSuccess(session);
+      }
+    });
+
+    return () => unsub();
+  }, [generatedSession?.code, activeTab, isPairedSuccess, targetChildMode, selectedChildId, selectedChildObj, newChildName, newChildAvatar, newChildAge]);
+
+  // Copy PIN helper
+  const handleCopyPin = () => {
+    if (!generatedSession?.code) return;
+    navigator.clipboard.writeText(generatedSession.code);
+    setCopiedPin(true);
+    setTimeout(() => setCopiedPin(false), 2000);
+  };
+
+  // ─── TAB 2: Parent sends request using Kid's 6-digit code ─────────────────
   const handleSendPairingRequest = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = kidCode.replace(/\s+/g, "").trim();
     if (clean.length !== 6) {
-      setKidError("Vui lòng nhập đủ 6 chữ số hiển thị trên điện thoại của con.");
+      setKidCodeError("Vui lòng nhập đủ 6 chữ số hiển thị trên điện thoại của con.");
       return;
     }
 
-    setIsRequesting(true);
-    setKidError(null);
+    setIsRequestingKidCode(true);
+    setKidCodeError(null);
 
     try {
       const parentId = currentParent?.uid || getActiveParentId();
@@ -119,27 +302,26 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       const res = await requestPairingWithKidCode(clean, parentId, parentName);
 
       if (!res.success || !res.session) {
-        setIsRequesting(false);
-        setKidError(res.error || "Mã không đúng hoặc đã hết hạn. Vui lòng kiểm tra lại!");
+        setIsRequestingKidCode(false);
+        setKidCodeError(res.error || "Mã không đúng hoặc đã hết hạn. Vui lòng kiểm tra lại!");
         return;
       }
 
-      setPendingSession(res.session);
+      setPendingKidSession(res.session);
       const remaining = Math.max(0, Math.floor((res.session.expiresAt - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      setIsWaitingApproval(true);
+      setKidCodeTimeLeft(remaining);
+      setIsWaitingKidApproval(true);
     } catch (err: any) {
-      setKidError(err.message || "Lỗi kết nối máy chủ. Vui lòng thử lại!");
+      setKidCodeError(err.message || "Lỗi kết nối máy chủ. Vui lòng thử lại!");
     } finally {
-      setIsRequesting(false);
+      setIsRequestingKidCode(false);
     }
   };
 
-  // Step 2: Real-time listener waiting for kid device to click "Chấp nhận"
+  // Real-time listener for Tab 2 approval from Kid device
   useEffect(() => {
-    if (!isWaitingApproval || !pendingSession?.code) return;
-    const cleanCode = pendingSession.code;
-    const { db, rtdb } = getFirebaseInstance();
+    if (!isWaitingKidApproval || !pendingKidSession?.code) return;
+    const cleanCode = pendingKidSession.code;
 
     let isCompleted = false;
 
@@ -148,29 +330,20 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       isCompleted = true;
 
       const parentId = currentParent?.uid || getActiveParentId();
-
       let cloudData: Record<string, any> | null = null;
       try {
-        cloudData = await loadChildDataFromCloud(parentId, pendingSession.childId);
+        cloudData = await loadChildDataFromCloud(parentId, pendingKidSession.childId);
       } catch (_) {}
 
-      const childName = cloudData?.name || data?.childName || pendingSession.childName || "Bé yêu";
-      const childAvatar =
-        cloudData?.avatar ||
-        data?.childAvatar ||
-        pendingSession.childAvatar ||
-        "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150";
-      const childAge = cloudData?.age || data?.childAge || pendingSession.childAge || 8;
-      const childBirthYear =
-        cloudData?.birthYear ||
-        data?.childBirthYear ||
-        pendingSession.childBirthYear ||
-        new Date().getFullYear() - childAge;
+      const childName = cloudData?.name || data?.childName || pendingKidSession.childName || "Bé yêu";
+      const childAvatar = cloudData?.avatar || data?.childAvatar || pendingKidSession.childAvatar || DEFAULT_AVATARS[0];
+      const childAge = cloudData?.age || data?.childAge || pendingKidSession.childAge || 8;
+      const childBirthYear = cloudData?.birthYear || data?.childBirthYear || pendingKidSession.childBirthYear || new Date().getFullYear() - childAge;
 
-      const devData = data?.childDeviceInfo || pendingSession.childDeviceInfo;
+      const devData = data?.childDeviceInfo || pendingKidSession.childDeviceInfo;
       const deviceName = devData?.deviceName || devData?.model || "Điện thoại của bé";
       const fullDevice: ChildDeviceInfo = {
-        deviceId: devData?.deviceId || "dev_" + pendingSession.childId,
+        deviceId: devData?.deviceId || ("dev_" + pendingKidSession.childId),
         hardwareIdType: devData?.hardwareIdType || "imei",
         deviceName: deviceName,
         model: devData?.model || "Android Device",
@@ -184,160 +357,59 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
         pairedAt: new Date().toISOString(),
         status: "online",
         battery: 100,
+        isPrimary: true,
       };
 
-      if (targetChildMode === "existing" && selectedExistingChildId) {
-        addOrUpdateChildDevice(selectedExistingChildId, fullDevice);
-        const existingChild = state.children.find((c) => c.id === selectedExistingChildId);
+      if (targetChildMode === "existing" && selectedChildId) {
+        addOrUpdateChildDevice(selectedChildId, fullDevice);
         setPairedChildSummary({
-          name: existingChild?.name || childName,
-          avatar: existingChild?.avatar || childAvatar,
-          age: existingChild?.age || childAge,
-          birthYear: existingChild?.birthYear || childBirthYear,
+          name: selectedChildObj?.name || childName,
+          avatar: selectedChildObj?.avatar || childAvatar,
+          age: selectedChildObj?.age || childAge,
           deviceModel: `${deviceName} (${fullDevice.model})`,
         });
-
-        if (onSuccess) {
-          onSuccess(selectedExistingChildId, existingChild?.name || childName);
-        }
+        if (onSuccess) onSuccess(selectedChildId, selectedChildObj?.name || childName);
       } else {
         addChild({
-          id: pendingSession.childId,
+          id: pendingKidSession.childId,
           name: childName,
           avatar: childAvatar,
           age: childAge,
           birthYear: childBirthYear,
-          phone: fullDevice.phoneNumber || undefined,
           status: "online",
-          battery: cloudData?.battery ?? 100,
+          battery: 100,
           devices: [fullDevice],
           activeDeviceId: fullDevice.deviceId,
         });
-
         setPairedChildSummary({
           name: childName,
           avatar: childAvatar,
           age: childAge,
-          birthYear: childBirthYear,
           deviceModel: `${deviceName} (${fullDevice.model})`,
         });
-
-        if (onSuccess) {
-          onSuccess(pendingSession.childId, childName);
-        }
+        if (onSuccess) onSuccess(pendingKidSession.childId, childName);
       }
 
-      setIsWaitingApproval(false);
+      setIsWaitingKidApproval(false);
       setIsPairedSuccess(true);
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+      syncAllChildrenFromCloud();
 
       setTimeout(() => {
         onClose();
-      }, 2500);
+      }, 3000);
     };
 
-    const handleRejected = () => {
-      if (isCompleted) return;
-      setIsWaitingApproval(false);
-      setKidError("Bé đã bấm 'Từ chối' trên máy con. Vui lòng tạo mã mới trên máy con nếu muốn kết nối lại.");
-    };
-
-    // 1. RTDB streaming listener
-    let unsubRtdb: (() => void) | null = null;
-    if (isFirebaseConfigured() && rtdb) {
-      try {
-        unsubRtdb = rtdbOnValue(rtdbRef(rtdb, `pairings/${cleanCode}`), (snap) => {
-          if (snap.exists()) {
-            const val = snap.val();
-            if (val.status === "paired") {
-              finalizeSuccess(val);
-            } else if (val.status === "rejected") {
-              handleRejected();
-            }
-          }
-        });
-      } catch (e) {
-        console.warn("RTDB pair listener error:", e);
-      }
-    }
-
-    // 2. Chủ động thăm dò RTDB mỗi 1.2s đề phòng rớt kết nối WebSocket
-    const rtdbTimer = setInterval(async () => {
-      if (typeof window === "undefined" || isCompleted) return;
-      if (isFirebaseConfigured() && rtdb) {
-        try {
-          const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${cleanCode}`));
-          if (snap.exists()) {
-            const val = snap.val();
-            if (val.status === "paired") {
-              finalizeSuccess(val);
-            } else if (val.status === "rejected") {
-              handleRejected();
-            }
-          }
-        } catch (_) {}
-      }
-    }, 1200);
-
-    // 3. Lắng nghe EventBus tức thì (< 1ms khi test cục bộ trên cùng máy)
-    const unsubEventBus = parentProEventBus.subscribe<any>('PAIRING_APPROVED', (payload) => {
-      if (payload?.code === cleanCode) {
-        console.log('[PairModal] ⚡ Bé đã duyệt kết nối qua EventBus:', payload);
-        finalizeSuccess(payload);
+    const unsub = subscribePairingSession(cleanCode, (session) => {
+      if (session && session.status === 'paired') {
+        finalizeSuccess(session);
       }
     });
 
-    const unsubRejected = parentProEventBus.subscribe<any>('PAIRING_REJECTED', (payload) => {
-      if (payload?.code === cleanCode) {
-        handleRejected();
-      }
-    });
+    return () => unsub();
+  }, [isWaitingKidApproval, pendingKidSession]);
 
-    // 4. Firestore listener (bảo vệ lỗi nếu API chưa kích hoạt)
-    let unsubFirestore: (() => void) | null = null;
-    if (isFirebaseConfigured() && db) {
-      try {
-        unsubFirestore = onSnapshot(doc(db, "pairings", cleanCode), (snap) => {
-          if (snap.exists()) {
-            const data = snap.data();
-            if (data.status === "paired") {
-              finalizeSuccess(data);
-            } else if (data.status === "rejected") {
-              handleRejected();
-            }
-          }
-        }, () => {});
-      } catch (_) {}
-    }
-
-    // 5. LocalStorage polling fallback (same device / offline demo)
-    const localTimer = setInterval(() => {
-      if (typeof window === "undefined" || isCompleted) return;
-      const raw = localStorage.getItem("parent_pro_pairing_sessions");
-      if (raw) {
-        try {
-          const sessions = JSON.parse(raw);
-          const s = sessions[cleanCode];
-          if (s?.status === "paired") {
-            finalizeSuccess(s);
-          } else if (s?.status === "rejected") {
-            handleRejected();
-          }
-        } catch (_) {}
-      }
-    }, 1200);
-
-    return () => {
-      if (unsubRtdb) unsubRtdb();
-      if (unsubFirestore) unsubFirestore();
-      clearInterval(rtdbTimer);
-      clearInterval(localTimer);
-      unsubEventBus();
-      unsubRejected();
-    };
-  }, [isWaitingApproval, pendingSession, currentParent?.uid, addChild, onSuccess, onClose]);
-
-  // Connect using share code provided by another Parent (Tab 2)
+  // ─── TAB 3: Connect using Co-Parent Share Code ─────────────────────────────
   const handleAcceptShareCode = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = shareCode.replace(/\s+/g, "").trim();
@@ -368,10 +440,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       } catch (_) {}
 
       const childName = cloudData?.name || s.childName || "Bé yêu";
-      const childAvatar =
-        cloudData?.avatar ||
-        s.childAvatar ||
-        "https://images.unsplash.com/photo-1543332164-6e82f355badc?w=150";
+      const childAvatar = cloudData?.avatar || s.childAvatar || DEFAULT_AVATARS[0];
       const childAge = cloudData?.age || 8;
       const childBirthYear = cloudData?.birthYear || new Date().getFullYear() - childAge;
 
@@ -389,20 +458,18 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
         name: childName,
         avatar: childAvatar,
         age: childAge,
-        birthYear: childBirthYear,
         deviceModel: "Được chia sẻ từ " + (s.fromParentName || "Phụ huynh khác"),
       });
 
       setIsPairedSuccess(true);
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+      syncAllChildrenFromCloud();
 
-      if (onSuccess) {
-        onSuccess(s.childId, childName);
-      }
+      if (onSuccess) onSuccess(s.childId, childName);
 
       setTimeout(() => {
         onClose();
-      }, 2500);
+      }, 3000);
     } catch (err: any) {
       setShareError(err.message || "Lỗi kết nối máy chủ. Vui lòng thử lại!");
     } finally {
@@ -411,18 +478,18 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-      <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 space-y-4">
+    <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+      <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 space-y-4 max-h-[92vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center space-x-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-blue-500/25">
               <KeyRound size={20} />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Ghép Đôi Thiết Bị Con</h3>
+              <h3 className="text-sm font-black text-slate-900">Kết Nối Máy Của Con</h3>
               <p className="text-[11px] text-slate-500 font-medium">
-                Duy nhất qua mã 6 số do máy con tạo
+                Quản lý tập trung từ điện thoại cha mẹ
               </p>
             </div>
           </div>
@@ -436,181 +503,79 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
 
         {/* Success Screen */}
         {isPairedSuccess ? (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-6 text-center space-y-3 animate-in zoom-in-95">
-            <div className="w-16 h-16 mx-auto bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/30">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-6 text-center space-y-3.5 animate-in zoom-in-95">
+            <div className="w-16 h-16 mx-auto bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/30 animate-bounce">
               <Check size={36} strokeWidth={3} />
             </div>
-            <h4 className="text-base font-black text-emerald-900">Ghép Đôi Thành Công!</h4>
-            {pairedChildSummary?.avatar && (
-              <div className="flex justify-center my-1">
-                <img
-                  src={pairedChildSummary.avatar}
-                  alt={pairedChildSummary.name}
-                  className="w-14 h-14 rounded-2xl object-cover ring-2 ring-emerald-400 shadow-sm"
-                />
-              </div>
-            )}
-            <p className="text-xs text-emerald-800 font-medium leading-relaxed">
-              Đã nhận hồ sơ của bé <strong>{pairedChildSummary?.name || "Bé"}</strong>
-              {pairedChildSummary?.age ? ` (${pairedChildSummary.age} tuổi)` : ""}!
-              <br />
-              <span className="text-[11px] text-emerald-600">
-                Hai thiết bị đã liên kết và đang đồng bộ dữ liệu thời gian thực.
-              </span>
-            </p>
-          </div>
-        ) : isWaitingApproval && pendingSession ? (
-          /* =========================================================================
-             WAITING FOR KID CONFIRMATION SCREEN
-             ========================================================================= */
-          <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
-            {/* Pulsing indicator */}
-            <div className="relative w-20 h-20 mx-auto">
-              <span className="absolute inset-0 rounded-full bg-blue-400/30 animate-ping" />
-              <div className="relative w-20 h-20 rounded-full bg-blue-50 border-2 border-blue-300 flex items-center justify-center text-blue-600 shadow-md">
-                <Smartphone size={32} className="animate-bounce" />
-              </div>
-            </div>
-
             <div className="space-y-1">
-              <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10.5px] font-black uppercase tracking-wider">
-                <Radio size={12} className="text-blue-600 animate-pulse" />
-                ĐÃ GỬI YÊU CẦU GHÉP ĐÔI
-              </span>
-              <h4 className="text-base font-black text-slate-900 pt-1">
-                Đang chờ bé "{pendingSession.childName}" xác nhận...
-              </h4>
-              <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                Vui lòng mở điện thoại của con và bấm nút{" "}
-                <strong className="text-blue-600 font-bold">[Chấp nhận]</strong> trên thông báo xuất
-                hiện để hoàn tất ghép đôi.
+              <h4 className="text-base font-black text-emerald-950">Ghép Đôi Thành Công!</h4>
+              <p className="text-xs text-emerald-800 font-medium">
+                Máy con đã kết nối và chuyển sang chế độ bảo vệ.
               </p>
             </div>
 
-            {/* Device Info Card from Kid */}
-            {pendingSession.childDeviceInfo && (
-              <div className="bg-blue-50/80 border border-blue-200 rounded-2xl p-3 text-left space-y-1 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-blue-900 flex items-center gap-1.5">
-                    <Smartphone size={14} className="text-blue-600" />
-                    <span>{pendingSession.childDeviceInfo.deviceName || pendingSession.childDeviceInfo.model}</span>
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 uppercase">
-                    {pendingSession.childDeviceInfo.hardwareIdType || "IMEI"}
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-600 font-mono">
-                  Mã phần cứng: <span className="font-bold text-slate-800">{pendingSession.childDeviceInfo.deviceId}</span>
-                </div>
-                {pendingSession.childDeviceInfo.phoneNumber && (
-                  <div className="text-[11px] text-emerald-700 font-bold">
-                    📞 Số SIM: {pendingSession.childDeviceInfo.phoneNumber}
-                  </div>
-                )}
+            {pairedChildSummary?.avatar && (
+              <div className="flex justify-center my-2">
+                <img
+                  src={pairedChildSummary.avatar}
+                  alt={pairedChildSummary.name}
+                  className="w-16 h-16 rounded-2xl object-cover ring-4 ring-emerald-400/40 shadow-sm"
+                />
               </div>
             )}
 
-            {/* Multi-Device Support: Link to existing child or create new */}
-            {state.children.length > 0 && (
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-left space-y-2">
-                <label className="text-xs font-bold text-slate-800 block">
-                  Liên kết máy này vào hồ sơ con:
-                </label>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setTargetChildMode("existing")}
-                    className={`py-2 px-2.5 rounded-xl border text-center font-bold transition cursor-pointer ${
-                      targetChildMode === "existing"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                    }`}
-                  >
-                    Gán cho con đã có
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTargetChildMode("new")}
-                    className={`py-2 px-2.5 rounded-xl border text-center font-bold transition cursor-pointer ${
-                      targetChildMode === "new"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-xs"
-                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                    }`}
-                  >
-                    Tạo bé mới
-                  </button>
-                </div>
-
-                {targetChildMode === "existing" && (
-                  <div className="pt-1">
-                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                      Chọn bé sở hữu thiết bị này:
-                    </label>
-                    <select
-                      value={selectedExistingChildId}
-                      onChange={(e) => setSelectedExistingChildId(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {state.children.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.devices?.length || 1} máy)
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[10px] text-slate-400 mt-1 italic">
-                      Một tài khoản bé có thể gắn nhiều máy (máy 1, máy 2...) mà không bị nhầm lẫn.
-                    </p>
-                  </div>
-                )}
+            <div className="bg-white/80 rounded-2xl p-3 border border-emerald-200/80 text-left space-y-1">
+              <div className="text-xs font-bold text-slate-900 flex items-center justify-between">
+                <span>Hồ sơ bé:</span>
+                <span className="text-emerald-700 font-extrabold">{pairedChildSummary?.name} ({pairedChildSummary?.age} tuổi)</span>
               </div>
-            )}
-
-            {/* Countdown timer */}
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-slate-600 font-medium">
-                <Clock size={15} className="text-blue-600" />
-                <span>Thời gian hiệu lực còn lại:</span>
+              <div className="text-xs text-slate-600 flex items-center justify-between">
+                <span>Thiết bị:</span>
+                <span className="text-slate-800 font-bold truncate max-w-[170px]">{pairedChildSummary?.deviceModel || "Điện thoại của bé"}</span>
               </div>
-              <span className="font-mono font-black text-blue-700 text-sm bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200">
-                {formatTimer(timeLeft)}
-              </span>
-            </div>
-
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 text-left space-y-0.5">
-              <p className="font-bold text-amber-900">🔔 Lưu ý bảo mật:</p>
-              <p>• Mã số này dùng 1 lần và hết hạn sau 15 phút.</p>
-              <p>• Nếu kết nối máy khác, cần tạo mã mới trên máy con.</p>
+              <div className="text-[10.5px] text-emerald-600 font-bold flex items-center gap-1 pt-1 border-t border-slate-100">
+                <ShieldCheck size={13} />
+                <span>Đang điều khiển & giám sát trực tiếp từ máy Cha Mẹ</span>
+              </div>
             </div>
 
             <button
-              type="button"
-              onClick={() => {
-                setIsWaitingApproval(false);
-                setPendingSession(null);
-                setKidError(null);
-              }}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition active:scale-98 cursor-pointer"
+              onClick={onClose}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-98 cursor-pointer"
             >
-              Hủy yêu cầu & nhập mã khác
+              Hoàn tất
             </button>
           </div>
         ) : (
-          /* =========================================================================
-             INPUT 6-DIGIT CODE FROM KID SCREEN (ONLY METHOD)
-             ========================================================================= */
           <>
-            {/* Mode Selector */}
-            <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl text-[11px] font-bold">
+            {/* Tab Navigation */}
+            <div className="grid grid-cols-3 p-1 bg-slate-100 rounded-2xl text-[10.5px] font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("parent_generate");
+                  setKidCodeError(null);
+                  setShareError(null);
+                }}
+                className={`py-2 rounded-xl transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                  activeTab === "parent_generate"
+                    ? "bg-white text-blue-700 shadow-xs font-black"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Zap size={13} className={activeTab === "parent_generate" ? "text-amber-500" : ""} />
+                <span>Tạo mã cho con</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
                   setActiveTab("from_kid");
-                  setKidError(null);
+                  setKidCodeError(null);
                   setShareError(null);
                 }}
-                className={`py-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer ${
+                className={`py-2 rounded-xl transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
                   activeTab === "from_kid"
-                    ? "bg-white text-blue-700 shadow-xs"
+                    ? "bg-white text-blue-700 shadow-xs font-black"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
@@ -621,12 +586,12 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
                 type="button"
                 onClick={() => {
                   setActiveTab("from_share");
-                  setKidError(null);
+                  setKidCodeError(null);
                   setShareError(null);
                 }}
-                className={`py-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer ${
+                className={`py-2 rounded-xl transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
                   activeTab === "from_share"
-                    ? "bg-white text-indigo-700 shadow-xs"
+                    ? "bg-white text-indigo-700 shadow-xs font-black"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
@@ -635,92 +600,353 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
               </button>
             </div>
 
-            {/* TAB 1: NHẬP MÃ TỪ MÁY CON (Kid-First Onboarding - DUY NHẤT) */}
-            {activeTab === "from_kid" && (
+            {/* ══════════════════════════════════════════════════════════════════
+                TAB 1: BỐ MẸ TẠO MÃ KẾT NỐI CHO MÁY CON (PRIMARY FLOW)
+                ══════════════════════════════════════════════════════════════════ */}
+            {activeTab === "parent_generate" && (
               <div className="space-y-3.5 py-1">
-                <div className="bg-blue-50/70 border border-blue-200/70 rounded-2xl p-3 space-y-2">
-                  <div className="flex items-center gap-2 text-blue-900 font-bold text-xs">
-                    <UserCheck size={16} className="text-blue-600 shrink-0" />
-                    <span>Quy trình ghép đôi an toàn 2 bước:</span>
-                  </div>
-                  <ol className="text-[11px] text-slate-600 space-y-1 pl-4 list-decimal">
-                    <li>
-                      Mở app <strong>KidCare</strong> trên máy con, tạo hồ sơ và lấy <strong>mã 6 số</strong> (hiệu lực 15 phút, dùng 1 lần).
-                    </li>
-                    <li>
-                      Nhập 6 số vào ô dưới rồi nhấn <strong>Gửi Yêu Cầu Kết Nối</strong>.
-                    </li>
-                    <li>
-                      Bấm <strong>[Chấp nhận]</strong> trên màn hình máy con để hoàn tất.
-                    </li>
-                  </ol>
-                </div>
-
-                <form onSubmit={handleSendPairingRequest} className="space-y-3">
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                      Mã 6 số trên màn hình máy con:
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={7}
-                      value={kidCode}
-                      onChange={(e) => {
-                        const val = e.target.value.replace(/[^0-9\s]/g, "");
-                        setKidCode(val);
-                        setKidError(null);
-                      }}
-                      placeholder="VD: 852 147"
-                      className="w-full text-center text-2xl font-black font-mono tracking-widest px-4 py-3 rounded-2xl border-2 border-slate-200 focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white text-slate-900 shadow-inner"
-                      autoFocus
-                    />
-                    <p className="text-[10px] text-slate-400 text-center mt-1">
-                      ⏱️ Mã có hiệu lực 15 phút và chỉ dùng được 1 lần.
-                    </p>
+                {/* Child target picker */}
+                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800">
+                      Ghép thiết bị này cho:
+                    </span>
+                    {state.children.length > 0 && (
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetChildMode("existing");
+                            setGeneratedSession(null);
+                          }}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition ${
+                            targetChildMode === "existing"
+                              ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                              : "bg-white text-slate-600 border-slate-200"
+                          }`}
+                        >
+                          Bé đã có
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetChildMode("new");
+                            setGeneratedSession(null);
+                          }}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition ${
+                            targetChildMode === "new"
+                              ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                              : "bg-white text-slate-600 border-slate-200"
+                          }`}
+                        >
+                          + Bé mới
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  {kidError && (
-                    <div className="flex items-center gap-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
-                      <AlertCircle size={15} className="shrink-0" />
-                      <span>{kidError}</span>
+                  {targetChildMode === "existing" && state.children.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <select
+                        value={selectedChildId}
+                        onChange={(e) => {
+                          setSelectedChildId(e.target.value);
+                          setGeneratedSession(null);
+                        }}
+                        className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        {state.children.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.age} tuổi • {c.devices?.length || 1} máy đang gắn)
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-slate-400 italic">
+                        Một bé có thể gắn nhiều máy (máy 1, máy 2, máy tính bảng...).
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 pt-1">
+                      <div>
+                        <label className="text-[10.5px] font-bold text-slate-600 block mb-1">
+                          Tên của bé:
+                        </label>
+                        <input
+                          type="text"
+                          value={newChildName}
+                          onChange={(e) => setNewChildName(e.target.value)}
+                          placeholder="Ví dụ: Bé An, Bé Bống..."
+                          className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-900"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10.5px] font-bold text-slate-600 block mb-1">
+                            Tuổi của bé:
+                          </label>
+                          <select
+                            value={newChildAge}
+                            onChange={(e) => setNewChildAge(Number(e.target.value))}
+                            className="w-full p-2 text-xs font-bold rounded-xl border border-slate-300 bg-white text-slate-900"
+                          >
+                            {Array.from({ length: 15 }, (_, i) => i + 4).map((a) => (
+                              <option key={a} value={a}>
+                                {a} tuổi
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10.5px] font-bold text-slate-600 block mb-1">
+                            Giới tính:
+                          </label>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setNewChildGender("boy")}
+                              className={`flex-1 py-1.5 rounded-xl border text-xs font-bold transition ${
+                                newChildGender === "boy"
+                                  ? "bg-blue-600 text-white border-blue-600"
+                                  : "bg-white text-slate-700 border-slate-200"
+                              }`}
+                            >
+                              👦 Nam
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNewChildGender("girl")}
+                              className={`flex-1 py-1.5 rounded-xl border text-xs font-bold transition ${
+                                newChildGender === "girl"
+                                  ? "bg-pink-600 text-white border-pink-600"
+                                  : "bg-white text-slate-700 border-slate-200"
+                              }`}
+                            >
+                              👧 Nữ
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
+                </div>
 
+                {/* The Generated Code Display */}
+                {isGeneratingPin ? (
+                  <div className="py-8 flex flex-col items-center justify-center space-y-2">
+                    <Loader2 size={28} className="animate-spin text-blue-600" />
+                    <span className="text-xs text-slate-500 font-bold">Đang tạo mã kết nối bảo mật...</span>
+                  </div>
+                ) : generatedSession?.code ? (
+                  <div className="bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-purple-500/10 border-2 border-blue-200 rounded-3xl p-4 text-center space-y-3 relative overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black uppercase tracking-wider">
+                        <Radio size={11} className="text-blue-600 animate-pulse" />
+                        MÃ KẾT NỐI MÁY CON
+                      </span>
+                      <span className="text-[11px] font-mono font-black text-blue-700 bg-white px-2 py-0.5 rounded-lg border border-blue-200 flex items-center gap-1">
+                        <Clock size={12} />
+                        {formatTimer(pinTimeLeft)}
+                      </span>
+                    </div>
+
+                    {/* BIG 6 DIGITS */}
+                    <div className="py-1">
+                      <div className="text-3xl sm:text-4xl font-black font-mono tracking-widest text-slate-900 select-all flex items-center justify-center gap-2">
+                        <span className="px-2.5 py-1.5 rounded-2xl bg-white border-2 border-blue-200 shadow-xs">
+                          {generatedSession.code.slice(0, 3)}
+                        </span>
+                        <span className="text-slate-300 font-light">-</span>
+                        <span className="px-2.5 py-1.5 rounded-2xl bg-white border-2 border-blue-200 shadow-xs">
+                          {generatedSession.code.slice(3, 6)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyPin}
+                        className="px-3.5 py-1.5 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                      >
+                        {copiedPin ? (
+                          <>
+                            <CheckCheck size={14} className="text-emerald-600" />
+                            <span className="text-emerald-700">Đã chép!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={14} className="text-slate-500" />
+                            <span>Sao chép</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleGeneratePin}
+                        className="px-3.5 py-1.5 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                        title="Tạo mã 6 số khác"
+                      >
+                        <RefreshCw size={13} className="text-slate-500" />
+                        <span>Đổi mã</span>
+                      </button>
+                    </div>
+
+                    {/* Instructions Card */}
+                    <div className="bg-white/90 rounded-2xl p-3 text-left space-y-1.5 border border-blue-100 shadow-2xs">
+                      <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs">
+                        <Smartphone size={15} className="text-blue-600 shrink-0" />
+                        <span>Chỉ cần 1 bước trên điện thoại con:</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        Mở app <strong>KidCare</strong> trên máy con ➔ Nhập <strong>{generatedSession.code}</strong> vào ô 6 số ➔ <strong>Xong ngay!</strong>
+                      </p>
+                      <div className="pt-1 border-t border-slate-100 flex items-center gap-1.5 text-[10.5px] text-emerald-700 font-bold">
+                        <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                        <span>Không cần tài khoản Google • Không cần mật khẩu</span>
+                      </div>
+                    </div>
+
+                    {/* Pulsing waiting radar */}
+                    <div className="flex items-center justify-center gap-2 text-[11px] text-blue-700 font-medium pt-1">
+                      <Loader2 size={13} className="animate-spin text-blue-600" />
+                      <span>Đang chờ điện thoại của con nhập mã...</span>
+                    </div>
+                  </div>
+                ) : (
                   <button
-                    type="submit"
-                    disabled={isRequesting || kidCode.replace(/\s+/g, "").length !== 6}
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
+                    type="button"
+                    onClick={handleGeneratePin}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
                   >
-                    {isRequesting ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        <span>Đang gửi yêu cầu tới máy con...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        <span>Gửi Yêu Cầu Kết Nối</span>
-                        <ArrowRight size={14} />
-                      </>
-                    )}
+                    <Sparkles size={16} />
+                    <span>Tạo Mã Kết Nối Mới</span>
                   </button>
-                </form>
+                )}
               </div>
             )}
 
-            {/* TAB 2: NHẬN MÃ CHIA SẺ TỪ PHỤ HUYNH KHÁC */}
+            {/* ══════════════════════════════════════════════════════════════════
+                TAB 2: NHẬP MÃ DO MÁY CON TẠO (REVERSE FLOW)
+                ══════════════════════════════════════════════════════════════════ */}
+            {activeTab === "from_kid" && (
+              <div className="space-y-3.5 py-1">
+                {isWaitingKidApproval && pendingKidSession ? (
+                  <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
+                    <div className="relative w-16 h-16 mx-auto">
+                      <span className="absolute inset-0 rounded-full bg-blue-400/30 animate-ping" />
+                      <div className="relative w-16 h-16 rounded-full bg-blue-50 border-2 border-blue-300 flex items-center justify-center text-blue-600 shadow-md">
+                        <Smartphone size={26} className="animate-bounce" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10.5px] font-black uppercase tracking-wider">
+                        <Radio size={12} className="text-blue-600 animate-pulse" />
+                        ĐÃ GỬI YÊU CẦU GHÉP ĐÔI
+                      </span>
+                      <h4 className="text-sm font-black text-slate-900 pt-1">
+                        Đang chờ bé "{pendingKidSession.childName}" xác nhận...
+                      </h4>
+                      <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
+                        Mở máy con và bấm nút{" "}
+                        <strong className="text-blue-600 font-bold">[Chấp nhận]</strong> trên thông báo.
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-2.5 flex items-center justify-between text-xs">
+                      <span className="text-slate-600 font-medium">Thời gian còn lại:</span>
+                      <span className="font-mono font-black text-blue-700 text-sm bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200">
+                        {formatTimer(kidCodeTimeLeft)}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWaitingKidApproval(false);
+                        setPendingKidSession(null);
+                        setKidCodeError(null);
+                      }}
+                      className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+                    >
+                      Hủy & nhập mã khác
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-blue-50/70 border border-blue-200/70 rounded-2xl p-3 space-y-1.5">
+                      <div className="flex items-center gap-2 text-blue-900 font-bold text-xs">
+                        <UserCheck size={16} className="text-blue-600 shrink-0" />
+                        <span>Nhập mã 6 số hiển thị trên máy con:</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        Nếu bé đã mở app KidCare và đang hiển thị mã 6 số trên màn hình, hãy nhập vào đây.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleSendPairingRequest} className="space-y-3">
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          maxLength={7}
+                          value={kidCode}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/[^0-9\s]/g, "");
+                            setKidCode(val);
+                            setKidCodeError(null);
+                          }}
+                          placeholder="VD: 852 147"
+                          className="w-full text-center text-2xl font-black font-mono tracking-widest px-4 py-3 rounded-2xl border-2 border-slate-200 focus:border-blue-500 focus:outline-none bg-slate-50 focus:bg-white text-slate-900 shadow-inner"
+                          autoFocus
+                        />
+                      </div>
+
+                      {kidCodeError && (
+                        <div className="flex items-center gap-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                          <AlertCircle size={15} className="shrink-0" />
+                          <span>{kidCodeError}</span>
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={isRequestingKidCode || kidCode.replace(/\s+/g, "").length !== 6}
+                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
+                      >
+                        {isRequestingKidCode ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            <span>Đang gửi yêu cầu...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={16} />
+                            <span>Gửi Yêu Cầu Kết Nối</span>
+                            <ArrowRight size={14} />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════════
+                TAB 3: NHẬN MÃ CHIA SẺ TỪ PHỤ HUYNH KHÁC
+                ══════════════════════════════════════════════════════════════════ */}
             {activeTab === "from_share" && (
               <div className="space-y-3.5 py-1">
                 <div className="bg-indigo-50/70 border border-indigo-200/70 rounded-2xl p-3 space-y-2">
                   <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs">
                     <Share2 size={16} className="text-indigo-600 shrink-0" />
-                    <span>Nhận quyền quản lý từ người thân:</span>
+                    <span>Nhận quyền đồng quản lý từ người thân:</span>
                   </div>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Nếu người thân khác trong gia đình đã kết nối với máy con và chia sẻ mã 6 số cho
-                    bạn, hãy nhập mã vào ô bên dưới.
+                    Nếu bố/mẹ khác trong gia đình đã kết nối với con và tạo mã chia sẻ 6 số, hãy nhập vào đây.
                   </p>
                 </div>
 

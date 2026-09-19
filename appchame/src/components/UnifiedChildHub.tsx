@@ -644,7 +644,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             </div>
 
             {/* MULTI-DEVICE SUPPORT: TÊN MÁY VÀ DANH SÁCH THIẾT BỊ CỦA BÉ */}
-            {activeChild.devices && activeChild.devices.length > 0 && (
+            {activeChild.devices && activeChild.devices.length > 0 ? (
               <div className="pt-2 border-t border-slate-100/80 mt-2 space-y-1 text-center">
                 {activeChild.devices.length > 1 ? (
                   <div className="space-y-1">
@@ -653,7 +653,17 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                         <Smartphone size={13} />
                         <span>Thiết bị của bé ({activeChild.devices.length} máy):</span>
                       </span>
-                      <span className="text-[10px] text-slate-400 font-normal">Chạm để xem</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowPairModal(true);
+                        }}
+                        className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus size={11} />
+                        <span>Thêm máy</span>
+                      </button>
                     </div>
                     <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
                       {activeChild.devices.map((dev, dIdx) => {
@@ -704,17 +714,29 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                           </div>
                         );
                       })}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowPairModal(true);
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl border-2 border-dashed border-blue-200 hover:border-blue-400 hover:bg-blue-50 text-blue-600 text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer h-[38px]"
+                        title="Thêm điện thoại hoặc máy tính bảng cho bé này"
+                      >
+                        <Plus size={13} />
+                        <span>Thêm máy</span>
+                      </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center gap-2 text-[10.5px] text-slate-600 bg-slate-100/70 px-2.5 py-1 rounded-lg">
+                  <div className="flex items-center justify-center gap-2 text-[10.5px] text-slate-600 bg-slate-100/70 px-2.5 py-1 rounded-lg flex-wrap">
                     <Smartphone size={12} className="text-blue-600 shrink-0" />
                     <span className="font-bold text-slate-800">
                       {activeChild.devices[0].deviceName || activeChild.devices[0].model}
                     </span>
                     <span className="text-slate-400">•</span>
                     <span className="font-mono text-slate-500">
-                      {activeChild.devices[0].hardwareIdType?.toUpperCase() || 'IMEI'}: {activeChild.devices[0].deviceId}
+                      {activeChild.devices[0].hardwareIdType?.toUpperCase() || 'IMEI'}: {activeChild.devices[0].deviceId.slice(0, 10)}
                     </span>
                     <button
                       type="button"
@@ -727,12 +749,40 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                         });
                         setNewDeviceNameInput(activeChild.devices![0].deviceName || 'Điện thoại');
                       }}
-                      className="ml-1 text-[10px] text-blue-600 font-bold hover:underline"
+                      className="ml-1 text-[10px] text-blue-600 font-bold hover:underline cursor-pointer"
                     >
                       Sửa tên
                     </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowPairModal(true);
+                      }}
+                      className="text-[10px] text-indigo-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <Plus size={11} />
+                      <span>Thêm máy nữa</span>
+                    </button>
                   </div>
                 )}
+              </div>
+            ) : (
+              <div className="pt-2 border-t border-slate-100/80 mt-2 flex items-center justify-center gap-2 text-[10.5px] text-amber-800 bg-amber-50/80 px-2.5 py-1.5 rounded-xl border border-amber-200/80">
+                <Smartphone size={13} className="text-amber-600 shrink-0" />
+                <span>Chưa có thiết bị nào gắn với bé</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowPairModal(true);
+                  }}
+                  className="ml-1 text-[10.5px] text-blue-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  <Plus size={12} />
+                  <span>Kết nối máy ngay</span>
+                </button>
               </div>
             )}
           </div>

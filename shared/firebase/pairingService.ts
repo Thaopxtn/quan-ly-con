@@ -6,12 +6,14 @@ import {
   set as rtdbSet,
   get as rtdbGet,
   update as rtdbUpdate,
+  onValue as rtdbOnValue,
 } from "firebase/database";
 import { getFirebaseInstance, ensureKidAnonymousAuth } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
 import { parentProEventBus } from "../eventBus";
 
 import { ChildDeviceInfo } from "../types";
+import { registerChildDeviceInCloud } from "./cloudSyncService";
 
 /**
  * Recursively removes undefined values from an object or replaces them with defaults/null
@@ -207,7 +209,13 @@ export async function createChildPairingCode(
   parentId: string,
   parentName: string,
   childId: string,
-  childName: string
+  childName: string,
+  extraChildData?: {
+    age?: number;
+    birthYear?: number;
+    avatar?: string;
+    gender?: "boy" | "girl";
+  }
 ): Promise<PairingSession> {
   const code = generateRandomPin();
   const now = Date.now();
@@ -217,6 +225,10 @@ export async function createChildPairingCode(
     parentName,
     childId,
     childName,
+    childAge: extraChildData?.age,
+    childBirthYear: extraChildData?.birthYear,
+    childAvatar: extraChildData?.avatar,
+    childGender: extraChildData?.gender,
     status: "pending",
     initiator: "parent",
     createdAt: now,
@@ -249,6 +261,7 @@ export async function createChildPairingCode(
 
   return session;
 }
+
 
 // ─── Parent reads kid's code → connects and pulls child data ─────────────────
 
@@ -419,8 +432,21 @@ export async function connectParentWithKidCode(
 
 export async function submitChildPairingCode(
   code: string,
-  deviceMeta: { model: string; osVersion: string }
-): Promise<{ success: boolean; session?: PairingSession; error?: string }> {
+  deviceMeta: {
+    model: string;
+    osVersion: string;
+    deviceId?: string;
+    deviceName?: string;
+    hardwareIdType?: string;
+    manufacturer?: string;
+    androidId?: string;
+    serial?: string;
+    mac?: string;
+    imei?: string;
+    phoneNumber?: string;
+    battery?: number;
+  }
+): Promise<{ success: boolean; session?: PairingSession; kidPairedInfo?: KidPairedInfo; error?: string }> {
   const rl = checkRateLimit();
   if (!rl.allowed) {
     return {
@@ -476,29 +502,50 @@ export async function submitChildPairingCode(
     return { success: false, error: "Mã ghép đôi đã hết hạn (quá 15 phút). Vui lòng tạo mã mới trên máy Cha Mẹ." };
   }
 
-  if (session.status === "paired") {
-    return { success: false, error: "Mã này đã được sử dụng. Vui lòng tạo mã mới." };
+  if (session.status === "paired" && session.used) {
+    return { success: false, error: "Mã này đã được sử dụng rồi. Vui lòng tạo mã mới trên máy Cha Mẹ." };
   }
 
   clearRateLimit();
 
-  const deviceId = "dev_" + Math.random().toString(36).substring(2, 9);
+  const deviceId = (deviceMeta as any)?.deviceId || ("dev_" + Math.random().toString(36).substring(2, 9));
   const sessionToken = session.sessionToken || generateSessionToken();
   session.status = "paired";
+  session.used = true;
+
+  const activeDevName = (deviceMeta as any)?.deviceName || (deviceMeta.model ? `${(deviceMeta as any).manufacturer || ''} ${deviceMeta.model}`.trim() : "Điện thoại của con");
+
   session.childDeviceInfo = {
     deviceId,
-    hardwareIdType: "imei",
-    deviceName: deviceMeta.model || "Thiết bị của con",
+    hardwareIdType: ((deviceMeta as any)?.hardwareIdType as any) || "android_id",
+    deviceName: activeDevName,
     model: deviceMeta.model || "Android Device",
+    manufacturer: (deviceMeta as any)?.manufacturer || "Android",
+    androidId: (deviceMeta as any)?.androidId,
+    serial: (deviceMeta as any)?.serial,
+    mac: (deviceMeta as any)?.mac,
+    imei: (deviceMeta as any)?.imei,
+    phoneNumber: (deviceMeta as any)?.phoneNumber,
     osVersion: deviceMeta.osVersion || "Android",
     pairedAt: new Date().toISOString(),
     status: "online",
+    battery: (deviceMeta as any)?.battery || 100,
+    isPrimary: true,
   };
 
-  // Non-blocking Firebase updates
+  const parentId = session.parentId || "family_primary";
+  const childId = session.childId;
+
+  // 1. Register device directly under parent cloud hierarchy
+  if (parentId && childId) {
+    registerChildDeviceInCloud(parentId, childId, session.childDeviceInfo).catch(() => {});
+  }
+
+  // 2. Non-blocking Firebase updates for pairing session
   if (isFirebaseConfigured() && rtdb) {
     rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), {
       status: "paired",
+      used: true,
       childDeviceInfo: session.childDeviceInfo,
       sessionToken,
     }).catch((e) => console.warn("RTDB update error:", e?.code));
@@ -506,29 +553,119 @@ export async function submitChildPairingCode(
   if (isFirebaseConfigured() && db) {
     updateDoc(doc(db, "pairings", cleanCode), {
       status: "paired",
+      used: true,
       childDeviceInfo: session.childDeviceInfo,
       sessionToken,
     }).catch((e) => console.warn("Firestore update error:", e?.code));
   }
 
+  // 3. Emit event bus for dual simulator / local test
+  parentProEventBus.emit("PAIRING_APPROVED", {
+    code: cleanCode,
+    parentId,
+    childId,
+    childName: session.childName,
+    childDeviceInfo: session.childDeviceInfo,
+    sessionToken,
+  }, "child");
+
   const kidPairedInfo: KidPairedInfo = {
     isPaired: true,
-    parentId: session.parentId || "",
-    parentName: session.parentName || "",
-    childId: session.childId,
+    parentId,
+    parentName: session.parentName || "Bố/Mẹ",
+    childId,
     childName: session.childName,
-    childAge: session.childAge,
+    childAge: session.childAge || 8,
     childBirthYear: session.childBirthYear,
     childAvatar: session.childAvatar,
     childGender: session.childGender,
     pairedAt: session.childDeviceInfo.pairedAt,
     deviceId,
+    deviceName: activeDevName,
+    model: session.childDeviceInfo.model,
+    manufacturer: session.childDeviceInfo.manufacturer,
     sessionToken,
   };
   saveKidDevicePairedInfo(kidPairedInfo);
 
-  return { success: true, session: { ...session, sessionToken } };
+  return { success: true, session: { ...session, sessionToken }, kidPairedInfo };
 }
+
+// ─── Real-time listener for parent waiting for child to enter pairing code ───
+
+export function subscribePairingSession(
+  code: string,
+  onUpdate: (session: PairingSession) => void
+): () => void {
+  const cleanCode = code.replace(/\s+/g, "").trim();
+  const { db, rtdb } = getFirebaseInstance();
+
+  let unsubRtdb: (() => void) | null = null;
+  let unsubFirestore: (() => void) | null = null;
+
+  if (isFirebaseConfigured() && rtdb) {
+    try {
+      const pRef = rtdbRef(rtdb, `pairings/${cleanCode}`);
+      unsubRtdb = rtdbOnValue(pRef, (snap) => {
+        if (snap.exists()) {
+          const val = snap.val() as PairingSession;
+          onUpdate(val);
+        }
+      });
+    } catch (_) {}
+  }
+
+  if (isFirebaseConfigured() && db) {
+    try {
+      const pDoc = doc(db, "pairings", cleanCode);
+      unsubFirestore = onSnapshot(pDoc, (snap) => {
+        if (snap.exists()) {
+          const val = snap.data() as PairingSession;
+          onUpdate(val);
+        }
+      });
+    } catch (_) {}
+  }
+
+  const unsubEventBus = parentProEventBus.subscribe<any>("PAIRING_APPROVED", (evt: any) => {
+    if (evt && (evt.code === cleanCode || !evt.code)) {
+      onUpdate({
+        code: cleanCode,
+        status: "paired",
+        parentId: evt.parentId,
+        childId: evt.childId,
+        childName: evt.childName || "Bé",
+        childDeviceInfo: evt.childDeviceInfo,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 100000,
+        used: true,
+      });
+    }
+  });
+
+  // Local storage polling fallback (demo or same-device)
+  const localTimer = setInterval(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(LOCAL_PAIRING_SESSIONS_KEY);
+      if (raw) {
+        const sessions = JSON.parse(raw);
+        const s = sessions[cleanCode];
+        if (s && s.status === "paired") {
+          onUpdate(s);
+        }
+      }
+    } catch (_) {}
+  }, 1000);
+
+  return () => {
+    if (unsubRtdb) unsubRtdb();
+    if (unsubFirestore) unsubFirestore();
+    clearInterval(localTimer);
+    unsubEventBus();
+  };
+}
+
 
 // ─── Kid creates profile and code (15-min, single use) ───────────────────────
 
