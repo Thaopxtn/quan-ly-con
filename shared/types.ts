@@ -49,6 +49,7 @@ export interface ChildDeviceInfo {
   pairedAt: string;
   lastActive?: string;
   isPrimary?: boolean;
+  deviceType?: 'phone' | 'tablet' | 'pc' | 'laptop' | 'desktop';
   // Per-device isolated dataset
   lat?: number;
   lng?: number;
@@ -59,6 +60,53 @@ export interface ChildDeviceInfo {
   appStatus?: 'active_in_app' | 'in_background' | 'screen_off';
   telemetry?: DeviceTelemetryData;
   settings?: DeviceSpecificSettings;
+  pcTelemetry?: ChildPcTelemetry;
+  pcConfig?: ChildPcControlConfig;
+}
+
+export interface ChildPcAppRule {
+  id: string; // e.g. "roblox", "steam", "minecraft", "league", "discord", "chrome"
+  name: string; // "Roblox Player", "Steam", "Liên Minh Huyền Thoại", "Google Chrome"
+  processName: string; // "RobloxPlayerBeta.exe", "steam.exe", "LeagueClient.exe"
+  category: 'game' | 'study' | 'browser' | 'social' | 'other';
+  status: 'allowed' | 'blocked' | 'time_limited';
+  dailyLimitMinutes?: number;
+  timeUsedMinutes?: number;
+  icon?: string;
+}
+
+export interface ChildPcControlConfig {
+  isLocked: boolean;
+  lockReason?: string;
+  isStudyMode: boolean; // When true: block all games & entertainment, only allow study apps & whitelisted URLs
+  allowedWebsitesOnly?: boolean;
+  whitelistedWebsites?: string[]; // e.g. ['olm.vn', 'vio.edu.vn', 'shub.edu.vn', 'zoom.us', 'khanacademy.org']
+  blacklistedWebsites?: string[]; // e.g. ['facebook.com', 'tiktok.com', 'gamevui.vn', 'youtube.com']
+  dailyLimitMinutes: number; // e.g. 120 (2 hours)
+  curfewStart?: string; // "22:00"
+  curfewEnd?: string; // "06:00"
+  mealtimeLock?: boolean;
+  bedtimeLock?: boolean;
+  blockedApps: ChildPcAppRule[];
+  shutdownScheduledAt?: number | null; // epoch ms if a shutdown is pending
+}
+
+export interface ChildPcTelemetry {
+  deviceId: string;
+  pcName: string; // "PC Bàn Học Của Bách", "Laptop Dell Inspiron"
+  osVersion: string; // "Windows 11 Pro 64-bit", "macOS Sonoma"
+  status: 'online' | 'offline';
+  lastSeen: number;
+  activeWindow?: string; // e.g. "Roblox - Blox Fruits" or "Google Chrome - Giải Toán Lớp 5"
+  activeProcess?: string; // "RobloxPlayerBeta.exe"
+  screenTimeTodayMinutes: number;
+  isLocked: boolean;
+  isStudyMode: boolean;
+  lastScreenshotUrl?: string;
+  cpuUsage?: number;
+  ramUsage?: number;
+  batteryLevel?: number;
+  isCharging?: boolean;
 }
 
 export interface ChildProfile {
@@ -568,6 +616,8 @@ export interface ChildSpecificSettings {
   safeZones?: SafeZone[];
   isLauncherEnabled?: boolean;
   trackingConfig?: TrackingCollectionConfig;
+  pcConfig?: ChildPcControlConfig;
+  pcTelemetry?: ChildPcTelemetry;
 }
 
 export interface TrackingCollectionConfig {

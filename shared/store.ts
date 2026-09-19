@@ -39,6 +39,9 @@ import {
   SharedLessonLink,
   TrackingCollectionConfig,
   DeviceTelemetryData,
+  ChildPcAppRule,
+  ChildPcControlConfig,
+  ChildPcTelemetry,
 } from './types';
 
 export const DEFAULT_TRACKING_CONFIG: TrackingCollectionConfig = {
@@ -103,6 +106,11 @@ import {
   subscribeSafeZonesFromCloud,
   sendCloudChatMessage,
   CloudChatMessage,
+  sendRemotePcCommand,
+  syncChildPcConfigToCloud,
+  subscribeChildPcConfig,
+  uploadChildPcTelemetry,
+  subscribeChildPcTelemetry,
 } from './firebase/cloudSyncService';
 import { getCurrentParentAccount, getFirebaseInstance } from './firebase/firebaseService';
 import { getKidDevicePairedInfo } from './firebase/pairingService';
@@ -266,6 +274,49 @@ export const DEFAULT_HARDWARE_CONTROLS: HardwareControls = {
   schedules: DEFAULT_HARDWARE_SCHEDULES,
 };
 
+export const DEFAULT_PC_APPS: ChildPcAppRule[] = [
+  { id: 'roblox', name: 'Roblox Player', processName: 'RobloxPlayerBeta.exe', category: 'game', status: 'time_limited', dailyLimitMinutes: 45, icon: '🎮' },
+  { id: 'minecraft', name: 'Minecraft', processName: 'javaw.exe', category: 'game', status: 'time_limited', dailyLimitMinutes: 60, icon: '⛏️' },
+  { id: 'steam', name: 'Steam Client', processName: 'steam.exe', category: 'game', status: 'blocked', icon: '💨' },
+  { id: 'league', name: 'Liên Minh Huyền Thoại', processName: 'LeagueClient.exe', category: 'game', status: 'blocked', icon: '⚔️' },
+  { id: 'epic', name: 'Epic Games Launcher', processName: 'EpicGamesLauncher.exe', category: 'game', status: 'blocked', icon: '🎯' },
+  { id: 'discord', name: 'Discord Chat', processName: 'Discord.exe', category: 'social', status: 'allowed', icon: '💬' },
+  { id: 'chrome', name: 'Google Chrome', processName: 'chrome.exe', category: 'browser', status: 'allowed', icon: '🌐' },
+  { id: 'coccoc', name: 'Trình duyệt Cốc Cốc', processName: 'browser.exe', category: 'browser', status: 'allowed', icon: '🟢' },
+];
+
+export const DEFAULT_PC_CONFIG: ChildPcControlConfig = {
+  isLocked: false,
+  lockReason: '',
+  isStudyMode: false,
+  dailyLimitMinutes: 120,
+  curfewStart: '22:00',
+  curfewEnd: '06:00',
+  mealtimeLock: false,
+  bedtimeLock: false,
+  allowedWebsitesOnly: false,
+  whitelistedWebsites: [
+    'olm.vn',
+    'vio.edu.vn',
+    'shub.edu.vn',
+    'zoom.us',
+    'khanacademy.org',
+    'hocmai.vn',
+    'vietjack.com',
+    'google.com',
+    'wikipedia.org'
+  ],
+  blacklistedWebsites: [
+    'facebook.com',
+    'tiktok.com',
+    'gamevui.vn',
+    'roblox.com',
+    'youtube.com'
+  ],
+  blockedApps: DEFAULT_PC_APPS,
+  shutdownScheduledAt: null,
+};
+
 export const createDefaultChildSettings = (
   childId: string,
   overrides?: Partial<ChildSpecificSettings>
@@ -336,6 +387,7 @@ export const createDefaultChildSettings = (
       activeOpenedApp: null,
       activeReminder: null,
       lastVoiceGuide: '',
+      pcConfig: DEFAULT_PC_CONFIG,
       ...overrides,
     };
   }
@@ -405,6 +457,7 @@ export const createDefaultChildSettings = (
       activeOpenedApp: null,
       activeReminder: null,
       lastVoiceGuide: '',
+      pcConfig: DEFAULT_PC_CONFIG,
       ...overrides,
     };
   }
@@ -465,6 +518,7 @@ export const createDefaultChildSettings = (
     isLauncherEnabled: false,
     activeSharedLink: null,
     trackingConfig: DEFAULT_TRACKING_CONFIG,
+    pcConfig: DEFAULT_PC_CONFIG,
     ...overrides,
   };
 };
@@ -1316,6 +1370,46 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
     }, childName);
     childUnsubs.push(unsubStars);
 
+    // --- (G) PC Config Listener ---
+    const unsubPcConfig = subscribeChildPcConfig(parentId, childId, (config) => {
+      if (config) {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
+          return {
+            ...prev,
+            childSettings: {
+              ...prev.childSettings,
+              [childId]: {
+                ...curSettings,
+                pcConfig: config,
+              },
+            },
+          };
+        });
+      }
+    });
+    childUnsubs.push(unsubPcConfig);
+
+    // --- (H) PC Telemetry Listener ---
+    const unsubPcTelemetry = subscribeChildPcTelemetry(parentId, childId, (telemetry) => {
+      if (telemetry) {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
+          return {
+            ...prev,
+            childSettings: {
+              ...prev.childSettings,
+              [childId]: {
+                ...curSettings,
+                pcTelemetry: telemetry,
+              },
+            },
+          };
+        });
+      }
+    });
+    childUnsubs.push(unsubPcTelemetry);
+
     activeParentChildUnsubs.set(childId, childUnsubs);
   });
 }
@@ -1411,6 +1505,44 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
       // Chat handled by FamilyChatModal
     }, childName);
     activeKidUnsubs.push(unsubChat);
+
+    const unsubPcConfig = subscribeChildPcConfig(parentId, effectiveChildId, (config) => {
+      if (config) {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
+          return {
+            ...prev,
+            childSettings: {
+              ...prev.childSettings,
+              [effectiveChildId]: {
+                ...curSettings,
+                pcConfig: config,
+              },
+            },
+          };
+        });
+      }
+    });
+    activeKidUnsubs.push(unsubPcConfig);
+
+    const unsubPcTelemetry = subscribeChildPcTelemetry(parentId, effectiveChildId, (telemetry) => {
+      if (telemetry) {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
+          return {
+            ...prev,
+            childSettings: {
+              ...prev.childSettings,
+              [effectiveChildId]: {
+                ...curSettings,
+                pcTelemetry: telemetry,
+              },
+            },
+          };
+        });
+      }
+    });
+    activeKidUnsubs.push(unsubPcTelemetry);
 
     return;
   }
@@ -2929,6 +3061,180 @@ export const useAppState = () => {
       } else {
         sendRemoteCommandToKid(parentId, targetId, 'extend_time', { minutes }, targetChild?.name).catch(() => {});
       }
+    }
+  };
+
+  // =========================================================================
+  // PC Control Actions (Multi-device Computer Protection)
+  // =========================================================================
+  const lockChildPcNow = (childId?: string, reason?: string) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    const prevPcConfig = currentSettings.pcConfig || DEFAULT_PC_CONFIG;
+    const defaultMsg = 'Bố mẹ đã tạm khóa máy tính. Con hãy nghỉ ngơi hoặc đi học bài nhé!';
+    const updatedPcConfig: ChildPcControlConfig = {
+      ...prevPcConfig,
+      isLocked: true,
+      lockReason: reason || defaultMsg,
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: {
+        ...state.childSettings,
+        [targetId]: {
+          ...currentSettings,
+          pcConfig: updatedPcConfig,
+        },
+      },
+    });
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_lock', {
+        title: 'Máy tính đang bị khóa từ xa',
+        reason: updatedPcConfig.lockReason,
+        description: updatedPcConfig.lockReason,
+      }, targetChild?.name).catch(() => {});
+      syncChildPcConfigToCloud(parentId, targetId, updatedPcConfig, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const unlockChildPcNow = (childId?: string) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    const prevPcConfig = currentSettings.pcConfig || DEFAULT_PC_CONFIG;
+    const updatedPcConfig: ChildPcControlConfig = {
+      ...prevPcConfig,
+      isLocked: false,
+      lockReason: '',
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: {
+        ...state.childSettings,
+        [targetId]: {
+          ...currentSettings,
+          pcConfig: updatedPcConfig,
+        },
+      },
+    });
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_unlock', undefined, targetChild?.name).catch(() => {});
+      syncChildPcConfigToCloud(parentId, targetId, updatedPcConfig, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const shutdownChildPc = (childId?: string, delaySeconds: number = 0) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_shutdown', { delaySeconds }, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const restartChildPc = (childId?: string) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_restart', undefined, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const sleepChildPc = (childId?: string) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_sleep', undefined, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const toggleChildPcStudyMode = (childId?: string, enabled?: boolean) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    const prevPcConfig = currentSettings.pcConfig || DEFAULT_PC_CONFIG;
+    const newStudyMode = enabled !== undefined ? enabled : !prevPcConfig.isStudyMode;
+    const updatedPcConfig: ChildPcControlConfig = {
+      ...prevPcConfig,
+      isStudyMode: newStudyMode,
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: {
+        ...state.childSettings,
+        [targetId]: {
+          ...currentSettings,
+          pcConfig: updatedPcConfig,
+        },
+      },
+    });
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_study_mode', { enabled: newStudyMode }, targetChild?.name).catch(() => {});
+      syncChildPcConfigToCloud(parentId, targetId, updatedPcConfig, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const updateChildPcConfig = (childId: string, partial: Partial<ChildPcControlConfig>) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    const prevPcConfig = currentSettings.pcConfig || DEFAULT_PC_CONFIG;
+    const updatedPcConfig: ChildPcControlConfig = {
+      ...prevPcConfig,
+      ...partial,
+    };
+    saveAndNotify({
+      ...state,
+      childSettings: {
+        ...state.childSettings,
+        [targetId]: {
+          ...currentSettings,
+          pcConfig: updatedPcConfig,
+        },
+      },
+    });
+    if (parentId && targetId) {
+      syncChildPcConfigToCloud(parentId, targetId, updatedPcConfig, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const sendPcBroadcastMessage = (childId: string, message: string, sticker?: string) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+    if (parentId && targetId) {
+      sendRemotePcCommand(parentId, targetId, 'pc_broadcast', {
+        title: 'Lời dặn từ Bố Mẹ',
+        message,
+        sticker: sticker || '📢',
+        timestamp: Date.now(),
+      }, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const updateChildPcTelemetry = (childId: string, telemetry: ChildPcTelemetry) => {
+    const targetId = childId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    saveAndNotify({
+      ...state,
+      childSettings: {
+        ...state.childSettings,
+        [targetId]: {
+          ...currentSettings,
+          pcTelemetry: telemetry,
+        },
+      },
+    });
+    if (parentId && targetId) {
+      uploadChildPcTelemetry(parentId, targetId, telemetry).catch(() => {});
     }
   };
 
@@ -4491,5 +4797,15 @@ export const useAppState = () => {
     updateDeviceTelemetry,
     createNotification,
     sendKidResponseToParent,
+    // PC Remote Control actions
+    lockChildPcNow,
+    unlockChildPcNow,
+    shutdownChildPc,
+    restartChildPc,
+    sleepChildPc,
+    toggleChildPcStudyMode,
+    updateChildPcConfig,
+    sendPcBroadcastMessage,
+    updateChildPcTelemetry,
   };
 };

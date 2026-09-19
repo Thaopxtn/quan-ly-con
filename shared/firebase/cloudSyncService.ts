@@ -27,7 +27,7 @@ import {
 } from "firebase/database";
 import { getFirebaseInstance } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
-import { ChildSpecificSettings, TimeRequest, RoutePoint, SafeZone, ChildDeviceInfo } from "../types";
+import { ChildSpecificSettings, TimeRequest, RoutePoint, SafeZone, ChildDeviceInfo, ChildPcControlConfig, ChildPcTelemetry } from "../types";
 import { debugLogService } from "../services/debugLogService";
 
 export interface CloudChatMessage {
@@ -43,10 +43,11 @@ export interface CloudChatMessage {
 
 export interface CloudSOSAlert {
   active: boolean;
-  time: string;
-  lat: number;
-  lng: number;
-  address: string;
+  senderName?: string;
+  address?: string;
+  lat?: number;
+  lng?: number;
+  time?: string;
   childId: string;
   childName: string;
   updatedAt?: any;
@@ -68,6 +69,14 @@ export type RemoteCommandType =
   | "update_app_rule"
   | "update_app_limit"
   | "ping"
+  | "pc_lock"
+  | "pc_unlock"
+  | "pc_shutdown"
+  | "pc_restart"
+  | "pc_sleep"
+  | "pc_study_mode"
+  | "pc_broadcast"
+  | "pc_block_app"
   | "none";
 
 export interface RemoteCommandData {
@@ -2134,6 +2143,206 @@ export function subscribeSafeZonesFromCloud(
     unsubs.forEach((u) => {
       try { u(); } catch (_) {}
     });
+  };
+}
+
+// =========================================================================
+// 17. PC Control & Remote Management (Multi-platform Computer Protection)
+// =========================================================================
+
+export async function sendRemotePcCommand(
+  parentId: string,
+  childId: string,
+  command: RemoteCommandType,
+  payload?: any,
+  childName?: string
+): Promise<void> {
+  const { rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return;
+
+  const now = Date.now();
+  const cmdId = `pccmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
+  const cmdData: RemoteCommandData = {
+    id: cmdId,
+    command,
+    timestamp: now,
+    payload: payload || null,
+    childId,
+    parentId,
+    childName: childName || "",
+  };
+
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+
+  debugLogService.log({
+    direction: 'parent->cloud',
+    category: 'command',
+    action: `remote_pc_cmd_${command}`,
+    status: 'info',
+    summary: `Phụ huynh gửi lệnh điều khiển máy tính [${command}] đến máy con ${childName || childId}`,
+    childId,
+    childName,
+    payload,
+  });
+
+  if (rtdb) {
+    // 1. Send to primary command channel
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/active`), cmdData).catch(() => {});
+    // 2. Also send to dedicated PC command channel for PC background agents
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/pc_commands/active`), cmdData).catch(() => {});
+  }
+}
+
+export async function syncChildPcConfigToCloud(
+  parentId: string,
+  childId: string,
+  pcConfig: ChildPcControlConfig,
+  childName?: string
+): Promise<void> {
+  const { db, rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return;
+
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  const now = Date.now();
+  const sanitized = sanitizeForRtdb({
+    ...pcConfig,
+    updatedAt: now,
+    childId,
+    parentId,
+    childName: childName || '',
+  });
+
+  if (rtdb) {
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/pcConfig`), sanitized).catch(() => {});
+  }
+
+  if (db && parentId && parentId !== 'family_primary') {
+    try {
+      const docRef = doc(db, 'users', parentId, 'children', childId, 'config', 'pcConfig');
+      await setDoc(docRef, sanitized, { merge: true });
+    } catch (_) {}
+  }
+}
+
+export function subscribeChildPcConfig(
+  parentId: string,
+  childId: string,
+  onConfig: (config: ChildPcControlConfig) => void
+): () => void {
+  const { db, rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return () => {};
+
+  const unsubs: Array<() => void> = [];
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+
+  if (rtdb) {
+    try {
+      const u1 = rtdbOnValue(
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/pcConfig`),
+        (snap) => {
+          if (snap.exists()) {
+            onConfig(snap.val() as ChildPcControlConfig);
+          }
+        },
+        () => {}
+      );
+      unsubs.push(u1);
+    } catch (_) {}
+  }
+
+  if (db && parentId && parentId !== 'family_primary') {
+    try {
+      const docRef = doc(db, 'users', parentId, 'children', childId, 'config', 'pcConfig');
+      const uFs = onSnapshot(
+        docRef,
+        (snap) => {
+          if (snap.exists()) {
+            onConfig(snap.data() as ChildPcControlConfig);
+          }
+        },
+        () => {}
+      );
+      unsubs.push(uFs);
+    } catch (_) {}
+  }
+
+  return () => {
+    unsubs.forEach((u) => { try { u(); } catch (_) {} });
+  };
+}
+
+export async function uploadChildPcTelemetry(
+  parentId: string,
+  childId: string,
+  telemetry: ChildPcTelemetry
+): Promise<void> {
+  const { db, rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return;
+
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  const now = Date.now();
+  const sanitized = sanitizeForRtdb({
+    ...telemetry,
+    lastSeen: now,
+    updatedAt: now,
+  });
+
+  if (rtdb) {
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/pcTelemetry`), sanitized).catch(() => {});
+  }
+
+  if (db && parentId && parentId !== 'family_primary') {
+    try {
+      const docRef = doc(db, 'users', parentId, 'children', childId, 'telemetry', 'pc');
+      await setDoc(docRef, sanitized, { merge: true });
+    } catch (_) {}
+  }
+}
+
+export function subscribeChildPcTelemetry(
+  parentId: string,
+  childId: string,
+  onTelemetry: (telemetry: ChildPcTelemetry) => void
+): () => void {
+  const { db, rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return () => {};
+
+  const unsubs: Array<() => void> = [];
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+
+  if (rtdb) {
+    try {
+      const u1 = rtdbOnValue(
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/pcTelemetry`),
+        (snap) => {
+          if (snap.exists()) {
+            onTelemetry(snap.val() as ChildPcTelemetry);
+          }
+        },
+        () => {}
+      );
+      unsubs.push(u1);
+    } catch (_) {}
+  }
+
+  if (db && parentId && parentId !== 'family_primary') {
+    try {
+      const docRef = doc(db, 'users', parentId, 'children', childId, 'telemetry', 'pc');
+      const uFs = onSnapshot(
+        docRef,
+        (snap) => {
+          if (snap.exists()) {
+            onTelemetry(snap.data() as ChildPcTelemetry);
+          }
+        },
+        () => {}
+      );
+      unsubs.push(uFs);
+    } catch (_) {}
+  }
+
+  return () => {
+    unsubs.forEach((u) => { try { u(); } catch (_) {} });
   };
 }
 

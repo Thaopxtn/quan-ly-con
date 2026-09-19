@@ -20,6 +20,7 @@ const SosMonitorScreen = lazy(() => import('./modules/sos/SosMonitorScreen').the
 const PremiumScreen = lazy(() => import('./modules/premium/PremiumScreen').then((m) => ({ default: m.PremiumScreen })));
 const SettingsScreen = lazy(() => import('./modules/settings/SettingsScreen').then((m) => ({ default: m.SettingsScreen })));
 const RemoteControlCenter = lazy(() => import('./modules/remote/RemoteControlCenter').then((m) => ({ default: m.RemoteControlCenter })));
+const PcControlCenter = lazy(() => import('./modules/pc/PcControlCenter').then((m) => ({ default: m.PcControlCenter })));
 
 import { SystemNotificationBanner } from './components/SystemNotificationBanner';
 import { notifyEmergencyAlert, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
@@ -43,7 +44,8 @@ export type ScreenId =
   | 'sos'
   | 'premium'
   | 'settings'
-  | 'remote';
+  | 'remote'
+  | 'pc_control';
 
 export const ScreenShimmer: React.FC = () => (
   <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4 animate-pulse">
@@ -242,6 +244,12 @@ export const ParentApp: React.FC<ParentAppProps> = ({
       return;
     }
 
+    if (screen === 'pc_control' || screen === 'pc') {
+      setCurrentScreen('pc_control');
+      if (onScreenChangeExternal) onScreenChangeExternal('pc_control');
+      return;
+    }
+
     const s = screen as ScreenId;
     setCurrentScreen(s);
     if (onScreenChangeExternal) onScreenChangeExternal(s);
@@ -413,6 +421,11 @@ export const ParentApp: React.FC<ParentAppProps> = ({
           {/* 6. Remote Control & Live Inspection Center */}
           {currentScreen === 'remote' && (
             <RemoteControlCenter onBack={() => setCurrentScreen('dashboard')} />
+          )}
+
+          {/* 6.5. PC Remote Control & Management */}
+          {currentScreen === 'pc_control' && (
+            <PcControlCenter onBack={() => setCurrentScreen('dashboard')} />
           )}
 
           {/* 7. AI Assistant */}

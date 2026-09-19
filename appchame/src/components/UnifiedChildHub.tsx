@@ -31,6 +31,8 @@ import {
   QrCode,
   MessageCircle,
   Smartphone,
+  Monitor,
+  Laptop,
   RefreshCw,
   Loader2
 } from 'lucide-react';
@@ -602,21 +604,36 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                         <Smartphone size={13} />
                         <span>Thiết bị của bé ({activeChild.devices.length} máy):</span>
                       </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowPairModal(true);
-                        }}
-                        className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                      >
-                        <Plus size={11} />
-                        <span>Thêm máy</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onNavigate?.('pc_control');
+                          }}
+                          className="text-[10px] text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full font-bold hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Monitor size={10} />
+                          <span>Điều khiển PC</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowPairModal(true);
+                          }}
+                          className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <Plus size={11} />
+                          <span>Thêm máy</span>
+                        </button>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
                       {activeChild.devices.map((dev, dIdx) => {
                         const isCurDev = (activeChild.activeDeviceId === dev.deviceId) || (!activeChild.activeDeviceId && dIdx === 0);
+                        const isPc = dev.deviceType === 'pc' || dev.deviceType === 'desktop';
+                        const isLaptop = dev.deviceType === 'laptop';
                         return (
                           <div
                             key={dev.deviceId}
@@ -630,8 +647,10 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                                 : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
                             }`}
                           >
-                            <div className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-                              <Smartphone size={12} />
+                            <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+                              isPc || isLaptop ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {isPc ? <Monitor size={12} /> : isLaptop ? <Laptop size={12} /> : <Smartphone size={12} />}
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-1">
@@ -712,7 +731,19 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                       className="text-[10px] text-indigo-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
                     >
                       <Plus size={11} />
-                      <span>Thêm máy nữa</span>
+                      <span>Thêm máy</span>
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNavigate?.('pc_control');
+                      }}
+                      className="text-[10px] text-teal-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <Monitor size={11} />
+                      <span>Quản lý PC</span>
                     </button>
                   </div>
                 )}

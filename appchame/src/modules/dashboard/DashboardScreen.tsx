@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   Plus,
   MessageCircle,
-  KeyRound
+  KeyRound,
+  Monitor
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
@@ -56,6 +57,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
     { id: 'health', label: 'Sức khỏe', icon: HeartPulse, color: 'bg-rose-50 text-rose-600 border-rose-100' },
     { id: 'content', label: 'Nội dung web', icon: Shield, color: 'bg-amber-50 text-amber-600 border-amber-100' },
     { id: 'apps', label: 'Quản lý app', icon: LayoutGrid, color: 'bg-purple-50 text-purple-600 border-purple-100' },
+    { id: 'pc_control', label: 'Máy tính PC', icon: Monitor, color: 'bg-teal-50 text-teal-600 border-teal-100' },
     { id: 'ai', label: 'Trợ lý AI', icon: Bot, color: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
     { id: 'settings', label: 'Cài đặt', icon: Settings, color: 'bg-slate-50 text-slate-600 border-slate-100' },
   ];
@@ -149,6 +151,32 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
 
       {/* Unified Modern Family & Multi-Child Hub */}
       <UnifiedChildHub onNavigate={onNavigate} />
+
+      {/* Remote PC Control Banner Card */}
+      <div
+        onClick={() => onNavigate('pc_control')}
+        className="p-3.5 rounded-3xl bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-900 text-white shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-98 flex items-center justify-between gap-3 border border-blue-500/30"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-11 h-11 rounded-2xl bg-white/15 backdrop-blur-xs flex items-center justify-center text-white shrink-0 border border-white/20">
+            <Monitor size={22} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h4 className="text-xs font-black tracking-wide uppercase">🖥️ Điều Khiển Máy Tính Con</h4>
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 text-[9px] font-black uppercase">
+                Mới
+              </span>
+            </div>
+            <p className="text-[11px] text-blue-100 font-medium truncate mt-0.5">
+              Khóa PC từ xa, chặn game Roblox/LOL, hẹn giờ tắt máy & bắn lời dặn
+            </p>
+          </div>
+        </div>
+        <div className="w-8 h-8 rounded-xl bg-white/15 flex items-center justify-center text-white shrink-0">
+          <ChevronRight size={18} />
+        </div>
+      </div>
 
       {/* 4 Clean Strategic Feature Hub Cards (2x2 Grid) */}
       <div className="space-y-2 pt-1">
