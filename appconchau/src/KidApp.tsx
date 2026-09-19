@@ -73,7 +73,7 @@ import { showSystemNotification, requestSystemNotificationPermission } from '@sh
 import { EmergencyContactBar } from './EmergencyContactBar';
 import { KidNotificationBanner } from './KidNotificationBanner';
 import { SharedLessonViewerModal } from './SharedLessonViewerModal';
-import { SharedLessonLink, AppItem } from '../../shared/types';
+import { SharedLessonLink, AppItem, BroadcastMessage } from '../../shared/types';
 import { FamilyChatModal } from '../../shared/components/FamilyChatModal';
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
 import { TimeExtensionRequestModal } from '../../shared/components/TimeExtensionRequestModal';
@@ -328,6 +328,41 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   } = state;
 
   const [isBroadcastDismissed, setIsBroadcastDismissed] = useState(false);
+
+  // Persistent dismissal memory for broadcast messages (prevents resurrection across sessions)
+  const getDismissedBroadcastKeys = (): string[] => {
+    try {
+      if (typeof window === 'undefined') return [];
+      const raw = localStorage.getItem('kidcare_dismissed_broadcasts');
+      return raw ? JSON.parse(raw) : [];
+    } catch (_) {
+      return [];
+    }
+  };
+
+  const markBroadcastDismissed = (key: string) => {
+    try {
+      if (typeof window === 'undefined' || !key) return;
+      const list = getDismissedBroadcastKeys();
+      if (!list.includes(key)) {
+        list.push(key);
+        localStorage.setItem('kidcare_dismissed_broadcasts', JSON.stringify(list.slice(-50)));
+      }
+    } catch (_) {}
+  };
+
+  const isBroadcastMessageDismissedOrExpired = (msg: BroadcastMessage | null | undefined): boolean => {
+    if (!msg || !msg.isShowing) return true;
+    const now = Date.now();
+    const created = typeof msg.createdAt === 'number' ? msg.createdAt : 0;
+    // TTL 10 mins: if created > 10 mins ago or missing createdAt from legacy data, treat as expired
+    if (!created || (now - created > 10 * 60 * 1000)) {
+      return true;
+    }
+    const key = msg.id || `${msg.title}_${msg.message}_${msg.timestamp}`;
+    const dismissed = getDismissedBroadcastKeys();
+    return dismissed.includes(key);
+  };
   const [selectedBlockedApp, setSelectedBlockedApp] = useState<string | null>(null);
   const [requestReason, setRequestReason] = useState('');
   const [requestSent, setRequestSent] = useState(false);
@@ -1082,15 +1117,26 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
         case 'broadcast_msg':
           wakeUpDevice().catch(() => {});
-          setIsBroadcastDismissed(false);
-          broadcastOverlay(cmd.payload?.title || 'Lời dặn từ Bố Mẹ', cmd.payload?.message || '', cmd.payload?.imageUrl, true);
-          if (cmd.payload?.speakTTS || cmd.payload?.message) {
-            speakVietnamese(cmd.payload?.message || cmd.payload?.title || '');
+          const bPayload = cmd.payload;
+          const msgId = bPayload?.id || `broadcast_${cmd.timestamp || Date.now()}`;
+          const bTitle = bPayload?.title || 'Lời dặn từ Bố Mẹ';
+          const bMsg = bPayload?.message || '';
+          const bKey = msgId || `${bTitle}_${bMsg}`;
+
+          // If child already dismissed this broadcast message, do not re-show
+          if (getDismissedBroadcastKeys().includes(bKey)) {
+            break;
           }
-          showSystemNotification(`📢 ${cmd.payload?.title || 'Lời dặn từ Bố Mẹ'}`, {
-            body: cmd.payload?.message || 'Bố mẹ vừa gửi lời nhắn quan trọng cho con!',
+
+          setIsBroadcastDismissed(false);
+          broadcastOverlay(bTitle, bMsg, bPayload?.imageUrl, true);
+          if (bPayload?.speakTTS || bMsg) {
+            speakVietnamese(bMsg || bTitle);
+          }
+          showSystemNotification(`📢 ${bTitle}`, {
+            body: bMsg || 'Bố mẹ vừa gửi lời nhắn quan trọng cho con!',
             soundType: 'emergency',
-            tag: 'cmd_broadcast_msg',
+            tag: `cmd_broadcast_${msgId}`,
           });
           showToast('💬 THÔNG ĐIỆP MỚI TỪ BỐ MẸ!');
           break;
@@ -1167,11 +1213,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
       }
 
-      clearRemoteCommand(activeParentId, targetChildId, curChild.name).catch(() => {});
-    }, child.name);
+      clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
+    }, childRef.current?.name);
 
     return () => unsubCmd();
-  }, [activeParentId, targetChildId, child.name]);
+  }, [activeParentId, targetChildId]);
 
   // Background Real-time Chat Listener on Kid Device
   // Receives parent messages even when FamilyChatModal is closed,
@@ -3224,16 +3270,24 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
       {/* 7. NON-BLOCKING FLOATING NOTIFICATION BANNER (When parent broadcasts message) */}
       <KidNotificationBanner
-        isVisible={Boolean(broadcastMessage?.isShowing && !isBroadcastDismissed)}
+        isVisible={Boolean(
+          broadcastMessage?.isShowing &&
+          !isBroadcastDismissed &&
+          !isBroadcastMessageDismissedOrExpired(broadcastMessage)
+        )}
         title={broadcastMessage?.title || 'Lời dặn từ Bố Mẹ'}
         message={broadcastMessage?.message || ''}
         imageUrl={broadcastMessage?.imageUrl}
         timestamp={broadcastMessage?.timestamp}
         onDismiss={() => {
           setIsBroadcastDismissed(true);
+          if (broadcastMessage) {
+            const key = broadcastMessage.id || `${broadcastMessage.title}_${broadcastMessage.message}_${broadcastMessage.timestamp}`;
+            markBroadcastDismissed(key);
+          }
           clearBroadcastOverlay();
           if (activeParentId && targetChildId) {
-            clearRemoteCommand(activeParentId, targetChildId, child.name).catch(() => {});
+            clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           }
         }}
         onSpeak={() => {
@@ -3242,9 +3296,18 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           }
         }}
         onReply={(replyText) => {
+          setIsBroadcastDismissed(true);
+          if (broadcastMessage) {
+            const key = broadcastMessage.id || `${broadcastMessage.title}_${broadcastMessage.message}_${broadcastMessage.timestamp}`;
+            markBroadcastDismissed(key);
+          }
           sendKidResponseToParent(broadcastMessage?.title || 'Lời dặn từ Bố Mẹ', replyText);
           if (replyText.includes('5 phút') || replyText.includes('5p')) {
             requestTimeExtension('Thời gian dùng máy', 5, 'Con xin thêm 5 phút khi bố mẹ dặn');
+          }
+          clearBroadcastOverlay();
+          if (activeParentId && targetChildId) {
+            clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           }
           showToast(`✅ Đã gửi phản hồi: "${replyText}"`);
         }}

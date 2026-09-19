@@ -297,11 +297,13 @@ export interface KioskMode {
 }
 
 export interface BroadcastMessage {
+  id?: string;
   isShowing: boolean;
   title: string;
   message: string;
   imageUrl?: string;
   timestamp: string;
+  createdAt?: number;
 }
 
 export type LockType =

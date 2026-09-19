@@ -810,10 +810,10 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
       kidStars: curStars,
       starHistory: curStarHistory,
       redemptions: curRedemptions,
-      activeOpenedApp: curSettings.activeOpenedApp ?? (isCurrentChild ? (newState.activeOpenedApp ?? null) : null),
-      activeReminder: curSettings.activeReminder ?? (isCurrentChild ? (newState.activeReminder ?? null) : null),
-      lastVoiceGuide: curSettings.lastVoiceGuide ?? (isCurrentChild ? (newState.lastVoiceGuide ?? '') : ''),
-      broadcastMessage: curSettings.broadcastMessage ?? (isCurrentChild ? (newState.broadcastMessage ?? null) : null),
+      activeOpenedApp: isCurrentChild ? (newState.activeOpenedApp ?? null) : (curSettings.activeOpenedApp ?? null),
+      activeReminder: isCurrentChild ? (newState.activeReminder ?? null) : (curSettings.activeReminder ?? null),
+      lastVoiceGuide: isCurrentChild ? (newState.lastVoiceGuide ?? '') : (curSettings.lastVoiceGuide ?? ''),
+      broadcastMessage: isCurrentChild ? (newState.broadcastMessage ?? null) : (curSettings.broadcastMessage ?? null),
       isLocked: curSettings.lockChallenge?.isLocked ?? (isCurrentChild ? (newState.lockChallenge?.isLocked ?? false) : false),
       safeZones: curSettings.safeZones ?? newState.safeZones,
     }
@@ -1339,18 +1339,31 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
         applyCloudStateUpdate((prev) => {
           const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
           const mergedSettings = { ...curSettings, ...cloudSettings };
+          let cleanBroadcast = mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage;
+          if (cleanBroadcast) {
+            const now = Date.now();
+            const bCreated = typeof cleanBroadcast.createdAt === 'number' ? cleanBroadcast.createdAt : 0;
+            // Purge if older than 10 mins or missing createdAt (legacy cloud state)
+            if (!bCreated || (now - bCreated > 10 * 60 * 1000)) {
+              cleanBroadcast = null;
+              mergedSettings.broadcastMessage = null;
+            }
+          }
           return {
             ...prev,
             childSettings: {
               ...prev.childSettings,
-              [effectiveChildId]: mergedSettings,
+              [effectiveChildId]: {
+                ...mergedSettings,
+                broadcastMessage: cleanBroadcast,
+              },
             },
             apps: mergedSettings.apps || prev.apps,
             hardwareControls: mergedSettings.hardwareControls || prev.hardwareControls,
             kioskMode: mergedSettings.kioskMode || prev.kioskMode,
             lockChallenge: mergedSettings.lockChallenge || prev.lockChallenge,
             smartRoutines: mergedSettings.smartRoutines || prev.smartRoutines,
-            broadcastMessage: mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage,
+            broadcastMessage: cleanBroadcast,
             kidTasks: mergedSettings.kidTasks || prev.kidTasks,
             kidStars: mergedSettings.kidStars !== undefined ? mergedSettings.kidStars : prev.kidStars,
             starHistory: mergedSettings.starHistory || prev.starHistory,
@@ -2116,12 +2129,16 @@ export const useAppState = () => {
 
   // Broadcast message overlay
   const broadcastOverlay = (title: string, message: string, imageUrl?: string, isIncomingOnKid: boolean = false) => {
+    const now = Date.now();
+    const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     const msg: BroadcastMessage = {
+      id: `broadcast_${now}_${Math.random().toString(36).substring(2, 7)}`,
       isShowing: true,
       title,
       message,
       imageUrl,
-      timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      timestamp: timeStr,
+      createdAt: now,
     };
     saveAndNotify({ ...state, broadcastMessage: msg });
     eventBus.publish('BROADCAST_MESSAGE_SENT', msg, isIncomingOnKid ? 'child' : 'parent');
@@ -2132,27 +2149,40 @@ export const useAppState = () => {
       const targetChildId = state.selectedChildId;
       const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
       if (parentId && targetChildId) {
-        sendRemoteCommandToKid(parentId, targetChildId, 'broadcast_msg', { title, message, imageUrl }, targetChild?.name).catch(() => {});
+        sendRemoteCommandToKid(
+          parentId,
+          targetChildId,
+          'broadcast_msg',
+          { id: msg.id, title, message, imageUrl, createdAt: now, timestamp: now },
+          targetChild?.name
+        ).catch(() => {});
       }
     }
   };
 
   const clearBroadcastOverlay = () => {
-    saveAndNotify({ ...state, broadcastMessage: null });
+    const curId = state.selectedChildId || state.child?.id || '';
+    const updatedSettings = { ...(state.childSettings || {}) };
+    if (curId && updatedSettings[curId]) {
+      updatedSettings[curId] = {
+        ...updatedSettings[curId],
+        broadcastMessage: null,
+      };
+    }
+    saveAndNotify({ ...state, broadcastMessage: null, childSettings: updatedSettings });
     eventBus.publish('BROADCAST_MESSAGE_CLEARED', {}, 'parent');
 
-    // ONLY parent sends clear_broadcast to cloud; Kid dismissing locally MUST NOT command itself!
-    if (!isKidAppMode()) {
-      const parentId = getActiveParentId();
-      const kidPaired = getKidDevicePairedInfo();
-      const targetChildId = kidPaired?.childId || state.selectedChildId || state.child?.id || '';
-      const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-      const targetChildName = kidPaired?.childName || targetChild?.name;
+    const parentId = getActiveParentId();
+    const kidPaired = getKidDevicePairedInfo();
+    const targetChildId = kidPaired?.childId || state.selectedChildId || state.child?.id || '';
+    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+    const targetChildName = kidPaired?.childName || targetChild?.name;
 
-      if (parentId && targetChildId) {
+    if (parentId && targetChildId) {
+      if (!isKidAppMode()) {
         sendRemoteCommandToKid(parentId, targetChildId, 'clear_broadcast', undefined, targetChildName).catch(() => {});
-        clearRemoteCommand(parentId, targetChildId, targetChildName).catch(() => {});
       }
+      clearRemoteCommand(parentId, targetChildId, targetChildName).catch(() => {});
     }
   };
 
@@ -3624,15 +3654,36 @@ export const useAppState = () => {
   };
 
   const triggerFamilyBroadcast = (message: string, sticker: string = '📢') => {
+    const now = Date.now();
+    const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     const msg: BroadcastMessage = {
+      id: `broadcast_${now}_${Math.random().toString(36).substring(2, 7)}`,
       title: `${sticker} Lời nhắn từ Bố Mẹ`,
       message,
       isShowing: true,
-      timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      timestamp: timeStr,
+      createdAt: now,
     };
     saveAndNotify({ ...state, broadcastMessage: msg });
     eventBus.publish('BROADCAST_MESSAGE_SENT', msg, 'parent');
     eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'familyBroadcast', message }, 'parent');
+
+    // Real-time broadcast command to all connected children
+    const parentId = getActiveParentId();
+    if (parentId) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          sendRemoteCommandToKid(
+            parentId,
+            c.id,
+            'broadcast_msg',
+            { id: msg.id, title: msg.title, message: msg.message, imageUrl: sticker, createdAt: now, timestamp: now },
+            c.name
+          ).catch(() => {});
+        }
+      });
+    }
   };
 
   const updateChildAvatar = (childId: string, newAvatar: string) => {

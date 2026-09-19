@@ -33,6 +33,15 @@ export const KidNotificationBanner: React.FC<KidNotificationBannerProps> = ({
     }
   }, [isVisible, bonusStars]);
 
+  // Auto-dismiss banner after 30 seconds to prevent permanent screen blockage
+  useEffect(() => {
+    if (!isVisible) return;
+    const timer = setTimeout(() => {
+      onDismiss();
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [isVisible, onDismiss]);
+
   if (!isVisible) return null;
 
   const displayTime =

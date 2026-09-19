@@ -345,6 +345,34 @@ export function subscribeChildSettingsFromCloud(
     if (updateTime) {
       lastSeenSettingsTime = updateTime;
     }
+
+    // Purge stale or legacy broadcastMessage (TTL 10 mins or already dismissed)
+    if (rawVal.broadcastMessage) {
+      const now = Date.now();
+      const bMsg = rawVal.broadcastMessage;
+      let bCreated = typeof bMsg.createdAt === 'number' ? bMsg.createdAt : 0;
+      if (!bCreated && typeof bMsg.timestamp === 'string') {
+        const parsed = Date.parse(bMsg.timestamp);
+        if (!isNaN(parsed)) bCreated = parsed;
+      }
+
+      // If created > 10 minutes ago or missing createdAt from legacy data, discard broadcast overlay
+      if (!bCreated || (now - bCreated > 10 * 60 * 1000)) {
+        rawVal.broadcastMessage = null;
+      } else {
+        try {
+          const dismissedRaw = typeof window !== 'undefined' ? localStorage.getItem('kidcare_dismissed_broadcasts') : null;
+          if (dismissedRaw) {
+            const dismissedList: string[] = JSON.parse(dismissedRaw);
+            const msgKey = bMsg.id || `${bMsg.title}_${bMsg.message}_${bMsg.timestamp}`;
+            if (dismissedList.includes(msgKey)) {
+              rawVal.broadcastMessage = null;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
     onUpdate(rawVal as Partial<ChildSpecificSettings>);
   };
 
@@ -1081,6 +1109,48 @@ export async function sendRemoteCommandToKid(
   }
 }
 
+// Persistent Handled Commands set across re-subscriptions and re-renders
+const PERSISTENT_HANDLED_CMDS_KEY = 'kidcare_handled_commands_v1';
+const PERSISTENT_LAST_CMD_TIME_KEY = 'kidcare_last_command_time_v1';
+
+function getStoredHandledCommandIds(): Set<string> {
+  try {
+    if (typeof window === 'undefined') return new Set();
+    const raw = localStorage.getItem(PERSISTENT_HANDLED_CMDS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch (_) {}
+  return new Set();
+}
+
+function saveHandledCommandId(id: string) {
+  try {
+    if (typeof window === 'undefined' || !id) return;
+    const set = getStoredHandledCommandIds();
+    set.add(id);
+    const arr = Array.from(set).slice(-50);
+    localStorage.setItem(PERSISTENT_HANDLED_CMDS_KEY, JSON.stringify(arr));
+  } catch (_) {}
+}
+
+function getStoredLastCommandTime(): number {
+  try {
+    if (typeof window === 'undefined') return 0;
+    const raw = localStorage.getItem(PERSISTENT_LAST_CMD_TIME_KEY);
+    return raw ? parseInt(raw, 10) || 0 : 0;
+  } catch (_) {}
+  return 0;
+}
+
+function saveLastCommandTime(ts: number) {
+  try {
+    if (typeof window === 'undefined' || !ts) return;
+    localStorage.setItem(PERSISTENT_LAST_CMD_TIME_KEY, String(ts));
+  } catch (_) {}
+}
+
 // 9. Subscribe to Remote Commands on Kid Device (strictly partitioned by parentId + childId)
 export function subscribeRemoteCommandsOnKid(
   parentId: string,
@@ -1093,34 +1163,59 @@ export function subscribeRemoteCommandsOnKid(
 
   const unsubs: Array<() => void> = [];
   const syncKey = getPartitionedSyncKey(parentId, childId);
-  let lastHandledCmdId = "";
-  // Initialize to 3 seconds before subscription so that any old commands
-  // sitting in Firebase from previous sessions will NEVER be executed on boot/reconnect!
-  let lastHandledCmdTimestamp = Date.now() - 3000;
+  const handledIds = getStoredHandledCommandIds();
+  // Initialize to 3 seconds before subscription or last stored command time
+  let lastHandledCmdTimestamp = Math.max(Date.now() - 3000, getStoredLastCommandTime());
 
   const handleIncoming = (data: RemoteCommandData | null) => {
     if (!data || !data.command || data.command === "none") return;
     const now = Date.now();
-    const cmdTimestamp = typeof data.timestamp === 'number' ? data.timestamp : 0;
 
-    // 1. Freshness Check (TTL 60s): Discard any command older than 60 seconds
-    if (cmdTimestamp > 0 && now - cmdTimestamp > 60000) {
+    // 1. Robust Timestamp Extraction (handles numbers, ISO strings, epoch ms)
+    let cmdTimestamp = 0;
+    if (typeof data.timestamp === 'number') {
+      cmdTimestamp = data.timestamp;
+    } else if (typeof data.timestamp === 'string') {
+      const parsed = Date.parse(data.timestamp);
+      if (!isNaN(parsed)) {
+        cmdTimestamp = parsed;
+      } else {
+        const num = Number(data.timestamp);
+        if (!isNaN(num) && num > 0) cmdTimestamp = num;
+      }
+    }
+
+    // 2. STALE/LEGACY DATA PURGE: If timestamp is missing or non-positive,
+    // this is corrupt/stale legacy data sitting in Firebase RTDB from earlier versions.
+    // Discard immediately and purge from cloud so it never executes or spams!
+    if (!cmdTimestamp || cmdTimestamp <= 0) {
+      console.warn('[subscribeRemoteCommandsOnKid] Discarding stale command with missing/invalid timestamp:', data);
       clearRemoteCommand(parentId, childId, childName).catch(() => {});
       return;
     }
 
-    // 2. Monotonic sequence check: Discard any command with timestamp <= last handled
-    if (cmdTimestamp > 0 && cmdTimestamp <= lastHandledCmdTimestamp) {
+    // 3. TTL Freshness Check (TTL 60s): Discard any command older than 60 seconds
+    if (now - cmdTimestamp > 60000) {
+      clearRemoteCommand(parentId, childId, childName).catch(() => {});
       return;
     }
 
-    const cmdId = data.id || `cmd_${cmdTimestamp}`;
-    if (cmdId === lastHandledCmdId) return; // Deduplicate
-
-    lastHandledCmdId = cmdId;
-    if (cmdTimestamp > 0) {
-      lastHandledCmdTimestamp = cmdTimestamp;
+    // 4. Monotonic Sequence Check: Discard any command with timestamp <= last handled
+    if (cmdTimestamp <= lastHandledCmdTimestamp) {
+      return;
     }
+
+    // 5. Persistent Deduplication Check: Discard if already executed
+    const cmdId = data.id || `cmd_${cmdTimestamp}`;
+    if (handledIds.has(cmdId)) {
+      return;
+    }
+
+    // Record as handled across app sessions
+    handledIds.add(cmdId);
+    saveHandledCommandId(cmdId);
+    lastHandledCmdTimestamp = cmdTimestamp;
+    saveLastCommandTime(cmdTimestamp);
 
     onCommand(data);
   };
