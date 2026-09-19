@@ -24,7 +24,13 @@ import {
 } from 'lucide-react';
 import { useAppState, getActiveParentId } from '@shared/store';
 import { InteractiveMap, MapChildItem } from '@shared/components/InteractiveMap';
-import { subscribeChildTelemetryFromCloud, sendRemoteCommandToKid } from '@shared/firebase/cloudSyncService';
+import {
+  subscribeChildTelemetryFromCloud,
+  sendRemoteCommandToKid,
+  startLiveTracking,
+  stopLiveTracking,
+  getTelemetryUploadCountLastHour,
+} from '@shared/firebase/cloudSyncService';
 import { ChildDeviceInfo, ChildProfile } from '@shared/types';
 import { haptics } from '@shared/utils/haptics';
 import { makePhoneCall } from '@shared/utils/phoneCall';
@@ -73,6 +79,111 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
   const [secondsAgo, setSecondsAgo] = useState(3);
   const [buzzFeedback, setBuzzFeedback] = useState<string | null>(null);
   const [buzzingChildId, setBuzzingChildId] = useState<string | null>(null);
+
+  // Live Tracking and Bandwidth Safety
+  const [isLiveActive, setIsLiveActive] = useState<boolean>(true);
+  const [liveExpiresAt, setLiveExpiresAt] = useState<number>(Date.now() + 5 * 60 * 1000);
+  const [showQuotaWarning, setShowQuotaWarning] = useState<boolean>(false);
+  const [quotaWarningReason, setQuotaWarningReason] = useState<string>('');
+  const continuousLiveSecondsRef = React.useRef<number>(0);
+
+  // Manage Live Tracking activation on mount / target child change
+  useEffect(() => {
+    const parentId = getActiveParentId();
+    const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+
+    // Check bandwidth upload frequency first
+    const uploadsLastHour = getTelemetryUploadCountLastHour();
+    if (uploadsLastHour > 50) {
+      setShowQuotaWarning(true);
+      setQuotaWarningReason(`Lưu lượng vị trí trong 1 giờ qua đã đạt ${uploadsLastHour} lượt (vượt ngưỡng an toàn 50 lượt/giờ).`);
+      setIsLiveActive(false);
+      return;
+    }
+
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    setLiveExpiresAt(expiresAt);
+    setIsLiveActive(true);
+
+    targetChildIds.forEach((cid) => {
+      const c = children.find((ch) => ch.id === cid);
+      startLiveTracking(parentId, cid, 5, c?.name).catch(() => {});
+    });
+
+    return () => {
+      targetChildIds.forEach((cid) => {
+        const c = children.find((ch) => ch.id === cid);
+        stopLiveTracking(parentId, cid, c?.name).catch(() => {});
+      });
+    };
+  }, [viewMode, focusedChildId, children]);
+
+  // Live countdown timer & 15-minute continuous bandwidth guard
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (isLiveActive) {
+        const now = Date.now();
+        if (now >= liveExpiresAt) {
+          setIsLiveActive(false);
+          const parentId = getActiveParentId();
+          const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+          targetChildIds.forEach((cid) => {
+            const c = children.find((ch) => ch.id === cid);
+            stopLiveTracking(parentId, cid, c?.name).catch(() => {});
+          });
+        } else {
+          continuousLiveSecondsRef.current += 1;
+          // Guard: If live tracking has been active continuously for > 15 minutes (900 seconds)
+          if (continuousLiveSecondsRef.current >= 900) {
+            setIsLiveActive(false);
+            setShowQuotaWarning(true);
+            setQuotaWarningReason('Chế độ xem vị trí trực tiếp đã chạy liên tục hơn 15 phút.');
+            const parentId = getActiveParentId();
+            const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+            targetChildIds.forEach((cid) => {
+              const c = children.find((ch) => ch.id === cid);
+              stopLiveTracking(parentId, cid, c?.name).catch(() => {});
+            });
+          }
+        }
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isLiveActive, liveExpiresAt, viewMode, focusedChildId, children]);
+
+  const handleExtendLiveTracking = (mins: number = 5) => {
+    haptics.success();
+    const parentId = getActiveParentId();
+    const newExpiresAt = Date.now() + mins * 60 * 1000;
+    setLiveExpiresAt(newExpiresAt);
+    setIsLiveActive(true);
+    setShowQuotaWarning(false);
+    continuousLiveSecondsRef.current = 0;
+
+    const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+    targetChildIds.forEach((cid) => {
+      const c = children.find((ch) => ch.id === cid);
+      startLiveTracking(parentId, cid, mins, c?.name).catch(() => {});
+    });
+  };
+
+  const handleStopLiveTracking = () => {
+    haptics.light();
+    setIsLiveActive(false);
+    setLiveExpiresAt(0);
+    const parentId = getActiveParentId();
+    const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+    targetChildIds.forEach((cid) => {
+      const c = children.find((ch) => ch.id === cid);
+      stopLiveTracking(parentId, cid, c?.name).catch(() => {});
+    });
+  };
+
+  const formatCountdown = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   // Store real-time telemetry updates for all children
   const [telemetryMap, setTelemetryMap] = useState<Record<string, {
@@ -453,6 +564,99 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Live Tracking & Bandwidth Safety Banner */}
+      {showQuotaWarning ? (
+        <div className="mx-3 mt-2 mb-1 p-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-start space-x-3">
+            <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <AlertTriangle size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center space-x-2">
+                <h4 className="text-xs font-black text-amber-900 uppercase tracking-wider">Cảnh báo lưu lượng dữ liệu</h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900">Tiết kiệm hạn mức</span>
+              </div>
+              <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                {quotaWarningReason || 'Bạn đã theo dõi trực tiếp quá 15 phút liên tục.'} Hệ thống tự động chuyển về chế độ <strong>Tiết kiệm dữ liệu (1 giờ/lần)</strong> để bảo vệ gói Firebase và tiết kiệm pin con.
+              </p>
+              <div className="mt-2.5 flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => handleExtendLiveTracking(5)}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-xs cursor-pointer"
+                >
+                  <Radio size={13} className="animate-pulse" />
+                  <span>Gia hạn xem tiếp 5 phút</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowQuotaWarning(false)}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-amber-200 text-amber-800 hover:bg-amber-100/50 text-xs font-semibold transition cursor-pointer"
+                >
+                  Đã hiểu
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : isLiveActive ? (
+        <div className="mx-3 mt-2 mb-1 px-3.5 py-2 bg-gradient-to-r from-rose-50 via-red-50 to-amber-50 border border-rose-200/80 rounded-2xl flex items-center justify-between shadow-2xs">
+          <div className="flex items-center space-x-2.5">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
+            </span>
+            <div>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-xs font-black text-rose-900 uppercase tracking-wider">Đang xem trực tiếp</span>
+                <span className="text-xs font-extrabold text-rose-700 font-mono bg-rose-100/80 px-1.5 py-0.5 rounded-md">
+                  {formatCountdown(Math.max(0, Math.floor((liveExpiresAt - Date.now()) / 1000)))}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 font-medium">Cập nhật 10s-20s khi di chuyển • Tự tắt khi hết giờ</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-1.5">
+            <button
+              type="button"
+              onClick={() => handleExtendLiveTracking(5)}
+              className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold transition flex items-center space-x-1 shadow-2xs cursor-pointer"
+              title="Gia hạn xem trực tiếp thêm 5 phút"
+            >
+              <span>+5 phút</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleStopLiveTracking}
+              className="px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 text-[11px] font-bold transition shadow-2xs cursor-pointer"
+              title="Dừng xem để tiết kiệm dữ liệu (1 giờ/lần)"
+            >
+              <span>Tiết kiệm</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mx-3 mt-2 mb-1 px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200/80 rounded-2xl flex items-center justify-between shadow-2xs">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+              <ShieldCheck size={14} />
+            </div>
+            <div>
+              <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">Chế độ Tiết kiệm dữ liệu (1 giờ/lần)</span>
+              <p className="text-[10px] text-slate-500 font-medium">Bảo vệ hạn mức Firebase & Pin máy con • Cảnh báo SOS vẫn tức thì</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleExtendLiveTracking(5)}
+            className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black transition flex items-center space-x-1 shadow-2xs cursor-pointer"
+          >
+            <Radio size={12} className="animate-pulse" />
+            <span>Xem trực tiếp (5p)</span>
+          </button>
         </div>
       )}
 

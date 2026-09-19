@@ -90,6 +90,7 @@ import {
   sendCloudChatMessage,
   syncChildSettingsToCloud,
   CloudChatMessage,
+  subscribeLiveTrackingState,
 } from '../../shared/firebase/cloudSyncService';
 import {
   getKidDevicePairedInfo,
@@ -261,6 +262,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
   const geofenceStateRef = React.useRef<Record<string, boolean>>({});
   const lastGeofenceAlertTimeRef = React.useRef<Record<string, number>>({});
+  const isLiveTrackingActiveRef = React.useRef<boolean>(false);
+  const liveTrackingExpiresAtRef = React.useRef<number>(0);
+  const lastLowBatteryAlertRef = React.useRef<number>(0);
   const [isSosButtonCooldown, setIsSosButtonCooldown] = useState(false);
 
   const handleKidTriggerSOS = (source: 'header' | 'button') => {
@@ -1036,6 +1040,41 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             ).catch(() => {});
           }
           break;
+        case 'live_tracking_start': {
+          const durationMins = cmd.payload?.durationMinutes || 5;
+          const expiresAt = cmd.payload?.expiresAt || (Date.now() + durationMins * 60 * 1000);
+          isLiveTrackingActiveRef.current = true;
+          liveTrackingExpiresAtRef.current = expiresAt;
+          if (lastTelemetryRef.current && lastTelemetryRef.current.lat && lastTelemetryRef.current.lng) {
+            uploadChildTelemetryToCloud(
+              activeParentId,
+              targetChildId,
+              {
+                lat: lastTelemetryRef.current.lat,
+                lng: lastTelemetryRef.current.lng,
+                speed: lastTelemetryRef.current.speed,
+                battery: lastTelemetryRef.current.battery,
+                currentAddress: curChild.currentAddress || 'Đang hoạt động',
+                childName: curChild.name,
+                deviceId: curPairedInfo?.deviceId,
+                deviceName: curPairedInfo?.deviceName,
+                model: curPairedInfo?.model,
+                syncMode: 'realtime',
+                isScreenOn: lastTelemetryRef.current.isScreenOn,
+                screenState: lastTelemetryRef.current.isScreenOn ? 'active' : 'screen_off',
+                appStatus: lastTelemetryRef.current.isAppInForeground ? 'active_in_app' : 'in_background',
+              },
+              true,
+              curChild.name
+            ).catch(() => {});
+          }
+          break;
+        }
+        case 'live_tracking_stop': {
+          isLiveTrackingActiveRef.current = false;
+          liveTrackingExpiresAtRef.current = 0;
+          break;
+        }
         case 'lock_now':
           wakeUpDevice().catch(() => {});
           setLockChallenge(
@@ -1217,6 +1256,24 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     }, childRef.current?.name);
 
     return () => unsubCmd();
+  }, [activeParentId, targetChildId]);
+
+  // Real-time Database Live Tracking State Listener (On-Demand parent tracking)
+  useEffect(() => {
+    if (!activeParentId || !targetChildId) return;
+
+    const unsubLive = subscribeLiveTrackingState(activeParentId, targetChildId, (liveState) => {
+      const now = Date.now();
+      if (liveState.active && liveState.expiresAt > now) {
+        isLiveTrackingActiveRef.current = true;
+        liveTrackingExpiresAtRef.current = liveState.expiresAt;
+      } else {
+        isLiveTrackingActiveRef.current = false;
+        liveTrackingExpiresAtRef.current = 0;
+      }
+    });
+
+    return () => unsubLive();
   }, [activeParentId, targetChildId]);
 
   // Background Real-time Chat Listener on Kid Device
@@ -1530,51 +1587,45 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   );
 
   // Compute adaptive interval based on user requirement:
-  // "khi con đang mở phần mềm thì dữ liệu cập nhật nhanh chóng, khi tắt màn hình thì mới ở chế độ tiết kiệm lưu lượng máy chủ và pin"
+  // "tối ưu lại vị trí có thể ko gửi dữ liệu mà xử lý trên máy con chỉ gửi mỗi 1 tiếng nếu ko có gì cần thiết, chỉ gửi liên tục khi cha mẹ xem vị trí trực tiếp"
   const getNextHeartbeatIntervalMs = React.useCallback(() => {
-    const screenOn = lastTelemetryRef.current.isScreenOn;
-    const inForeground = lastTelemetryRef.current.isAppInForeground;
     const curSpeed = lastTelemetryRef.current.speed;
-    const curBattery = lastTelemetryRef.current.battery;
 
-    // 1. Con đang mở phần mềm KidCare (Foreground & Active):
-    // Cập nhật siêu tốc: 3s nếu di chuyển, 5s nếu đứng yên!
-    if (inForeground && screenOn) {
-      return curSpeed >= 3 ? 3000 : 5000;
-    }
-
-    // 2. Màn hình vẫn bật nhưng KidCare chạy nền:
-    // Cân bằng: 15s nếu di chuyển, 30s nếu đứng yên
-    if (screenOn) {
-      return curSpeed >= 5 ? 15000 : 30000;
+    // 1. Cha mẹ đang mở xem vị trí trực tiếp (Live Tracking Active):
+    // Cập nhật liên tục: 10s nếu di chuyển (speed >= 3 km/h), 20s nếu đứng yên
+    if (isLiveTrackingActiveRef.current && Date.now() < liveTrackingExpiresAtRef.current) {
+      return curSpeed >= 3 ? 10000 : 20000;
     }
 
-    // 3. TẮT MÀN HÌNH:
-    // Chế độ siêu tiết kiệm pin & lưu lượng máy chủ:
-    if (curBattery < 20) {
-      return 300000; // 5 phút nếu pin yếu < 20%
+    if (isLiveTrackingActiveRef.current && Date.now() >= liveTrackingExpiresAtRef.current) {
+      isLiveTrackingActiveRef.current = false;
+      liveTrackingExpiresAtRef.current = 0;
     }
-    if (curSpeed >= 15) {
-      return 60000; // 1 phút nếu đang đi nhanh trên phương tiện giao thông
-    }
-    return 150000; // 2.5 phút (150s) khi đứng yên hoặc đi lại chậm
+
+    // 2. Chế độ bình thường mặc định: CHỈ gửi mỗi 1 tiếng (3,600,000 ms) để bảo vệ quota máy chủ Firebase và pin máy con
+    return 3600000;
   }, []);
 
-  // Instant Trigger: Trở lại chế độ cập nhật nhanh ngay tức thì khi con mở lại app hoặc bật màn hình
+  // Instant Trigger: Chỉ gửi ngay khi cha mẹ bật xem trực tiếp hoặc các sự kiện khẩn cấp
   const triggerInstantTelemetryFlush = React.useCallback(
     (reason: string) => {
-      if (heartbeatTimerRef.current) {
-        clearTimeout(heartbeatTimerRef.current);
+      const isLive = isLiveTrackingActiveRef.current && Date.now() < liveTrackingExpiresAtRef.current;
+      const isUrgent = reason === 'tracking_reenabled' || reason === 'manual_flush' || reason === 'sos' || reason === 'geofence_alert';
+
+      if (isLive || isUrgent) {
+        if (heartbeatTimerRef.current) {
+          clearTimeout(heartbeatTimerRef.current);
+        }
+        uploadCurrentTelemetrySnapshot(reason)
+          .catch(() => {})
+          .finally(() => {
+            if (trackingConfig.isMasterTrackingEnabled === false) return;
+            const nextMs = getNextHeartbeatIntervalMs();
+            heartbeatTimerRef.current = setTimeout(async () => {
+              await uploadCurrentTelemetrySnapshot('scheduled_heartbeat');
+            }, nextMs);
+          });
       }
-      uploadCurrentTelemetrySnapshot(reason)
-        .catch(() => {})
-        .finally(() => {
-          if (trackingConfig.isMasterTrackingEnabled === false) return;
-          const nextMs = getNextHeartbeatIntervalMs();
-          heartbeatTimerRef.current = setTimeout(async () => {
-            await uploadCurrentTelemetrySnapshot('scheduled_heartbeat');
-          }, nextMs);
-        });
     },
     [uploadCurrentTelemetrySnapshot, getNextHeartbeatIntervalMs, trackingConfig.isMasterTrackingEnabled]
   );
@@ -1742,37 +1793,70 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               lastTelemetryRef.current.speed = currentSpeedKmH;
 
               const timeSinceLastSent = Date.now() - lastTelemetryRef.current.lastSent;
-              const isCurInFg = lastTelemetryRef.current.isAppInForeground;
-              const isCurScreenOn = lastTelemetryRef.current.isScreenOn;
+              const isLive = isLiveTrackingActiveRef.current && Date.now() < liveTrackingExpiresAtRef.current;
 
-              // Ngưỡng phát hiện di chuyển thích ứng:
-              // 1. Khi con mở app: chỉ cần di chuyển 5m hoặc qua 5s là cập nhật ngay!
-              // 2. Khi dùng app khác: 20m hoặc 15s-30s
-              // 3. Khi tắt màn hình: 80m hoặc 150s (tiết kiệm pin & 4G/máy chủ)
-              let distThreshold = 20;
-              let timeThreshold = 30000;
+              // 1. Kiểm tra Vùng An Toàn HOÀN TOÀN XỬ LÝ TRÊN MÁY CON (Local-First On-Device)
+              const activeZones = state.safeZones?.filter((z) => z.isActive) || [];
+              activeZones.forEach((zone) => {
+                const d = calculateDistanceMeters(latitude, longitude, zone.lat, zone.lng);
+                const wasInside = geofenceStateRef.current[zone.id] ?? true;
+                const isInside = d <= zone.radius;
 
-              if (isCurInFg && isCurScreenOn) {
-                distThreshold = 5;
-                timeThreshold = currentSpeedKmH >= 3 ? 3000 : 5000;
-              } else if (!isCurScreenOn) {
-                distThreshold = 80;
-                timeThreshold = lastTelemetryRef.current.battery < 20 ? 300000 : 150000;
+                if (wasInside && !isInside) {
+                  geofenceStateRef.current[zone.id] = false;
+                  const now = Date.now();
+                  const lastAlertTime = lastGeofenceAlertTimeRef.current[zone.id] || 0;
+                  // Debounce geofence exit alert to at least 60 seconds interval to prevent GPS jitter loops
+                  if (now - lastAlertTime > 60000) {
+                    lastGeofenceAlertTimeRef.current[zone.id] = now;
+                    showSystemNotification(`⚠️ RA KHỎI VÙNG AN TOÀN`, {
+                      body: `Con vừa rời khỏi "${zone.name}". Hãy chú ý an toàn nhé!`,
+                      soundType: 'warning',
+                      tag: `geofence_exit_${zone.id}`,
+                    });
+                    showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
+                    haptics.warning();
+                    // Khẩn cấp: gửi thông báo khẩn ngay lập tức lên mây cho bố mẹ
+                    if (zone.notifyOnExit !== false) {
+                      triggerCloudSOS(activeParentId, targetChildId, {
+                        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                        lat: latitude,
+                        lng: longitude,
+                        address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
+                        childName: child.name,
+                      }, child.name).catch(() => {});
+                      uploadCurrentTelemetrySnapshot('geofence_exit').catch(() => {});
+                    }
+                  }
+                } else if (!wasInside && isInside) {
+                  geofenceStateRef.current[zone.id] = true;
+                  showSystemNotification(`🏡 ĐÃ VÀO VÙNG AN TOÀN`, {
+                    body: `Con đã tới an toàn tại "${zone.name}".`,
+                    soundType: 'info',
+                    tag: `geofence_enter_${zone.id}`,
+                  });
+                  showToast(`🏡 Bé đã vào vùng an toàn: ${zone.name}!`);
+                  haptics.light();
+                  uploadCurrentTelemetrySnapshot('geofence_enter').catch(() => {});
+                }
+              });
+
+              // 2. Quyết định đẩy vị trí lên Cloud:
+              // - Khi cha mẹ đang xem trực tiếp (isLive): cập nhật 10s-20s hoặc di chuyển >= 20m
+              // - Khi bình thường: CHỈ gửi mỗi 1 tiếng (3,600,000 ms) để bảo vệ quota máy chủ Firebase và pin máy con
+              let shouldSendNow = false;
+              if (isLive) {
+                const timeThreshold = currentSpeedKmH >= 3 ? 10000 : 20000;
+                shouldSendNow = distMoved >= 20 || timeSinceLastSent >= timeThreshold;
               } else {
-                distThreshold = 20;
-                timeThreshold = currentSpeedKmH >= 5 ? 15000 : 30000;
+                shouldSendNow = timeSinceLastSent >= 3600000; // 1 giờ
               }
 
-              const shouldSendNow = distMoved >= distThreshold || timeSinceLastSent >= timeThreshold;
-
               if (shouldSendNow) {
-                uploadCurrentTelemetrySnapshot('movement_or_elapsed').catch(() => {});
+                uploadCurrentTelemetrySnapshot(isLive ? 'live_tracking_update' : 'hourly_location_sync').catch(() => {});
 
-                // Chỉ ghi log lộ trình (Route History) khi di chuyển thật sự
-                // Tránh spam ghi điểm lộ trình lên Firestore khi máy nằm yên tắt màn hình
-                const shouldLogRoute = distMoved >= (isCurInFg ? 15 : 60) || (currentSpeedKmH > 3 && timeSinceLastSent >= (isCurInFg ? 5000 : 45000));
-
-                if (shouldLogRoute) {
+                // Chỉ ghi lộ trình lên Cloud khi cha mẹ đang xem trực tiếp và máy đang di chuyển rõ rệt
+                if (isLive && distMoved >= 40) {
                   const ptId = `rpt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
                   logChildRoutePointToCloud(
                     activeParentId,
@@ -1792,49 +1876,6 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     child.name
                   ).catch(() => {});
                 }
-
-                // Real-time Geofence Evaluation against synced safeZones
-                const activeZones = state.safeZones?.filter((z) => z.isActive) || [];
-                activeZones.forEach((zone) => {
-                  const d = calculateDistanceMeters(latitude, longitude, zone.lat, zone.lng);
-                  const wasInside = geofenceStateRef.current[zone.id] ?? true;
-                  const isInside = d <= zone.radius;
-
-                  if (wasInside && !isInside) {
-                    geofenceStateRef.current[zone.id] = false;
-                    const now = Date.now();
-                    const lastAlertTime = lastGeofenceAlertTimeRef.current[zone.id] || 0;
-                    // Debounce geofence exit alert to at least 60 seconds interval to prevent GPS jitter loops
-                    if (now - lastAlertTime > 60000) {
-                      lastGeofenceAlertTimeRef.current[zone.id] = now;
-                      showSystemNotification(`⚠️ RA KHỎI VÙNG AN TOÀN`, {
-                        body: `Con vừa rời khỏi "${zone.name}". Hãy chú ý an toàn nhé!`,
-                        soundType: 'warning',
-                        tag: `geofence_exit_${zone.id}`,
-                      });
-                      showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
-                      haptics.warning();
-                      if (zone.notifyOnExit !== false) {
-                        triggerCloudSOS(activeParentId, targetChildId, {
-                          time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-                          lat: latitude,
-                          lng: longitude,
-                          address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
-                          childName: child.name,
-                        }, child.name).catch(() => {});
-                      }
-                    }
-                  } else if (!wasInside && isInside) {
-                    geofenceStateRef.current[zone.id] = true;
-                    showSystemNotification(`🏡 ĐÃ VÀO VÙNG AN TOÀN`, {
-                      body: `Con đã tới an toàn tại "${zone.name}".`,
-                      soundType: 'info',
-                      tag: `geofence_enter_${zone.id}`,
-                    });
-                    showToast(`🏡 Bé đã vào vùng an toàn: ${zone.name}!`);
-                    haptics.light();
-                  }
-                });
               }
             },
             (err) => {},
@@ -1843,13 +1884,17 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         } catch (e) {}
       }
 
-      // Native Battery monitoring
+      // Native Battery monitoring (chỉ cập nhật nội bộ, chỉ gửi khi pin yếu khẩn cấp < 15%)
       if (typeof navigator !== 'undefined' && (navigator as any).getBattery && activeParentId) {
         (navigator as any).getBattery().then((battery: any) => {
           const updateBattery = () => {
             const level = Math.round(battery.level * 100);
             lastTelemetryRef.current.battery = level;
-            uploadCurrentTelemetrySnapshot('battery_level_change').catch(() => {});
+            const now = Date.now();
+            if (level <= 15 && now - lastLowBatteryAlertRef.current > 30 * 60 * 1000) {
+              lastLowBatteryAlertRef.current = now;
+              uploadCurrentTelemetrySnapshot('critical_low_battery').catch(() => {});
+            }
           };
           battery.addEventListener('levelchange', updateBattery);
         }).catch(() => {});

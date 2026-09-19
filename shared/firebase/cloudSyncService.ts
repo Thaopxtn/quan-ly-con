@@ -77,6 +77,8 @@ export type RemoteCommandType =
   | "pc_study_mode"
   | "pc_broadcast"
   | "pc_block_app"
+  | "live_tracking_start"
+  | "live_tracking_stop"
   | "none";
 
 export interface RemoteCommandData {
@@ -686,26 +688,11 @@ export async function uploadChildTelemetryToCloud(
     if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
       try {
         await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/telemetry`), payload);
-        await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}`), sanitizeForRtdb({
-          battery: telemetry.battery,
-          speed: telemetry.speed,
-          lat: telemetry.lat,
-          lng: telemetry.lng,
-          currentAddress: telemetry.currentAddress,
-          isScreenOn: telemetry.isScreenOn,
-          screenState: telemetry.screenState,
-          appStatus: telemetry.appStatus,
-          syncMode: telemetry.syncMode,
-          isOnline: true,
-          lastSeen: now,
-          screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes,
-          activeOpenedApp: telemetry.activeOpenedApp,
-          sensors: telemetry.sensors,
-        }));
       } catch (err) {
         // Can fail if non-auth, open channels above already succeeded
       }
     }
+    recordTelemetryUpload();
   }
 
   // 2. Write to Firestore as persistent fallback
@@ -2345,4 +2332,129 @@ export function subscribeChildPcTelemetry(
     unsubs.forEach((u) => { try { u(); } catch (_) {} });
   };
 }
+
+// =========================================================================
+// 18. Live Tracking Mode & Bandwidth Quota Management
+// =========================================================================
+
+export interface LiveTrackingState {
+  active: boolean;
+  expiresAt: number;
+  requestedAt?: number;
+}
+
+const TELEMETRY_HISTORY_KEY = 'kidcare_telemetry_upload_history';
+
+export function recordTelemetryUpload(): { countLastHour: number; isExcessive: boolean } {
+  try {
+    const now = Date.now();
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(TELEMETRY_HISTORY_KEY) : null;
+    let timestamps: number[] = raw ? JSON.parse(raw) : [];
+    timestamps = timestamps.filter((t) => t > oneHourAgo);
+    timestamps.push(now);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(TELEMETRY_HISTORY_KEY, JSON.stringify(timestamps));
+    }
+    return {
+      countLastHour: timestamps.length,
+      isExcessive: timestamps.length > 50, // Flag excessive if more than 50 uploads in an hour
+    };
+  } catch {
+    return { countLastHour: 0, isExcessive: false };
+  }
+}
+
+export function getTelemetryUploadCountLastHour(): number {
+  try {
+    const now = Date.now();
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(TELEMETRY_HISTORY_KEY) : null;
+    if (!raw) return 0;
+    const timestamps: number[] = JSON.parse(raw);
+    return timestamps.filter((t) => t > oneHourAgo).length;
+  } catch {
+    return 0;
+  }
+}
+
+export async function startLiveTracking(
+  parentId: string,
+  childId: string,
+  durationMinutes: number = 5,
+  childName?: string
+): Promise<void> {
+  const { rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return;
+
+  const now = Date.now();
+  const expiresAt = now + durationMinutes * 60 * 1000;
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+
+  const payload: LiveTrackingState = {
+    active: true,
+    expiresAt,
+    requestedAt: now,
+  };
+
+  if (rtdb) {
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/live_tracking`), payload).catch(() => {});
+  }
+
+  sendRemoteCommandToKid(parentId, childId, 'live_tracking_start', {
+    expiresAt,
+    durationMinutes,
+  }, childName).catch(() => {});
+}
+
+export async function stopLiveTracking(
+  parentId: string,
+  childId: string,
+  childName?: string
+): Promise<void> {
+  const { rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return;
+
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  const payload: LiveTrackingState = {
+    active: false,
+    expiresAt: 0,
+  };
+
+  if (rtdb) {
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/live_tracking`), payload).catch(() => {});
+  }
+
+  sendRemoteCommandToKid(parentId, childId, 'live_tracking_stop', undefined, childName).catch(() => {});
+}
+
+export function subscribeLiveTrackingState(
+  parentId: string,
+  childId: string,
+  onState: (state: LiveTrackingState) => void
+): () => void {
+  const { rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId || !rtdb) return () => {};
+
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  const rRef = rtdbRef(rtdb, `pairings/sync/${syncKey}/live_tracking`);
+
+  return rtdbOnValue(
+    rRef,
+    (snap) => {
+      if (snap.exists()) {
+        const val = snap.val() as LiveTrackingState;
+        if (val.expiresAt && Date.now() > val.expiresAt) {
+          onState({ active: false, expiresAt: 0 });
+        } else {
+          onState(val);
+        }
+      } else {
+        onState({ active: false, expiresAt: 0 });
+      }
+    },
+    () => {}
+  );
+}
+
 
