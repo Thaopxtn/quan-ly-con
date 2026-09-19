@@ -234,12 +234,14 @@ export interface KidTask {
 
 export interface TimeRequest {
   id: string;
+  childId?: string;
   childName: string;
   appName: string;
   requestedMinutes: number;
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   time: string;
+  createdAt?: number;
 }
 
 export interface HardwareScheduleProfile {

@@ -92,6 +92,7 @@ import {
   sendCloudTimeRequest,
   subscribeCloudTimeRequests,
   resolveCloudTimeRequest,
+  subscribeCloudChatMessages,
   subscribeChildrenListFromCloud,
   fetchChildrenListFromCloud,
   saveChildProfileToCloud,
@@ -185,7 +186,7 @@ export interface AppState {
   kidTasks: KidTask[];
   kidStars: number;
   activeSOS: boolean;
-  sosDetails?: { time: string; lat: number; lng: number; address: string };
+  sosDetails?: { time: string; lat: number; lng: number; address: string; childId?: string; childName?: string };
   timeRequests: TimeRequest[];
   studyModeOnly: boolean;
   safeSearch: boolean;
@@ -845,8 +846,16 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
   listeners.forEach((fn) => fn(globalState));
 }
 
-// Active Firestore Subscriptions
-let activeUnsubscribers: Array<() => void> = [];
+// Active Firestore & Realtime Subscriptions Management
+const activeParentChildUnsubs = new Map<string, Array<() => void>>();
+let activeGlobalParentUnsubs: Array<() => void> = [];
+let activeKidUnsubs: Array<() => void> = [];
+let currentSubscribedParentId = '';
+
+// Timestamp tracking to debounce repeated alert notifications
+const lastHandledSosByChild: Record<string, number> = {};
+const lastBatteryAlertByChild: Record<string, number> = {};
+const lastChatAlertByChild: Record<string, number> = {};
 
 // Timestamp of the last dismissed SOS to prevent zombie/stale alert resurrection
 let dismissedSosTimestamp = typeof window !== 'undefined'
@@ -865,240 +874,360 @@ function getSosTimeMs(val: any): number {
   return isNaN(parsed) ? 0 : parsed;
 }
 
-export function syncWithCloudForChild(parentId: string, childId?: string, childNameOverride?: string) {
-  if (typeof window === 'undefined' || !parentId) return;
+/**
+ * Multi-Child Real-Time Cloud Subscription Manager
+ * Subscribes to SOS, telemetry, time requests, chat, stars, and settings
+ * for ALL connected children simultaneously.
+ */
+export function syncParentWithAllChildren(parentId: string, children: ChildProfile[]) {
+  if (typeof window === 'undefined' || !parentId || isKidAppMode()) return;
 
-  // Unsubscribe previous listeners
-  activeUnsubscribers.forEach((unsub) => {
-    try { unsub(); } catch (e) {}
-  });
-  activeUnsubscribers = [];
+  // If parent account changed, clear all previous child subscriptions
+  if (currentSubscribedParentId && currentSubscribedParentId !== parentId) {
+    activeParentChildUnsubs.forEach((unsubs) => {
+      unsubs.forEach((u) => { try { u(); } catch (_) {} });
+    });
+    activeParentChildUnsubs.clear();
+  }
+  currentSubscribedParentId = parentId;
 
-  try {
-    const isKid = isKidAppMode();
+  const currentChildIds = new Set(children.map((c) => c.id).filter(Boolean));
 
-    // 1. Children List Listener from parent (only active on Parent App)
-    // Kid device should NOT subscribe to full children list to avoid child switching conflicts
-    if (!isKid) {
-      const currentParentAcc = getCurrentParentAccount();
-      const unsubChildren = subscribeChildrenListFromCloud(
-        parentId,
-        (cloudChildren) => {
-          applyCloudStateUpdate((prev) => {
-            if (!cloudChildren || cloudChildren.length === 0) {
-              // NEVER wipe out existing children if cloud returns empty!
-              return prev;
-            }
+  // 1. Unsubscribe children that are no longer in the profile list
+  for (const [subscribedChildId, unsubs] of activeParentChildUnsubs.entries()) {
+    if (!currentChildIds.has(subscribedChildId)) {
+      unsubs.forEach((u) => { try { u(); } catch (_) {} });
+      activeParentChildUnsubs.delete(subscribedChildId);
+    }
+  }
 
-            const cloudIds = new Set(cloudChildren.map((c) => c.id));
-            const preservedLocal = prev.children.filter((c) => !cloudIds.has(c.id));
-            const mergedChildren = [
-              ...preservedLocal,
-              ...cloudChildren.map((cc) => {
-                const existing = prev.children.find((c) => c.id === cc.id);
-                const existingDevices = existing?.devices || [];
-                const cloudDevices = cc.devices || [];
-                const devMap = new Map<string, ChildDeviceInfo>();
-                existingDevices.forEach((d: ChildDeviceInfo) => { if (d && d.deviceId) devMap.set(d.deviceId, d); });
-                cloudDevices.forEach((d: ChildDeviceInfo) => {
-                  if (d && d.deviceId) {
-                    const ex = devMap.get(d.deviceId);
-                    devMap.set(d.deviceId, { ...(ex || {}), ...d });
-                  }
-                });
-                const allDevs = Array.from(devMap.values());
-
-                return {
-                  ...(existing || {}),
-                  ...cc,
-                  devices: allDevs,
-                  activeDeviceId: cc.activeDeviceId || existing?.activeDeviceId || (allDevs[0]?.deviceId),
-                };
-              }),
-            ];
-
-            const curIdValid = mergedChildren.some((c) => c.id === prev.selectedChildId);
-            const nextSelectedChildId = curIdValid ? prev.selectedChildId : (mergedChildren[0]?.id || '');
-            const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
-
-            return {
-              ...prev,
-              children: mergedChildren,
-              selectedChildId: nextSelectedChildId,
-              child: nextChild,
-            };
-          });
-        },
-        currentParentAcc?.displayName
-      );
-      activeUnsubscribers.push(unsubChildren);
+  // 2. Subscribe each child that doesn't have active subscriptions yet
+  children.forEach((child) => {
+    if (!child.id || activeParentChildUnsubs.has(child.id)) {
+      return;
     }
 
-    // If a specific childId is selected, listen to its specific subcollections & telemetry
-    if (childId) {
-      const curChild = globalState.children.find((c) => c.id === childId) || globalState.child;
-      const childName = childNameOverride || curChild?.name;
+    const childId = child.id;
+    const childName = child.name;
+    const childUnsubs: Array<() => void> = [];
 
-      if (curChild && curChild.id) {
-        registerActiveChildInCloud(parentId, curChild).catch(() => {});
+    // Register active child in cloud metadata
+    registerActiveChildInCloud(parentId, child).catch(() => {});
+
+    // --- (A) SOS Listener for this child ---
+    const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
+      if (sosData && sosData.active) {
+        const sosTimeMs = getSosTimeMs(sosData.updatedAt) || Date.now();
+        if (dismissedSosTimestamp && sosTimeMs <= dismissedSosTimestamp) {
+          return;
+        }
+        const targetChild = globalState.children.find((k) => k.id === childId) || child;
+        const sosChildName = sosData.childName || targetChild.name || 'Con';
+        const sosInfo = {
+          time: sosData.time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          lat: sosData.lat || targetChild.lat || 10.762622,
+          lng: sosData.lng || targetChild.lng || 106.682245,
+          address: sosData.address || targetChild.currentAddress || 'Đang cập nhật vị trí...',
+          childId: childId,
+          childName: sosChildName,
+        };
+
+        const wasActive = globalState.activeSOS;
+        const now = Date.now();
+        const isRecent = now - (lastHandledSosByChild[childId] || 0) < 15000;
+
+        const alertId = `sos_${childId}_${Math.floor(now / 15000)}`;
+        const newAlert: AlertNotification = {
+          id: alertId,
+          type: 'sos',
+          title: `🚨 KHẨN CẤP: Bé ${sosChildName} vừa bấm SOS!`,
+          message: `Vị trí tại: ${sosInfo.address}. Con cần trợ giúp khẩn cấp!`,
+          time: sosInfo.time,
+          isRead: false,
+          priority: 'urgent',
+          childId: childId,
+          childName: sosChildName,
+          details: 'Con cần sự trợ giúp ngay lập tức!',
+          imageUrl: '🚨',
+        };
+
+        applyCloudStateUpdate((prev) => {
+          const alreadyHasAlert = prev.alerts.some(
+            (a) => a.id === alertId || (a.type === 'sos' && a.childId === childId && !a.isRead)
+          );
+          return {
+            ...prev,
+            activeSOS: true,
+            sosDetails: sosInfo,
+            alerts: alreadyHasAlert ? prev.alerts : [newAlert, ...prev.alerts],
+          };
+        });
+
+        if (!wasActive || !isRecent) {
+          lastHandledSosByChild[childId] = now;
+          eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
+          showSystemNotification(`🚨 KHẨN CẤP: Bé ${sosChildName} nhấn SOS!`, {
+            body: `Vị trí: ${sosInfo.address}. Nhấn để mở ứng dụng ngay!`,
+            soundType: 'emergency',
+            tag: `sos_${childId}`,
+          });
+        }
+      } else if (sosData && sosData.active === false && globalState.activeSOS) {
+        if (globalState.sosDetails?.childId === childId || !globalState.sosDetails?.childId) {
+          lastHandledSosByChild[childId] = 0;
+          applyCloudStateUpdate((prev) => ({
+            ...prev,
+            activeSOS: false,
+          }));
+          eventBus.publish('SOS_CANCELLED', { childId, childName }, 'parent');
+        }
       }
+    }, childName);
+    childUnsubs.push(unsubSOS);
 
-      // 2. SOS Listener (Real-time sirens and alert coordinates) - Parent App only
-      // Kid App is the SOS emitter; Parent receives and sounds the alarm
-      if (!isKid) {
-        let lastHandledSosTimestamp = 0;
-        const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
-          if (sosData && sosData.active) {
-            const sosTimeMs = getSosTimeMs(sosData.updatedAt) || Date.now();
-            if (dismissedSosTimestamp && sosTimeMs <= dismissedSosTimestamp) {
-              return;
-            }
-            const sosInfo = {
-              time: sosData.time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-              lat: sosData.lat || 10.762622,
-              lng: sosData.lng || 106.682245,
-              address: sosData.address || 'Đang cập nhật vị trí...',
+    // --- (B) Telemetry & Battery & GPS Listener for this child ---
+    const unsubTelemetry = subscribeChildTelemetryFromCloud(parentId, childId, (telemetry) => {
+      if (telemetry && (telemetry.lat || telemetry.battery !== undefined)) {
+        const targetChild = globalState.children.find((k) => k.id === childId) || child;
+        const currentChildName = telemetry.childName || targetChild.name;
+
+        // Check for Low Battery Alert (< 15% and > 0)
+        let newBatteryAlert: AlertNotification | null = null;
+        const bat = telemetry.battery;
+        if (bat !== undefined && bat > 0 && bat <= 15) {
+          const lastBatAlert = lastBatteryAlertByChild[childId] || 0;
+          const now = Date.now();
+          if (now - lastBatAlert > 15 * 60 * 1000) {
+            lastBatteryAlertByChild[childId] = now;
+            newBatteryAlert = {
+              id: `bat_${childId}_${now}`,
+              type: 'battery',
+              title: `🪫 Pin yếu: Thiết bị Bé ${currentChildName} chỉ còn ${bat}%`,
+              message: `Pin của Bé ${currentChildName} sắp hết (${bat}%). Hãy nhắc con sạc pin để duy trì kết nối an toàn!`,
+              time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+              isRead: false,
+              priority: 'high',
+              childId: childId,
+              childName: currentChildName,
+              imageUrl: '🪫',
             };
-
-            const wasActive = globalState.activeSOS;
-            const isRecent = Date.now() - lastHandledSosTimestamp < 15000;
-
-            applyCloudStateUpdate((prev) => ({
-              ...prev,
-              activeSOS: true,
-              sosDetails: sosInfo,
-            }));
-
-            // Only broadcast new SOS_TRIGGERED event if not already active or cooldown has passed
-            if (!wasActive || !isRecent) {
-              lastHandledSosTimestamp = Date.now();
-              eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
-            }
-          } else if (sosData && sosData.active === false && globalState.activeSOS) {
-            lastHandledSosTimestamp = 0;
-            applyCloudStateUpdate((prev) => ({
-              ...prev,
-              activeSOS: false,
-            }));
-            eventBus.publish('SOS_CANCELLED', {}, 'parent');
+            showSystemNotification(`🪫 Pin yếu: Bé ${currentChildName} (${bat}%)`, {
+              body: `Pin thiết bị của con sắp cạn. Hãy nhắc con cắm sạc!`,
+              soundType: 'warning',
+              tag: `bat_${childId}`,
+            });
           }
-        }, childName);
-        activeUnsubscribers.push(unsubSOS);
-      }
+        }
 
-      // 3. Real-time Telemetry Listener (GPS, Battery, Speed, Sensors, Screen Time, Active App from Kid Phone) - Parent App only!
-      // STREAMS PHÂN LUỒNG RÕ RÀNG: Kid device calculates its own telemetry and screen time used,
-      // and uploads it to Cloud. Kid MUST NOT subscribe to its own telemetry (avoids re-entry & feedback loops).
-      // Only Parent subscribes to telemetry to display on dashboard/gauges.
-      if (!isKid) {
-        const unsubTelemetry = subscribeChildTelemetryFromCloud(parentId, childId, (telemetry) => {
-        if (telemetry && (telemetry.lat || telemetry.battery !== undefined)) {
-          applyCloudStateUpdate((prev) => {
-            const updatedChildren = prev.children.map((c) => {
-              if (c.id === childId || (telemetry.childName && c.name.toLowerCase() === telemetry.childName.toLowerCase())) {
-                let updatedDevices = c.devices ? [...c.devices] : [];
-                if (telemetry.deviceId) {
-                  const devIdx = updatedDevices.findIndex(d => (d.deviceId === telemetry.deviceId || d.id === telemetry.deviceId));
-                  const baseDev = devIdx >= 0 ? updatedDevices[devIdx] : null;
-                  const newDevData: ChildDeviceInfo = {
+        applyCloudStateUpdate((prev) => {
+          const updatedChildren = prev.children.map((c) => {
+            if (c.id === childId || (telemetry.childName && c.name.toLowerCase() === telemetry.childName.toLowerCase())) {
+              let updatedDevices = c.devices ? [...c.devices] : [];
+              if (telemetry.deviceId) {
+                const devIdx = updatedDevices.findIndex(d => (d.deviceId === telemetry.deviceId || d.id === telemetry.deviceId));
+                const baseDev = devIdx >= 0 ? updatedDevices[devIdx] : null;
+                const newDevData: ChildDeviceInfo = {
+                  deviceId: telemetry.deviceId,
+                  id: telemetry.deviceId,
+                  deviceName: telemetry.deviceName || baseDev?.deviceName || 'Thiết bị của con',
+                  model: telemetry.model || baseDev?.model || 'Android Device',
+                  osVersion: baseDev?.osVersion || 'Android',
+                  pairedAt: baseDev?.pairedAt || new Date().toISOString(),
+                  lat: telemetry.lat ?? baseDev?.lat ?? c.lat,
+                  lng: telemetry.lng ?? baseDev?.lng ?? c.lng,
+                  battery: telemetry.battery ?? baseDev?.battery ?? c.battery,
+                  speed: telemetry.speed ?? baseDev?.speed ?? c.speed,
+                  currentAddress: telemetry.currentAddress ?? baseDev?.currentAddress ?? c.currentAddress,
+                  isScreenOn: telemetry.isScreenOn ?? baseDev?.isScreenOn ?? c.isScreenOn,
+                  screenState: telemetry.screenState ?? baseDev?.screenState ?? c.screenState,
+                  appStatus: telemetry.appStatus ?? baseDev?.appStatus ?? c.appStatus,
+                  lastActive: new Date().toISOString(),
+                  status: 'online',
+                  telemetry: {
                     deviceId: telemetry.deviceId,
-                    id: telemetry.deviceId,
-                    deviceName: telemetry.deviceName || baseDev?.deviceName || 'Thiết bị của con',
-                    model: telemetry.model || baseDev?.model || 'Android Device',
-                    osVersion: baseDev?.osVersion || 'Android',
-                    pairedAt: baseDev?.pairedAt || new Date().toISOString(),
-                    lat: telemetry.lat ?? baseDev?.lat ?? c.lat,
-                    lng: telemetry.lng ?? baseDev?.lng ?? c.lng,
-                    battery: telemetry.battery ?? baseDev?.battery ?? c.battery,
-                    speed: telemetry.speed ?? baseDev?.speed ?? c.speed,
-                    currentAddress: telemetry.currentAddress ?? baseDev?.currentAddress ?? c.currentAddress,
-                    isScreenOn: telemetry.isScreenOn ?? baseDev?.isScreenOn ?? c.isScreenOn,
-                    screenState: telemetry.screenState ?? baseDev?.screenState ?? c.screenState,
-                    appStatus: telemetry.appStatus ?? baseDev?.appStatus ?? c.appStatus,
-                    lastActive: new Date().toISOString(),
-                    status: 'online',
-                    telemetry: {
-                      deviceId: telemetry.deviceId,
-                      lat: telemetry.lat ?? c.lat,
-                      lng: telemetry.lng ?? c.lng,
-                      accuracy: telemetry.accuracy ?? 12,
-                      speed: telemetry.speed ?? c.speed,
-                      battery: telemetry.battery ?? c.battery,
-                      currentAddress: telemetry.currentAddress ?? c.currentAddress,
-                      isScreenOn: telemetry.isScreenOn ?? c.isScreenOn,
-                      screenState: telemetry.screenState ?? c.screenState,
-                      appStatus: telemetry.appStatus ?? c.appStatus,
-                      syncMode: telemetry.syncMode ?? c.syncMode,
-                      activeOpenedApp: telemetry.activeOpenedApp,
-                      screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes,
-                      sensors: telemetry.sensors,
-                      network: telemetry.network,
-                      lastActive: new Date().toISOString(),
-                      updatedAt: Date.now(),
-                    },
-                  };
-
-                  if (devIdx >= 0) {
-                    updatedDevices[devIdx] = { ...updatedDevices[devIdx], ...newDevData };
-                  } else {
-                    updatedDevices.push(newDevData);
-                  }
-                }
-
-                const isActiveDev = !c.activeDeviceId || !telemetry.deviceId || c.activeDeviceId === telemetry.deviceId;
-
-                return {
-                  ...c,
-                  devices: updatedDevices,
-                  activeDeviceId: c.activeDeviceId || telemetry.deviceId,
-                  ...(isActiveDev ? {
                     lat: telemetry.lat ?? c.lat,
                     lng: telemetry.lng ?? c.lng,
-                    battery: telemetry.battery ?? c.battery,
+                    accuracy: telemetry.accuracy ?? 12,
                     speed: telemetry.speed ?? c.speed,
+                    battery: telemetry.battery ?? c.battery,
                     currentAddress: telemetry.currentAddress ?? c.currentAddress,
-                    isScreenOn: telemetry.isScreenOn !== undefined ? telemetry.isScreenOn : c.isScreenOn,
+                    isScreenOn: telemetry.isScreenOn ?? c.isScreenOn,
                     screenState: telemetry.screenState ?? c.screenState,
                     appStatus: telemetry.appStatus ?? c.appStatus,
                     syncMode: telemetry.syncMode ?? c.syncMode,
-                    activeOpenedApp: telemetry.activeOpenedApp ?? c.activeOpenedApp,
-                    screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes ?? c.screenTimeUsedMinutes,
-                  } : {}),
-                  lastUpdated: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                    activeOpenedApp: telemetry.activeOpenedApp,
+                    screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes,
+                    sensors: telemetry.sensors,
+                    network: telemetry.network,
+                    lastActive: new Date().toISOString(),
+                    updatedAt: Date.now(),
+                  },
                 };
+                if (devIdx >= 0) {
+                  updatedDevices[devIdx] = { ...updatedDevices[devIdx], ...newDevData };
+                } else {
+                  updatedDevices.push(newDevData);
+                }
               }
-              return c;
-            });
-            const updatedChild = updatedChildren.find((c) => c.id === prev.selectedChildId) || prev.child;
-            const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
-            const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
-            const nextSettings = {
-              ...curSettings,
-              ...(telemetry.sensors ? { sensorValues: { ...curSettings.sensorValues, ...telemetry.sensors } } : {}),
-            };
 
-            return {
-              ...prev,
-              children: updatedChildren,
-              child: updatedChild,
-              activeOpenedApp: telemetry.activeOpenedApp
-                ? { id: 'app_active', name: telemetry.activeOpenedApp }
-                : prev.activeOpenedApp,
-              screenTime: isCur && telemetry.screenTimeUsedMinutes !== undefined
-                ? { ...prev.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes }
-                : prev.screenTime,
-              childSettings: {
-                ...prev.childSettings,
-                [childId]: nextSettings,
-              },
-            };
+              const isActiveDev = !c.activeDeviceId || !telemetry.deviceId || c.activeDeviceId === telemetry.deviceId;
+
+              return {
+                ...c,
+                devices: updatedDevices,
+                activeDeviceId: c.activeDeviceId || telemetry.deviceId,
+                ...(isActiveDev ? {
+                  lat: telemetry.lat ?? c.lat,
+                  lng: telemetry.lng ?? c.lng,
+                  battery: telemetry.battery ?? c.battery,
+                  speed: telemetry.speed ?? c.speed,
+                  currentAddress: telemetry.currentAddress ?? c.currentAddress,
+                  isScreenOn: telemetry.isScreenOn !== undefined ? telemetry.isScreenOn : c.isScreenOn,
+                  screenState: telemetry.screenState ?? c.screenState,
+                  appStatus: telemetry.appStatus ?? c.appStatus,
+                  syncMode: telemetry.syncMode ?? c.syncMode,
+                  activeOpenedApp: telemetry.activeOpenedApp ?? c.activeOpenedApp,
+                  screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes ?? c.screenTimeUsedMinutes,
+                } : {}),
+                lastUpdated: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+              };
+            }
+            return c;
           });
-        }
-      }, childName);
-      activeUnsubscribers.push(unsubTelemetry);
-    }
 
-    // 4. Settings Listener (Cloud to local child/parent state)
+          const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
+          const updatedChild = updatedChildren.find((c) => c.id === prev.selectedChildId) || prev.child;
+          const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
+          const nextSettings = {
+            ...curSettings,
+            ...(telemetry.sensors ? { sensorValues: { ...curSettings.sensorValues, ...telemetry.sensors } } : {}),
+          };
+
+          return {
+            ...prev,
+            children: updatedChildren,
+            child: isCur ? updatedChild : prev.child,
+            activeOpenedApp: isCur && telemetry.activeOpenedApp
+              ? { id: 'app_active', name: telemetry.activeOpenedApp }
+              : prev.activeOpenedApp,
+            screenTime: isCur && telemetry.screenTimeUsedMinutes !== undefined
+              ? { ...prev.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes }
+              : prev.screenTime,
+            childSettings: {
+              ...prev.childSettings,
+              [childId]: nextSettings,
+            },
+            alerts: newBatteryAlert ? [newBatteryAlert, ...prev.alerts] : prev.alerts,
+          };
+        });
+      }
+    }, childName);
+    childUnsubs.push(unsubTelemetry);
+
+    // --- (C) Time Requests Listener for this child ---
+    const unsubTimeReqs = subscribeCloudTimeRequests(parentId, childId, (requests) => {
+      if (requests && requests.length > 0) {
+        applyCloudStateUpdate((prev) => {
+          const targetChild = prev.children.find((ch) => ch.id === childId) || child;
+          const reqChildName = targetChild.name || 'Con';
+
+          const enrichedRequests: TimeRequest[] = requests.map((r) => ({
+            ...r,
+            childId: r.childId || childId,
+            childName: r.childName || reqChildName,
+          }));
+
+          // Preserve requests of other children!
+          const otherChildRequests = prev.timeRequests.filter((r) => r.childId && r.childId !== childId);
+          const allTimeRequests = [...enrichedRequests, ...otherChildRequests];
+
+          // Generate alert cards for pending requests that haven't been alerted
+          const newAlerts: AlertNotification[] = [];
+          enrichedRequests.forEach((req) => {
+            if (req.status === 'pending') {
+              const reqAlertId = `time_req_${req.id}`;
+              const alreadyNotified = prev.alerts.some(
+                (a) => a.id === reqAlertId || (a.type === 'screentime' && a.childId === childId && a.message?.includes(req.appName) && a.time === req.time)
+              );
+              if (!alreadyNotified) {
+                newAlerts.push({
+                  id: reqAlertId,
+                  type: 'screentime',
+                  title: `⏳ Bé ${req.childName} xin thêm ${req.requestedMinutes} phút dùng ${req.appName}`,
+                  message: `Lý do: "${req.reason || 'Con xin thêm thời gian sử dụng'}"`,
+                  time: req.time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                  isRead: false,
+                  priority: 'medium',
+                  childId: childId,
+                  childName: req.childName,
+                  imageUrl: '⏳',
+                });
+
+                showSystemNotification(`Bé ${req.childName} xin thêm giờ`, {
+                  body: `Xin thêm ${req.requestedMinutes} phút cho ${req.appName}. Lý do: "${req.reason}"`,
+                  soundType: 'info',
+                  tag: `req_${req.id}`,
+                });
+              }
+            }
+          });
+
+          return {
+            ...prev,
+            timeRequests: allTimeRequests,
+            alerts: newAlerts.length > 0 ? [...newAlerts, ...prev.alerts] : prev.alerts,
+          };
+        });
+      }
+    }, childName);
+    childUnsubs.push(unsubTimeReqs);
+
+    // --- (D) Family Chat Listener for this child ---
+    const unsubChat = subscribeCloudChatMessages(parentId, childId, (messages) => {
+      if (messages && messages.length > 0) {
+        const targetChild = globalState.children.find((ch) => ch.id === childId) || child;
+        const chatChildName = targetChild.name || 'Con';
+        const lastMsg = messages[messages.length - 1];
+
+        if (lastMsg && lastMsg.sender === 'kid') {
+          const msgTimestamp = typeof lastMsg.timestamp === 'number' ? lastMsg.timestamp : Date.now();
+          const lastAlerted = lastChatAlertByChild[childId] || 0;
+          if (Date.now() - msgTimestamp < 3 * 60 * 1000 && msgTimestamp > lastAlerted) {
+            lastChatAlertByChild[childId] = msgTimestamp;
+            const chatAlertId = `chat_alert_${lastMsg.id || msgTimestamp}`;
+            const newChatAlert: AlertNotification = {
+              id: chatAlertId,
+              type: 'parent_message',
+              title: `💬 Tin nhắn từ Bé ${chatChildName}`,
+              message: lastMsg.text,
+              time: lastMsg.time || new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+              isRead: false,
+              priority: 'low',
+              childId: childId,
+              childName: chatChildName,
+              imageUrl: '💬',
+            };
+
+            applyCloudStateUpdate((prev) => {
+              const alreadyExists = prev.alerts.some((a) => a.id === chatAlertId);
+              return {
+                ...prev,
+                alerts: alreadyExists ? prev.alerts : [newChatAlert, ...prev.alerts],
+              };
+            });
+
+            showSystemNotification(`💬 Bé ${chatChildName}`, {
+              body: lastMsg.text,
+              soundType: 'info',
+              tag: `chat_${childId}`,
+            });
+          }
+        }
+      }
+    }, childName);
+    childUnsubs.push(unsubChat);
+
+    // --- (E) Child Settings Listener ---
     const unsubSettings = subscribeChildSettingsFromCloud(parentId, childId, (cloudSettings) => {
       if (cloudSettings && Object.keys(cloudSettings).length > 0) {
         applyCloudStateUpdate((prev) => {
@@ -1106,90 +1235,223 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
           const mergedSettings = { ...curSettings, ...cloudSettings };
           const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
           const newStars = mergedSettings.kidStars !== undefined ? mergedSettings.kidStars : curSettings.kidStars;
-            return {
-              ...prev,
-              childSettings: {
-                ...prev.childSettings,
-                [childId]: {
-                  ...mergedSettings,
-                  kidStars: newStars,
-                },
-              },
-              apps: isCur ? (mergedSettings.apps || prev.apps) : prev.apps,
-              hardwareControls: isCur ? (mergedSettings.hardwareControls || prev.hardwareControls) : prev.hardwareControls,
-              kioskMode: isCur ? (mergedSettings.kioskMode || prev.kioskMode) : prev.kioskMode,
-              lockChallenge: isCur ? (mergedSettings.lockChallenge || prev.lockChallenge) : prev.lockChallenge,
-              smartRoutines: isCur ? (mergedSettings.smartRoutines || prev.smartRoutines) : prev.smartRoutines,
-              broadcastMessage: isCur ? (mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage) : prev.broadcastMessage,
-              kidTasks: isCur ? (mergedSettings.kidTasks || prev.kidTasks) : prev.kidTasks,
-              kidStars: isCur ? newStars : prev.kidStars,
-              starHistory: isCur ? (mergedSettings.starHistory || prev.starHistory) : prev.starHistory,
-              redemptions: isCur ? (mergedSettings.redemptions || prev.redemptions) : prev.redemptions,
-              safeZones: mergedSettings.safeZones || prev.safeZones,
-              activeReminder: isCur ? (mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder) : prev.activeReminder,
-              lastVoiceGuide: isCur ? (mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide) : prev.lastVoiceGuide,
-              screenTime: isCur && mergedSettings.screenTimeLimitMinutes !== undefined
-                ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
-                : prev.screenTime,
-            };
-          });
-        }
-      }, childName);
-      activeUnsubscribers.push(unsubSettings);
-
-      // 4b. Dedicated Real-time Stars Listener
-      const unsubStars = subscribeChildStarsFromCloud(parentId, childId, (starData) => {
-        if (starData && typeof starData.stars === 'number') {
-          applyCloudStateUpdate((prev) => {
-            const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
-            const existingHistory = curSettings.starHistory || [];
-            let newHistory = existingHistory;
-            if (starData.transaction && starData.transaction.id && !existingHistory.some((tx) => tx.id === starData.transaction.id)) {
-              newHistory = [starData.transaction, ...existingHistory];
-            }
-            const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
-            return {
-              ...prev,
-              childSettings: {
-                ...prev.childSettings,
-                [childId]: {
-                  ...curSettings,
-                  kidStars: starData.stars,
-                  starHistory: newHistory,
-                },
-              },
-              ...(isCur ? { kidStars: starData.stars, starHistory: newHistory } : {}),
-            };
-          });
-        }
-      }, childName);
-      activeUnsubscribers.push(unsubStars);
-
-      // 5. Time Requests Listener
-      const unsubTimeReqs = subscribeCloudTimeRequests(parentId, childId, (requests) => {
-        if (requests && requests.length > 0) {
-          applyCloudStateUpdate((prev) => ({
+          return {
             ...prev,
-            timeRequests: requests,
-          }));
-        }
-      }, childName);
-      activeUnsubscribers.push(unsubTimeReqs);
+            childSettings: {
+              ...prev.childSettings,
+              [childId]: {
+                ...mergedSettings,
+                kidStars: newStars,
+              },
+            },
+            apps: isCur ? (mergedSettings.apps || prev.apps) : prev.apps,
+            hardwareControls: isCur ? (mergedSettings.hardwareControls || prev.hardwareControls) : prev.hardwareControls,
+            kioskMode: isCur ? (mergedSettings.kioskMode || prev.kioskMode) : prev.kioskMode,
+            lockChallenge: isCur ? (mergedSettings.lockChallenge || prev.lockChallenge) : prev.lockChallenge,
+            smartRoutines: isCur ? (mergedSettings.smartRoutines || prev.smartRoutines) : prev.smartRoutines,
+            broadcastMessage: isCur ? (mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage) : prev.broadcastMessage,
+            kidTasks: isCur ? (mergedSettings.kidTasks || prev.kidTasks) : prev.kidTasks,
+            kidStars: isCur ? newStars : prev.kidStars,
+            starHistory: isCur ? (mergedSettings.starHistory || prev.starHistory) : prev.starHistory,
+            redemptions: isCur ? (mergedSettings.redemptions || prev.redemptions) : prev.redemptions,
+            safeZones: mergedSettings.safeZones || prev.safeZones,
+            activeReminder: isCur ? (mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder) : prev.activeReminder,
+            lastVoiceGuide: isCur ? (mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide) : prev.lastVoiceGuide,
+            screenTime: isCur && mergedSettings.screenTimeLimitMinutes !== undefined
+              ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
+              : prev.screenTime,
+          };
+        });
+      }
+    }, childName);
+    childUnsubs.push(unsubSettings);
 
-      // 6. Safe Zones Listener
-      const unsubSafeZones = subscribeSafeZonesFromCloud(parentId, (zones) => {
-        if (zones && zones.length > 0) {
-          applyCloudStateUpdate((prev) => ({
+    // --- (F) Child Stars Listener ---
+    const unsubStars = subscribeChildStarsFromCloud(parentId, childId, (starData) => {
+      if (starData && typeof starData.stars === 'number') {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
+          const existingHistory = curSettings.starHistory || [];
+          let newHistory = existingHistory;
+          if (starData.transaction && starData.transaction.id && !existingHistory.some((tx) => tx.id === starData.transaction.id)) {
+            newHistory = [starData.transaction, ...existingHistory];
+          }
+          const isCur = childId === prev.selectedChildId || !prev.selectedChildId;
+          return {
             ...prev,
-            safeZones: zones,
-          }));
-        }
-      });
-      activeUnsubscribers.push(unsubSafeZones);
-    }
-  } catch (err) {
-    console.warn('syncWithCloudForChild error:', err);
+            childSettings: {
+              ...prev.childSettings,
+              [childId]: {
+                ...curSettings,
+                kidStars: starData.stars,
+                starHistory: newHistory,
+              },
+            },
+            ...(isCur ? { kidStars: starData.stars, starHistory: newHistory } : {}),
+          };
+        });
+      }
+    }, childName);
+    childUnsubs.push(unsubStars);
+
+    activeParentChildUnsubs.set(childId, childUnsubs);
+  });
+}
+
+export function syncWithCloudForChild(parentId: string, childId?: string, childNameOverride?: string) {
+  if (typeof window === 'undefined' || !parentId) return;
+
+  const isKid = isKidAppMode();
+
+  if (isKid) {
+    // Machine is Kid App: Only subscribe to this child's own settings, stars, and chat
+    activeKidUnsubs.forEach((u) => { try { u(); } catch (_) {} });
+    activeKidUnsubs = [];
+
+    const effectiveChildId = childId || getActiveChildId();
+    const curChild = globalState.children.find((c) => c.id === effectiveChildId) || globalState.child;
+    const childName = childNameOverride || curChild?.name;
+
+    const unsubSettings = subscribeChildSettingsFromCloud(parentId, effectiveChildId, (cloudSettings) => {
+      if (cloudSettings && Object.keys(cloudSettings).length > 0) {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
+          const mergedSettings = { ...curSettings, ...cloudSettings };
+          return {
+            ...prev,
+            childSettings: {
+              ...prev.childSettings,
+              [effectiveChildId]: mergedSettings,
+            },
+            apps: mergedSettings.apps || prev.apps,
+            hardwareControls: mergedSettings.hardwareControls || prev.hardwareControls,
+            kioskMode: mergedSettings.kioskMode || prev.kioskMode,
+            lockChallenge: mergedSettings.lockChallenge || prev.lockChallenge,
+            smartRoutines: mergedSettings.smartRoutines || prev.smartRoutines,
+            broadcastMessage: mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage,
+            kidTasks: mergedSettings.kidTasks || prev.kidTasks,
+            kidStars: mergedSettings.kidStars !== undefined ? mergedSettings.kidStars : prev.kidStars,
+            starHistory: mergedSettings.starHistory || prev.starHistory,
+            redemptions: mergedSettings.redemptions || prev.redemptions,
+            safeZones: mergedSettings.safeZones || prev.safeZones,
+            activeReminder: mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder,
+            lastVoiceGuide: mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide,
+            screenTime: mergedSettings.screenTimeLimitMinutes !== undefined
+              ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
+              : prev.screenTime,
+          };
+        });
+      }
+    }, childName);
+    activeKidUnsubs.push(unsubSettings);
+
+    const unsubStars = subscribeChildStarsFromCloud(parentId, effectiveChildId, (starData) => {
+      if (starData && typeof starData.stars === 'number') {
+        applyCloudStateUpdate((prev) => {
+          const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
+          const existingHistory = curSettings.starHistory || [];
+          let newHistory = existingHistory;
+          if (starData.transaction && starData.transaction.id && !existingHistory.some((tx) => tx.id === starData.transaction.id)) {
+            newHistory = [starData.transaction, ...existingHistory];
+          }
+          return {
+            ...prev,
+            childSettings: {
+              ...prev.childSettings,
+              [effectiveChildId]: {
+                ...curSettings,
+                kidStars: starData.stars,
+                starHistory: newHistory,
+              },
+            },
+            kidStars: starData.stars,
+            starHistory: newHistory,
+          };
+        });
+      }
+    }, childName);
+    activeKidUnsubs.push(unsubStars);
+
+    const unsubChat = subscribeCloudChatMessages(parentId, effectiveChildId, (_messages) => {
+      // Chat handled by FamilyChatModal
+    }, childName);
+    activeKidUnsubs.push(unsubChat);
+
+    return;
   }
+
+  // Machine is Parent App:
+  // 1. Register top-level parent listeners (Children List & Safe Zones) if not yet done
+  if (activeGlobalParentUnsubs.length === 0 || currentSubscribedParentId !== parentId) {
+    activeGlobalParentUnsubs.forEach((u) => { try { u(); } catch (_) {} });
+    activeGlobalParentUnsubs = [];
+
+    const currentParentAcc = getCurrentParentAccount();
+    const unsubChildren = subscribeChildrenListFromCloud(
+      parentId,
+      (cloudChildren) => {
+        if (!cloudChildren || cloudChildren.length === 0) return;
+
+        applyCloudStateUpdate((prev) => {
+          const cloudIds = new Set(cloudChildren.map((c) => c.id));
+          const preservedLocal = prev.children.filter((c) => !cloudIds.has(c.id));
+          const mergedChildren = [
+            ...preservedLocal,
+            ...cloudChildren.map((cc) => {
+              const existing = prev.children.find((c) => c.id === cc.id);
+              const existingDevices = existing?.devices || [];
+              const cloudDevices = cc.devices || [];
+              const devMap = new Map<string, ChildDeviceInfo>();
+              existingDevices.forEach((d: ChildDeviceInfo) => { if (d && d.deviceId) devMap.set(d.deviceId, d); });
+              cloudDevices.forEach((d: ChildDeviceInfo) => {
+                if (d && d.deviceId) {
+                  const ex = devMap.get(d.deviceId);
+                  devMap.set(d.deviceId, { ...(ex || {}), ...d });
+                }
+              });
+              const allDevs = Array.from(devMap.values());
+
+              return {
+                ...(existing || {}),
+                ...cc,
+                devices: allDevs,
+                activeDeviceId: cc.activeDeviceId || existing?.activeDeviceId || (allDevs[0]?.deviceId),
+              };
+            }),
+          ];
+
+          const curIdValid = mergedChildren.some((c) => c.id === prev.selectedChildId);
+          const nextSelectedChildId = curIdValid ? prev.selectedChildId : (mergedChildren[0]?.id || '');
+          const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
+
+          return {
+            ...prev,
+            children: mergedChildren,
+            selectedChildId: nextSelectedChildId,
+            child: nextChild,
+          };
+        });
+
+        // MULTI-CHILD: Automatically ensure every child in mergedChildren is actively subscribed
+        syncParentWithAllChildren(parentId, globalState.children);
+      },
+      currentParentAcc?.displayName
+    );
+    activeGlobalParentUnsubs.push(unsubChildren);
+
+    const unsubSafeZones = subscribeSafeZonesFromCloud(parentId, (zones) => {
+      if (zones && zones.length > 0) {
+        applyCloudStateUpdate((prev) => ({
+          ...prev,
+          safeZones: zones,
+        }));
+      }
+    });
+    activeGlobalParentUnsubs.push(unsubSafeZones);
+  }
+
+  // 2. Multi-Child Subscription for all children currently in globalState
+  syncParentWithAllChildren(parentId, globalState.children);
 }
 
 // Actively query and sync all children across RTDB, Firestore, and pairings
@@ -1226,6 +1488,11 @@ export async function syncAllChildrenFromCloud(explicitParentId?: string): Promi
           child: nextChild,
         };
       });
+
+      // MULTI-CHILD: Ensure all children are actively subscribed
+      if (!isKidAppMode()) {
+        syncParentWithAllChildren(parentId, globalState.children);
+      }
       return cloudChildren;
     }
   } catch (err) {
@@ -1398,33 +1665,39 @@ eventBus.subscribe('LIVE_STREAM_TOGGLED', (live: LiveMonitoring) => {
 });
 
 let lastSosAlertCreatedTime = 0;
-eventBus.subscribe('SOS_TRIGGERED', (sosInfo: { time: string; lat: number; lng: number; address: string }) => {
+eventBus.subscribe('SOS_TRIGGERED', (sosInfo: { time: string; lat: number; lng: number; address: string; childId?: string; childName?: string }) => {
   const now = Date.now();
   // Deduplicate and debounce: if an SOS is already active or an alert was created < 15 seconds ago,
   // simply update sosDetails without prepending duplicate alert cards to globalState.alerts.
   if (globalState.activeSOS && now - lastSosAlertCreatedTime < 15000) {
     saveAndNotify({
       ...globalState,
-      sosDetails: sosInfo,
+      sosDetails: { ...sosInfo, childId: sosInfo.childId, childName: sosInfo.childName },
     });
     return;
   }
   lastSosAlertCreatedTime = now;
 
+  const targetChild = sosInfo.childId ? globalState.children.find(c => c.id === sosInfo.childId) : null;
+  const childName = sosInfo.childName || targetChild?.name || globalState.child?.name || 'Con';
+
   const newAlert: AlertNotification = {
-    id: 'sos_' + now,
+    id: 'sos_' + (sosInfo.childId || 'all') + '_' + now,
     type: 'sos',
-    title: '🚨 KHẨN CẤP: Con đã nhấn nút SOS!',
+    title: `🚨 KHẨN CẤP: Bé ${childName} đã nhấn nút SOS!`,
     message: `Vị trí tại: ${sosInfo.address}`,
     time: sosInfo.time,
     isRead: false,
     priority: 'urgent',
+    childId: sosInfo.childId,
+    childName: childName,
     details: 'Con cần sự trợ giúp ngay lập tức!',
+    imageUrl: '🚨',
   };
   saveAndNotify({
     ...globalState,
     activeSOS: true,
-    sosDetails: sosInfo,
+    sosDetails: { ...sosInfo, childId: sosInfo.childId, childName },
     alerts: [newAlert, ...globalState.alerts],
   });
 });
@@ -1435,18 +1708,22 @@ eventBus.subscribe('SOS_CANCELLED', () => {
 });
 
 eventBus.subscribe('TIME_EXTENSION_REQUESTED', (req: TimeRequest) => {
+  const childName = req.childName || globalState.child?.name || 'Bé';
   saveAndNotify({
     ...globalState,
-    timeRequests: [req, ...globalState.timeRequests],
+    timeRequests: [req, ...globalState.timeRequests.filter(r => r.id !== req.id)],
     alerts: [
       {
         id: 'alt_' + Date.now(),
         type: 'screentime',
-        title: `Bé An xin thêm ${req.requestedMinutes} phút dùng ${req.appName}`,
+        title: `⏳ Bé ${childName} xin thêm ${req.requestedMinutes} phút dùng ${req.appName}`,
         message: `Lý do: "${req.reason}"`,
         time: req.time,
         isRead: false,
         priority: 'medium',
+        childId: req.childId,
+        childName: childName,
+        imageUrl: '⏳',
       },
       ...globalState.alerts,
     ],
@@ -2303,9 +2580,9 @@ export const useAppState = () => {
         localStorage.setItem('parentpro_dismissed_sos_time', String(now));
       } catch (e) {}
     }
-    const effectiveChildId = childId || state.selectedChildId;
+    const effectiveChildId = childId || state.sosDetails?.childId || state.selectedChildId;
     saveAndNotify({ ...state, activeSOS: false });
-    eventBus.publish('SOS_CANCELLED', {}, 'parent');
+    eventBus.publish('SOS_CANCELLED', { childId: effectiveChildId }, 'parent');
     const parentId = getActiveParentId();
     const childrenToClear = state.children && state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
     clearAllFamilySosInCloud(parentId, childrenToClear).catch(() => {});
@@ -2318,11 +2595,14 @@ export const useAppState = () => {
     const parentId = getActiveParentId();
     const kidPaired = getKidDevicePairedInfo();
     const effectiveChildId = kidPaired?.childId || state.selectedChildId;
+    const targetChild = state.children.find((c) => c.id === effectiveChildId) || state.child;
+    const childName = kidPaired?.childName || targetChild?.name || 'Bé';
     const req = {
       appName,
       requestedMinutes,
       reason,
-      childName: kidPaired?.childName || state.child.name,
+      childName,
+      childId: effectiveChildId,
     };
     sendCloudTimeRequest(parentId, effectiveChildId, req).catch(() => {});
     const fullReq: TimeRequest = {
@@ -2336,16 +2616,19 @@ export const useAppState = () => {
 
   const decideTimeRequest = (reqId: string, status: 'approved' | 'rejected') => {
     const parentId = getActiveParentId();
-    const childId = state.selectedChildId;
-    resolveCloudTimeRequest(parentId, childId, reqId, status).catch(() => {});
+    const pendingReq = state.timeRequests.find((r) => r.id === reqId);
+    const targetChildId = pendingReq?.childId || state.selectedChildId;
+    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+    const childName = pendingReq?.childName || targetChild?.name;
+
+    resolveCloudTimeRequest(parentId, targetChildId, reqId, status, childName).catch(() => {});
     if (status === 'approved') {
-      const pendingReq = state.timeRequests.find((r) => r.id === reqId);
       const extraMinutes = pendingReq?.requestedMinutes || 15;
-      extendChildTimeNow(extraMinutes, childId);
+      extendChildTimeNow(extraMinutes, targetChildId);
     }
     const updated = state.timeRequests.map((r) => (r.id === reqId ? { ...r, status } : r));
     saveAndNotify({ ...state, timeRequests: updated });
-    eventBus.publish('TIME_EXTENSION_RESOLVED', { reqId, status }, 'parent');
+    eventBus.publish('TIME_EXTENSION_RESOLVED', { reqId, status, childId: targetChildId, childName }, 'parent');
   };
 
   const buzzKidPhone = (childId?: string) => {

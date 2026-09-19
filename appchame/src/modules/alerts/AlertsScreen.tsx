@@ -26,13 +26,26 @@ interface AlertsScreenProps {
 }
 
 export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }) => {
-  const { state, markAlertAsRead, clearAllAlerts } = useAppState();
+  const { state, markAlertAsRead, clearAllAlerts, decideTimeRequest } = useAppState();
   const { alerts, selectedChildId, children, child } = state;
-  const [filter, setFilter] = useState<'all' | 'messages' | 'location' | 'study' | 'device'>('all');
+  const [filter, setFilter] = useState<'all' | 'sos' | 'requests' | 'messages' | 'location' | 'study' | 'device'>('all');
+  const [childFilter, setChildFilter] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   const filteredAlerts = alerts.filter((alert) => {
+    // 1. Filter by specific child if selected
+    if (childFilter !== 'all' && alert.childId && alert.childId !== childFilter) {
+      return false;
+    }
+    // 2. Filter by category
     if (filter === 'all') return true;
+    if (filter === 'sos') return alert.type === 'sos';
+    if (filter === 'requests') {
+      return (
+        alert.type === 'screentime' &&
+        (alert.id.startsWith('req_') || alert.id.startsWith('time_req_') || alert.title.includes('xin thêm'))
+      );
+    }
     if (filter === 'messages') {
       return (
         alert.type === 'parent_message' ||
@@ -154,12 +167,62 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
         </div>
       </div>
 
+      {/* Multi-Child Filter Bar */}
+      {children && children.length > 1 && (
+        <div className="px-4 pt-3 pb-1">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 shrink-0 mr-1">
+              Lọc theo con:
+            </span>
+            <button
+              onClick={() => setChildFilter('all')}
+              className={`px-3 py-1 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer ${
+                childFilter === 'all'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              Tất cả các con ({alerts.length})
+            </button>
+            {children.map((c) => {
+              const childAlertCount = alerts.filter((a) => a.childId === c.id).length;
+              const childUnreadCount = alerts.filter((a) => a.childId === c.id && !a.isRead).length;
+              const isSelected = childFilter === c.id;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setChildFilter(c.id)}
+                  className={`px-3 py-1 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>👶 {c.name}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                      isSelected
+                        ? 'bg-white/20 text-white'
+                        : childUnreadCount > 0
+                        ? 'bg-rose-500 text-white animate-pulse'
+                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500'
+                    }`}
+                  >
+                    {childAlertCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Filter Tabs */}
       <div className="p-4 pb-2">
         <div className="bg-slate-200/80 dark:bg-slate-800/80 p-1 rounded-2xl flex gap-1 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setFilter('all')}
-            className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer ${
+            className={`py-1.5 px-2.5 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer ${
               filter === 'all'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -167,9 +230,33 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
           >
             Tất cả ({alerts.length})
           </button>
+          {alerts.some((a) => a.type === 'sos') && (
+            <button
+              onClick={() => setFilter('sos')}
+              className={`py-1.5 px-2.5 text-xs font-black rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
+                filter === 'sos'
+                  ? 'bg-rose-600 text-white shadow-xs animate-pulse'
+                  : 'text-rose-600 dark:text-rose-400 hover:bg-rose-50'
+              }`}
+            >
+              <span>🚨 Khẩn cấp SOS ({alerts.filter((a) => a.type === 'sos').length})</span>
+            </button>
+          )}
+          {alerts.some((a) => a.type === 'screentime' && (a.id.startsWith('req_') || a.id.startsWith('time_req_') || a.title.includes('xin thêm'))) && (
+            <button
+              onClick={() => setFilter('requests')}
+              className={`py-1.5 px-2.5 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
+                filter === 'requests'
+                  ? 'bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-400 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              <span>⏳ Xin thêm giờ</span>
+            </button>
+          )}
           <button
             onClick={() => setFilter('messages')}
-            className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
+            className={`py-1.5 px-2.5 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
               filter === 'messages'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -179,7 +266,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
           </button>
           <button
             onClick={() => setFilter('location')}
-            className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
+            className={`py-1.5 px-2.5 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
               filter === 'location'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -189,7 +276,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
           </button>
           <button
             onClick={() => setFilter('study')}
-            className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
+            className={`py-1.5 px-2.5 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
               filter === 'study'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -199,7 +286,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
           </button>
           <button
             onClick={() => setFilter('device')}
-            className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
+            className={`py-1.5 px-2.5 text-xs font-bold rounded-xl transition shrink-0 cursor-pointer flex items-center justify-center gap-1 ${
               filter === 'device'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -260,8 +347,14 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
                         {item.title}
                       </h4>
                       {item.childName && (
-                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold shrink-0">
-                          {item.childName}
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold shrink-0 border border-blue-200/60 dark:border-blue-800/60 flex items-center gap-1">
+                          <span>👶</span>
+                          <span>{item.childName}</span>
+                        </span>
+                      )}
+                      {item.type === 'sos' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-600 text-white font-black shrink-0 animate-pulse">
+                          🚨 SOS
                         </span>
                       )}
                     </div>
@@ -294,6 +387,46 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
                       )}
                     </div>
                   )}
+
+                  {/* Pending Time Request Quick Decision Actions */}
+                  {(() => {
+                    const isTimeReq = item.type === 'screentime' && (item.id.startsWith('req_') || item.id.startsWith('time_req_') || item.title.includes('xin thêm'));
+                    if (!isTimeReq) return null;
+                    const rawReqId = item.id.replace('time_req_', '').replace('req_', '');
+                    const matchedReq = state.timeRequests.find((r) => r.id === rawReqId || r.id === item.id || (item.childId && r.childId === item.childId && r.time === item.time));
+                    if (!matchedReq || matchedReq.status !== 'pending') return null;
+
+                    return (
+                      <div className="mt-2.5 p-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-amber-800 dark:text-amber-300 text-xs font-bold truncate">
+                          <Clock size={14} className="text-amber-600 shrink-0" />
+                          <span className="truncate">Chờ duyệt +{matchedReq.requestedMinutes}p</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              decideTimeRequest(matchedReq.id, 'approved');
+                            }}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg shadow-xs active:scale-95 transition cursor-pointer"
+                          >
+                            Duyệt
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              decideTimeRequest(matchedReq.id, 'rejected');
+                            }}
+                            className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-700 dark:text-slate-200 text-[11px] font-bold rounded-lg active:scale-95 transition cursor-pointer"
+                          >
+                            Từ chối
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {!item.isRead && (

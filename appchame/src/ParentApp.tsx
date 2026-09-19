@@ -78,7 +78,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
   const [isPrivacyAccepted, setIsPrivacyAccepted] = useState(() => {
     return localStorage.getItem('parentpro_privacy_policy_accepted_v1') === 'true';
   });
-  const { state, decideTimeRequest, cancelSOS } = useAppState();
+  const { state, decideTimeRequest, cancelSOS, switchChild } = useAppState();
 
   const handleLogout = () => {
     logoutParentAccount();
@@ -155,7 +155,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
       if (now - lastEmergencyNotifiedTimeRef.current > 15000) {
         lastEmergencyNotifiedTimeRef.current = now;
         notifyEmergencyAlert(
-          currentChild?.name || 'Bé',
+          sosDetails?.childName || currentChild?.name || 'Bé',
           sosDetails?.address,
           sosDetails?.time
         );
@@ -163,7 +163,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     } else {
       lastEmergencyNotifiedTimeRef.current = 0;
     }
-  }, [activeSOS, currentChild?.name, sosDetails?.address, sosDetails?.time]);
+  }, [activeSOS, sosDetails?.childName, currentChild?.name, sosDetails?.address, sosDetails?.time]);
 
   // Intelligent navigation router supporting both direct screens and sub-tab targets
   const handleNavigate = (screen: string) => {
@@ -267,7 +267,8 @@ export const ParentApp: React.FC<ParentAppProps> = ({
   };
 
   const unreadAlertCount = alerts.filter((a) => !a.isRead).length;
-  const pendingTimeRequest = timeRequests.find((r) => r.status === 'pending');
+  const pendingTimeRequests = timeRequests.filter((r) => r.status === 'pending');
+  const pendingTimeRequest = pendingTimeRequests[0];
 
   // If user is authenticated, ensure we are not on welcome screen
   useEffect(() => {
@@ -301,23 +302,32 @@ export const ParentApp: React.FC<ParentAppProps> = ({
       )}
 
       {/* Standard Non-blocking Floating Emergency Alert Banner */}
-      <SystemNotificationBanner
-        isVisible={!!activeSOS && !isSosBannerDismissed}
-        childName={currentChild?.name || 'Bé An'}
-        childAvatar={currentChild?.avatar}
-        childPhone={currentChild?.phone || '0987654321'}
-        time={sosDetails?.time}
-        address={sosDetails?.address}
-        onDismiss={() => {
-          setIsSosBannerDismissed(true);
-          cancelSOS();
-        }}
-        onOpenMap={() => {
-          setTrackingTab('live');
-          setCurrentScreen('tracking');
-          if (onScreenChangeExternal) onScreenChangeExternal('tracking');
-        }}
-      />
+      {(() => {
+        const sosChild = sosDetails?.childId ? (children?.find(c => c.id === sosDetails.childId) || currentChild) : currentChild;
+        const sosName = sosDetails?.childName || sosChild?.name || 'Bé';
+        return (
+          <SystemNotificationBanner
+            isVisible={!!activeSOS && !isSosBannerDismissed}
+            childName={sosName}
+            childAvatar={sosChild?.avatar}
+            childPhone={sosChild?.phone || '0987654321'}
+            time={sosDetails?.time}
+            address={sosDetails?.address}
+            onDismiss={() => {
+              setIsSosBannerDismissed(true);
+              cancelSOS(sosDetails?.childId);
+            }}
+            onOpenMap={() => {
+              if (sosDetails?.childId) {
+                switchChild(sosDetails.childId);
+              }
+              setTrackingTab('live');
+              setCurrentScreen('tracking');
+              if (onScreenChangeExternal) onScreenChangeExternal('tracking');
+            }}
+          />
+        );
+      })()}
 
       {/* Pending Child Time Request Banner */}
       {pendingTimeRequest && currentScreen !== 'sos' && (
@@ -326,18 +336,23 @@ export const ParentApp: React.FC<ParentAppProps> = ({
             <BellRing size={15} className="shrink-0" />
             <span className="truncate">
               <strong>{pendingTimeRequest.childName}</strong> xin thêm {pendingTimeRequest.requestedMinutes}p dùng {pendingTimeRequest.appName}
+              {pendingTimeRequests.length > 1 && (
+                <span className="ml-1.5 px-1.5 py-0.5 bg-amber-700/80 text-[10px] rounded-full font-bold">
+                  +{pendingTimeRequests.length - 1} bé khác
+                </span>
+              )}
             </span>
           </div>
           <div className="flex items-center space-x-1.5 shrink-0 ml-2">
             <button
               onClick={() => decideTimeRequest(pendingTimeRequest.id, 'approved')}
-              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-bold text-[10px]"
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] shadow-xs active:scale-95 transition"
             >
               Duyệt
             </button>
             <button
               onClick={() => decideTimeRequest(pendingTimeRequest.id, 'rejected')}
-              className="px-2 py-0.5 bg-white/20 hover:bg-white/30 text-white rounded-md font-bold text-[10px]"
+              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg font-bold text-[11px] active:scale-95 transition"
             >
               Từ chối
             </button>

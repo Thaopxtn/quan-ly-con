@@ -1311,16 +1311,20 @@ export async function clearRemoteCommand(
 export async function sendCloudTimeRequest(
   parentId: string,
   childId: string,
-  req: { appName: string; requestedMinutes: number; reason: string; childName: string }
+  req: { appName: string; requestedMinutes: number; reason: string; childName: string; childId?: string }
 ): Promise<void> {
   const { db, rtdb, auth } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return;
 
   const reqId = "req_" + Date.now();
   const timeStr = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-  const timeReqData = {
+  const timeReqData: TimeRequest = {
     id: reqId,
-    ...req,
+    childId: req.childId || childId,
+    appName: req.appName,
+    requestedMinutes: req.requestedMinutes,
+    reason: req.reason,
+    childName: req.childName,
     status: "pending",
     time: timeStr,
     createdAt: Date.now(),
@@ -1334,7 +1338,7 @@ export async function sendCloudTimeRequest(
     summary: `Bé ${req.childName} gửi yêu cầu xin thêm ${req.requestedMinutes} phút cho ${req.appName} (Lý do: "${req.reason || 'Con xin thêm giờ'}")`,
     childId,
     childName: req.childName,
-    payload: req,
+    payload: timeReqData,
   });
 
   if (rtdb) {
@@ -1371,6 +1375,14 @@ export function subscribeCloudTimeRequests(
   const unsubs: Array<() => void> = [];
   const slug = normalizeChildSlug(childName);
 
+  const enrichRequests = (items: any[]): TimeRequest[] => {
+    return items.map((raw) => ({
+      ...raw,
+      childId: raw.childId || childId,
+      childName: raw.childName || childName || 'Con',
+    }));
+  };
+
   if (rtdb) {
     try {
       const u1 = rtdbOnValue(
@@ -1379,7 +1391,7 @@ export function subscribeCloudTimeRequests(
           if (snap.exists()) {
             const val = snap.val();
             const list: TimeRequest[] = Object.values(val);
-            onRequests(list.reverse().slice(0, 20));
+            onRequests(enrichRequests(list.reverse().slice(0, 20)));
           }
         },
         () => {}
@@ -1395,7 +1407,7 @@ export function subscribeCloudTimeRequests(
             if (snap.exists()) {
               const val = snap.val();
               const list: TimeRequest[] = Object.values(val);
-              onRequests(list.reverse().slice(0, 20));
+              onRequests(enrichRequests(list.reverse().slice(0, 20)));
             }
           },
           () => {}
@@ -1412,7 +1424,7 @@ export function subscribeCloudTimeRequests(
             if (snap.exists()) {
               const val = snap.val();
               const list: TimeRequest[] = Object.values(val);
-              onRequests(list.reverse().slice(0, 20));
+              onRequests(enrichRequests(list.reverse().slice(0, 20)));
             }
           },
           () => {}
@@ -1433,7 +1445,7 @@ export function subscribeCloudTimeRequests(
           snapshot.forEach((d) => {
             requests.push({ id: d.id, ...(d.data() as any) });
           });
-          if (requests.length > 0) onRequests(requests);
+          if (requests.length > 0) onRequests(enrichRequests(requests));
         },
         () => {}
       );
