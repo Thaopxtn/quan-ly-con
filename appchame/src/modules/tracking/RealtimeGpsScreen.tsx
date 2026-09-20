@@ -421,8 +421,66 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     }));
   }, [enrichedChildren]);
 
+  // Floating Live Tracking & Continue button (compact, zero vertical space lost)
+  const renderLiveTrackingFloatingWidget = () => (
+    isLiveActive ? (
+      <div className="flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full shadow-md border border-rose-200/90 animate-in fade-in select-none">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-600"></span>
+        </span>
+        <span className="text-[11px] font-black text-rose-900 tracking-tight">Trực tiếp</span>
+        <span className="text-[11px] font-bold text-rose-700 font-mono bg-rose-50 px-1 rounded">
+          {formatCountdown(Math.max(0, Math.floor((liveExpiresAt - Date.now()) / 1000)))}
+        </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleExtendLiveTracking(5);
+          }}
+          className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-[10px] font-extrabold transition active:scale-95 shadow-2xs cursor-pointer"
+          title="Gia hạn xem trực tiếp thêm 5 phút"
+        >
+          +5p
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleStopLiveTracking();
+          }}
+          className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md text-[10px] font-bold transition active:scale-95 cursor-pointer"
+          title="Chuyển về tiết kiệm dữ liệu (1 giờ/lần)"
+        >
+          Dừng
+        </button>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleExtendLiveTracking(5);
+        }}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-md transition-all duration-200 active:scale-95 cursor-pointer text-xs font-black backdrop-blur-md animate-in fade-in select-none ${
+          showQuotaWarning
+            ? 'bg-amber-500/95 hover:bg-amber-600 text-white border border-amber-400 shadow-amber-500/20'
+            : 'bg-white/95 hover:bg-blue-50/95 text-blue-700 border border-blue-200 shadow-slate-300/40'
+        }`}
+        title={showQuotaWarning ? 'Đã tạm dừng để tiết kiệm hạn mức. Bấm để tiếp tục xem trực tiếp' : 'Bấm để xem vị trí trực tiếp (5 phút)'}
+      >
+        <Radio size={13} className={showQuotaWarning ? 'animate-pulse text-white' : 'animate-pulse text-blue-600'} />
+        <span>Tiếp tục xem trực tiếp</span>
+        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+          showQuotaWarning ? 'bg-amber-600 text-amber-100' : 'bg-blue-100 text-blue-800'
+        }`}>+5p</span>
+      </button>
+    )
+  );
+
   return (
-    <div className="flex-1 flex flex-col bg-slate-50 select-none pb-6">
+    <div className="flex-1 flex flex-col bg-slate-50 select-none pb-0">
       {/* Top Header */}
       <div className="bg-white px-4 py-3 border-b border-slate-100 flex items-center justify-between sticky top-0 z-30 shadow-2xs">
         <div className="flex items-center space-x-3">
@@ -567,99 +625,6 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         </div>
       )}
 
-      {/* Live Tracking & Bandwidth Safety Banner */}
-      {showQuotaWarning ? (
-        <div className="mx-3 mt-2 mb-1 p-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl shadow-xs animate-in fade-in duration-200">
-          <div className="flex items-start space-x-3">
-            <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
-              <AlertTriangle size={18} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center space-x-2">
-                <h4 className="text-xs font-black text-amber-900 uppercase tracking-wider">Cảnh báo lưu lượng dữ liệu</h4>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900">Tiết kiệm hạn mức</span>
-              </div>
-              <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
-                {quotaWarningReason || 'Bạn đã theo dõi trực tiếp quá 15 phút liên tục.'} Hệ thống tự động chuyển về chế độ <strong>Tiết kiệm dữ liệu (1 giờ/lần)</strong> để bảo vệ gói Firebase và tiết kiệm pin con.
-              </p>
-              <div className="mt-2.5 flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => handleExtendLiveTracking(5)}
-                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-xs cursor-pointer"
-                >
-                  <Radio size={13} className="animate-pulse" />
-                  <span>Gia hạn xem tiếp 5 phút</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowQuotaWarning(false)}
-                  className="px-3 py-1.5 rounded-xl bg-white border border-amber-200 text-amber-800 hover:bg-amber-100/50 text-xs font-semibold transition cursor-pointer"
-                >
-                  Đã hiểu
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : isLiveActive ? (
-        <div className="mx-3 mt-2 mb-1 px-3.5 py-2 bg-gradient-to-r from-rose-50 via-red-50 to-amber-50 border border-rose-200/80 rounded-2xl flex items-center justify-between shadow-2xs">
-          <div className="flex items-center space-x-2.5">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
-            </span>
-            <div>
-              <div className="flex items-center space-x-1.5">
-                <span className="text-xs font-black text-rose-900 uppercase tracking-wider">Đang xem trực tiếp</span>
-                <span className="text-xs font-extrabold text-rose-700 font-mono bg-rose-100/80 px-1.5 py-0.5 rounded-md">
-                  {formatCountdown(Math.max(0, Math.floor((liveExpiresAt - Date.now()) / 1000)))}
-                </span>
-              </div>
-              <p className="text-[10px] text-slate-500 font-medium">Cập nhật 10s-20s khi di chuyển • Tự tắt khi hết giờ</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-1.5">
-            <button
-              type="button"
-              onClick={() => handleExtendLiveTracking(5)}
-              className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold transition flex items-center space-x-1 shadow-2xs cursor-pointer"
-              title="Gia hạn xem trực tiếp thêm 5 phút"
-            >
-              <span>+5 phút</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleStopLiveTracking}
-              className="px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 text-[11px] font-bold transition shadow-2xs cursor-pointer"
-              title="Dừng xem để tiết kiệm dữ liệu (1 giờ/lần)"
-            >
-              <span>Tiết kiệm</span>
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mx-3 mt-2 mb-1 px-3.5 py-2 bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200/80 rounded-2xl flex items-center justify-between shadow-2xs">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
-              <ShieldCheck size={14} />
-            </div>
-            <div>
-              <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">Chế độ Tiết kiệm dữ liệu (1 giờ/lần)</span>
-              <p className="text-[10px] text-slate-500 font-medium">Bảo vệ hạn mức Firebase & Pin máy con • Cảnh báo SOS vẫn tức thì</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleExtendLiveTracking(5)}
-            className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black transition flex items-center space-x-1 shadow-2xs cursor-pointer"
-          >
-            <Radio size={12} className="animate-pulse" />
-            <span>Xem trực tiếp (5p)</span>
-          </button>
-        </div>
-      )}
-
       {/* ========================================================= */}
       {/* MODE 1: ALL CHILDREN SIMULTANEOUS TRACKING                 */}
       {/* ========================================================= */}
@@ -668,8 +633,8 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
           {allLayoutMode === 'panorama' ? (
             /* Layout A: Panorama Unified Google Map + Children Cards */
             <>
-              {/* Panorama Central Map */}
-              <div className="p-3">
+              {/* Panorama Central Map (Enlarged & Floating Status) */}
+              <div className="relative w-full">
                 <InteractiveMap
                   centerLat={centroidLat}
                   centerLng={centroidLng}
@@ -681,9 +646,10 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                       handleFocusChild(id);
                     }
                   }}
+                  topControl={renderLiveTrackingFloatingWidget()}
                   childName="Tất cả các con"
                   childAddress={`Đang hiển thị vị trí của ${children.length} bé trong khu vực`}
-                  className="w-full h-72 min-h-[280px]"
+                  className="w-full h-[400px] min-h-[350px]"
                 />
               </div>
 
@@ -1029,68 +995,68 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
             </div>
           )}
 
-          {/* Child Status Mini Bar */}
-          <div className="bg-white/95 backdrop-blur-md px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center space-x-3 min-w-0">
+          {/* Child Status Mini Bar (Compact) */}
+          <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 border-b border-slate-100 flex items-center justify-between shrink-0">
+            <div className="flex items-center space-x-2.5 min-w-0">
               <div className="relative shrink-0">
                 <img
                   src={currentChild.avatar}
                   alt={currentChild.name}
-                  className="w-10 h-10 rounded-2xl object-cover ring-2 ring-blue-500 shadow-xs"
+                  className="w-8 h-8 rounded-xl object-cover ring-2 ring-blue-500 shadow-2xs"
                 />
-                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center space-x-2">
-                  <h4 className="text-xs font-bold text-slate-900 truncate">{currentChild.name}</h4>
-                  <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.2 rounded font-medium">
+                <div className="flex items-center space-x-1.5">
+                  <h4 className="text-xs font-black text-slate-900 truncate">{currentChild.name}</h4>
+                  <span className="text-[9.5px] bg-slate-100 text-slate-500 px-1.5 py-0.2 rounded font-medium">
                     {currentChild.grade}
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                <p className="text-[10.5px] text-slate-600 truncate mt-0.5">
                   {currentChild.inZoneName ? (
                     <span className="text-emerald-600 font-bold flex items-center gap-1">
-                      <ShieldCheck size={13} className="shrink-0" />
+                      <ShieldCheck size={12} className="shrink-0" />
                       <span>Trong {currentChild.inZoneName}</span>
                     </span>
                   ) : currentChild.hasValidNearestZone ? (
                     <span className="text-amber-600 font-semibold flex items-center gap-1">
-                      <AlertTriangle size={13} className="shrink-0" />
-                      <span>Ngoài vùng an toàn (Cách {currentChild.nearestZoneName} {currentChild.formattedDistance})</span>
+                      <AlertTriangle size={12} className="shrink-0" />
+                      <span>Ngoài an toàn (Cách {currentChild.nearestZoneName} {currentChild.formattedDistance})</span>
                     </span>
                   ) : (
                     <span className="text-emerald-600 font-semibold flex items-center gap-1">
-                      <ShieldCheck size={13} className="shrink-0" />
-                      <span>GPS vệ tinh hoạt động ổn định</span>
+                      <ShieldCheck size={12} className="shrink-0" />
+                      <span>Vệ tinh GPS ổn định</span>
                     </span>
                   )}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center space-x-1.5">
+            <div className="flex items-center space-x-1.5 shrink-0">
               {/* Buzzer Button */}
               <button
                 onClick={() => handleBuzzChild(currentChild.id, currentChild.name)}
                 disabled={buzzingChildId === currentChild.id}
-                className={`px-2.5 py-1.5 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer ${
+                className={`px-2 py-1 rounded-xl font-bold text-xs flex items-center space-x-1 transition cursor-pointer ${
                   buzzingChildId === currentChild.id
                     ? 'bg-amber-500 text-white animate-bounce'
                     : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80'
                 }`}
                 title="Rung chuông tìm máy"
               >
-                <Volume2 size={15} />
-                <span>{buzzingChildId === currentChild.id ? 'Đang rung...' : 'Tìm máy'}</span>
+                <Volume2 size={13} />
+                <span className="text-[10.5px]">{buzzingChildId === currentChild.id ? 'Rung...' : 'Tìm máy'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => makePhoneCall(currentChild.phone || '0987654321')}
-                className="p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition cursor-pointer"
+                className="p-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition cursor-pointer"
                 title="Gọi cho con"
               >
-                <PhoneCall size={17} />
+                <PhoneCall size={15} />
               </button>
             </div>
           </div>
@@ -1159,8 +1125,8 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
             </div>
           )}
 
-          {/* Live Single Child Map Area */}
-          <div className="flex-1 relative p-3">
+          {/* Live Single Child Map Area (Full-bleed, Maximized Viewport) */}
+          <div className="relative w-full p-0 overflow-hidden">
             <InteractiveMap
               centerLat={activeDeviceLat}
               centerLng={activeDeviceLng}
@@ -1183,75 +1149,59 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                   handleFocusChild(id);
                 }
               }}
-              className="w-full h-full min-h-[300px]"
+              topControl={renderLiveTrackingFloatingWidget()}
+              className="w-full h-[380px] sm:h-[450px] min-h-[320px]"
             />
           </div>
 
-          {/* Bottom Information & Control Card */}
-          <div className="bg-white rounded-t-3xl p-4 shadow-xl border-t border-slate-100 space-y-3">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Vị trí thực tế của con
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  {currentChild.lat.toFixed(4)}, {currentChild.lng.toFixed(4)}
+          {/* Bottom Information & Control Card (Compact & Space-Saving) */}
+          <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 border-t border-slate-200/80 shadow-lg space-y-1.5 z-10 shrink-0">
+            {/* Top row: Address & Telemetry badges */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center space-x-1.5 min-w-0 flex-1">
+                <MapPin size={13} className="text-blue-600 shrink-0" />
+                <span className="text-xs font-bold text-slate-900 truncate" title={currentChild.address}>
+                  {currentChild.address}
                 </span>
               </div>
-              <p className="text-xs font-bold text-slate-900 mt-1 line-clamp-2 leading-relaxed">
-                {currentChild.address}
-              </p>
-            </div>
-
-            {/* Telemetry Stats */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="bg-slate-50 rounded-2xl p-2.5 border border-slate-100 flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                  <BatteryCharging size={17} />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 font-medium">Pin thiết bị</span>
-                  <p className="text-xs font-bold text-slate-900">{currentChild.battery}%</p>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 rounded-2xl p-2.5 border border-slate-100 flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <Gauge size={17} />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 font-medium">Tốc độ di chuyển</span>
-                  <p className="text-xs font-bold text-slate-900">{currentChild.speed} km/h</p>
-                </div>
+              <div className="flex items-center space-x-1.5 shrink-0 font-bold text-[10.5px]">
+                <span className="inline-flex items-center space-x-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200/80">
+                  <BatteryCharging size={12} />
+                  <span>{currentChild.battery}%</span>
+                </span>
+                <span className="inline-flex items-center space-x-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200/80">
+                  <Gauge size={12} />
+                  <span>{currentChild.speed} km/h</span>
+                </span>
               </div>
             </div>
 
-            {/* 3 Action Buttons */}
-            <div className="grid grid-cols-3 gap-2 pt-0.5">
+            {/* Bottom row: Quick action buttons */}
+            <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => onNavigate('history')}
-                className="py-2.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex flex-col items-center justify-center text-slate-700 transition active:scale-95 cursor-pointer"
+                className="py-1.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex items-center justify-center space-x-1.5 text-slate-700 transition active:scale-95 cursor-pointer font-bold text-xs"
               >
-                <History size={16} className="text-slate-600 mb-0.5" />
-                <span className="text-[10px] font-bold">Lịch sử</span>
+                <History size={13} className="text-slate-600" />
+                <span>Lịch sử</span>
               </button>
 
               <button
                 onClick={() => onNavigate('safezone')}
-                className="py-2.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex flex-col items-center justify-center text-slate-700 transition active:scale-95 cursor-pointer"
+                className="py-1.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex items-center justify-center space-x-1.5 text-slate-700 transition active:scale-95 cursor-pointer font-bold text-xs"
               >
-                <Shield size={16} className="text-blue-600 mb-0.5" />
-                <span className="text-[10px] font-bold">Vùng an toàn</span>
+                <Shield size={13} className="text-blue-600" />
+                <span>Vùng an toàn</span>
               </button>
 
               <a
                 href={`https://www.google.com/maps/dir/?api=1&destination=${currentChild.lat},${currentChild.lng}`}
                 target="_blank"
                 rel="noreferrer"
-                className="py-2.5 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex flex-col items-center justify-center transition shadow-md shadow-blue-500/20 active:scale-95 text-center"
+                className="py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center justify-center space-x-1.5 transition shadow-xs shadow-blue-500/20 active:scale-95 text-center font-bold text-xs"
               >
-                <Navigation2 size={16} className="mb-0.5" />
-                <span className="text-[10px] font-black">Chỉ đường</span>
+                <Navigation2 size={13} />
+                <span>Chỉ đường</span>
               </a>
             </div>
           </div>

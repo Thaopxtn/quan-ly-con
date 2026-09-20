@@ -67,6 +67,7 @@ interface InteractiveMapProps {
   allChildren?: MapChildItem[];
   activeChildId?: string;
   onSelectChild?: (childId: string) => void;
+  topControl?: React.ReactNode;
 }
 
 const TILE_SIZE = 256;
@@ -98,6 +99,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   safeZones = [],
   routePoints = [],
   isPlayingRoute = false,
+  topControl,
   playbackProgress,
   activePointIndex = 0,
   onSelectPoint,
@@ -568,39 +570,43 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       )}
 
       {/* ─── Layer 4: Top Floating Badges ───────────────────────────────────── */}
-      {/* Top Left: Live Status Badge */}
+      {/* Top Left: Live Status Badge or Custom Top Control */}
       <div className="absolute top-3 left-3 z-25 pointer-events-auto">
-        <div className="bg-white/95 backdrop-blur-md px-2.5 py-1.5 rounded-full shadow-md border border-slate-200/80 flex items-center space-x-2 text-[11px] font-black text-slate-800">
-          {childAvatar ? (
-            <img
-              src={childAvatar}
-              alt={childName}
-              className="w-5 h-5 rounded-full object-cover ring-1 ring-blue-500 shrink-0"
-            />
-          ) : (
-            <div className="relative flex items-center justify-center">
-              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
-              <span className="w-2 h-2 absolute bg-emerald-500 rounded-full" />
-            </div>
-          )}
-          <span className="text-slate-900 font-extrabold truncate max-w-[85px]">{childName}</span>
-          <span className="text-slate-300">•</span>
-          {routePoints && routePoints.length > 0 ? (
-            <span className="text-blue-600 font-bold">
-              Điểm {activePointIndex + 1}/{routePoints.length}
-            </span>
-          ) : previewZone ? (
-            <span className="text-emerald-700 font-bold truncate max-w-[100px]">
-              {previewZone.name || 'Vùng an toàn'}
-            </span>
-          ) : (
-            <>
-              <span className="text-emerald-700 font-bold">{battery}% Pin</span>
-              <span className="text-slate-300">•</span>
-              <span className="text-slate-500 font-medium">±{accuracyMeters}m</span>
-            </>
-          )}
-        </div>
+        {topControl ? (
+          topControl
+        ) : (
+          <div className="bg-white/95 backdrop-blur-md px-2.5 py-1.5 rounded-full shadow-md border border-slate-200/80 flex items-center space-x-2 text-[11px] font-black text-slate-800">
+            {childAvatar ? (
+              <img
+                src={childAvatar}
+                alt={childName}
+                className="w-5 h-5 rounded-full object-cover ring-1 ring-blue-500 shrink-0"
+              />
+            ) : (
+              <div className="relative flex items-center justify-center">
+                <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping" />
+                <span className="w-2 h-2 absolute bg-emerald-500 rounded-full" />
+              </div>
+            )}
+            <span className="text-slate-900 font-extrabold truncate max-w-[85px]">{childName}</span>
+            <span className="text-slate-300">•</span>
+            {routePoints && routePoints.length > 0 ? (
+              <span className="text-blue-600 font-bold">
+                Điểm {activePointIndex + 1}/{routePoints.length}
+              </span>
+            ) : previewZone ? (
+              <span className="text-emerald-700 font-bold truncate max-w-[100px]">
+                {previewZone.name || 'Vùng an toàn'}
+              </span>
+            ) : (
+              <>
+                <span className="text-emerald-700 font-bold">{battery}% Pin</span>
+                <span className="text-slate-300">•</span>
+                <span className="text-slate-500 font-medium">±{accuracyMeters}m</span>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Quick Child Selector Bar (When multiple children available) */}
