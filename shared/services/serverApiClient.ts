@@ -13,8 +13,10 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
-export const DEFAULT_4G_SERVER_URL = 'https://figure-fotos-forecasts-dir.trycloudflare.com';
+export const DEFAULT_4G_SERVER_URL = 'https://everything-solution-tin-chosen.trycloudflare.com';
+const JSDELIVR_SERVER_URL = 'https://cdn.jsdelivr.net/gh/Thaopxtn/quan-ly-con@main/server-url.txt';
 const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
+const GITHUB_API_SERVER_URL = 'https://api.github.com/repos/Thaopxtn/quan-ly-con/contents/server-url.txt';
 const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
 
 export class ServerApiClient {
@@ -162,55 +164,94 @@ export class ServerApiClient {
   }
 
   /**
-   * Tự động lấy URL máy chủ mới nhất từ file server-url.txt trên GitHub (Cách 1)
+   * Tự động lấy URL máy chủ mới nhất từ file server-url.txt trên GitHub/jsDelivr CDN (Cách 1)
    */
   public async resolveServerUrlFromCloud(forceRefresh: boolean = false): Promise<string | null> {
     if (typeof window === 'undefined') return null;
 
     const now = Date.now();
-    if (!forceRefresh && (now - this.lastCloudResolvedTime < 8000)) {
+    // If current serverUrl is already alive and healthy, keep it unless forceRefresh
+    if (!forceRefresh && (now - this.lastCloudResolvedTime < 10000)) {
       const health = await this.checkHealth();
       if (health.ok) return this.serverUrl;
     }
 
-    if (this.isResolvingFromCloud) return this.serverUrl;
+    if (this.isResolvingFromCloud && !forceRefresh) return this.serverUrl;
     this.isResolvingFromCloud = true;
 
     try {
       const endpoints = [
+        // 1. jsDelivr Global Edge CDN (Siêu nhanh tại Việt Nam, <50ms, không bao giờ bị chặn)
+        `${JSDELIVR_SERVER_URL}?_t=${now}`,
+        // 2. GitHub Raw Server URL
         `${GITHUB_RAW_SERVER_URL}?_t=${now}`,
+        // 3. GitHub Pages
         `${GITHUB_PAGES_SERVER_URL}?_t=${now}`,
       ];
 
-      for (const endpoint of endpoints) {
+      // Fetch all candidate endpoints in parallel
+      const fetchCandidate = async (endpoint: string): Promise<string | null> => {
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 4000);
+          const timer = setTimeout(() => ctrl.abort(), 3500);
           const res = await fetch(endpoint, {
             signal: ctrl.signal,
             headers: { 'Cache-Control': 'no-cache' },
           });
           clearTimeout(timer);
-
           if (res.ok) {
             const text = (await res.text()).trim();
             if (text && (text.startsWith('https://') || text.startsWith('http://'))) {
-              const cleanUrl = text.split('\n')[0].trim().replace(/\/+$/, '');
-              // Validate that the server is online and returning status === 'ok'
-              const health = await this.checkHealth(cleanUrl);
-              if (health.ok) {
-                console.log(`[ServerApiClient] 🌐 Tự động nhận diện URL máy chủ từ GitHub: ${cleanUrl}`);
-                this.setServerUrl(cleanUrl);
-                this.lastCloudResolvedTime = Date.now();
-                return cleanUrl;
+              return text.split('\n')[0].trim().replace(/\/+$/, '');
+            }
+          }
+        } catch (_) {}
+        return null;
+      };
+
+      // Also try GitHub API if raw endpoints are slow
+      const fetchGitHubApi = async (): Promise<string | null> => {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 3500);
+          const res = await fetch(GITHUB_API_SERVER_URL, {
+            signal: ctrl.signal,
+            headers: { 'Cache-Control': 'no-cache' },
+          });
+          clearTimeout(timer);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.content) {
+              const decoded = atob(data.content.replace(/\s+/g, '')).trim();
+              if (decoded && (decoded.startsWith('https://') || decoded.startsWith('http://'))) {
+                return decoded.split('\n')[0].trim().replace(/\/+$/, '');
               }
             }
           }
         } catch (_) {}
+        return null;
+      };
+
+      // Query all candidate discovery endpoints concurrently
+      const candidatePromises: Promise<string | null>[] = endpoints.map(ep => fetchCandidate(ep));
+      candidatePromises.push(fetchGitHubApi());
+
+      const results = await Promise.allSettled(candidatePromises);
+      for (const res of results) {
+        if (res.status === 'fulfilled' && res.value) {
+          const candidateUrl = res.value;
+          const health = await this.checkHealth(candidateUrl);
+          if (health.ok) {
+            console.log(`[ServerApiClient] 🌐 Nhận diện máy chủ 4G thành công: ${candidateUrl}`);
+            this.setServerUrl(candidateUrl);
+            this.lastCloudResolvedTime = Date.now();
+            return candidateUrl;
+          }
+        }
       }
 
       // Check DEFAULT_4G_SERVER_URL fallback
-      if (DEFAULT_4G_SERVER_URL && DEFAULT_4G_SERVER_URL !== this.serverUrl) {
+      if (DEFAULT_4G_SERVER_URL) {
         const health = await this.checkHealth(DEFAULT_4G_SERVER_URL);
         if (health.ok) {
           this.setServerUrl(DEFAULT_4G_SERVER_URL);
@@ -221,7 +262,7 @@ export class ServerApiClient {
       this.isResolvingFromCloud = false;
     }
 
-    return null;
+    return this.serverUrl || null;
   }
 
   public async checkHealth(customUrl?: string): Promise<ServerHealth> {

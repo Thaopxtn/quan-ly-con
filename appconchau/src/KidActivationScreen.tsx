@@ -110,9 +110,9 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       return;
     }
 
-    // Luôn mở khóa rate limit và đảm bảo cập nhật URL 4G mới nhất từ GitHub
+    // Luôn mở khóa rate limit và đảm bảo cập nhật URL 4G mới nhất từ GitHub/jsDelivr
     clearRateLimit();
-    await serverApiClient.resolveServerUrlFromCloud().catch(() => {});
+    await serverApiClient.resolveServerUrlFromCloud(true).catch(() => {});
 
     setIsSubmittingParentPin(true);
     setPinError(null);
