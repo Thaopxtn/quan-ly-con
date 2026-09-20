@@ -107,24 +107,22 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     }
   }, [activeSOS]);
 
-  // Sync with Cloud for active parent and children (deferred 300ms to free up launch thread)
+  // Sync with Cloud for active parent on login/mount (deferred 400ms to free up launch thread)
+  const isInitialCloudSyncDoneRef = useRef(false);
   useEffect(() => {
     const parentId = getActiveParentId();
-    
+    if (!parentId || !isAuthenticated) return;
+
     let timer: any = null;
-    if (parentId) {
+    if (!isInitialCloudSyncDoneRef.current) {
+      isInitialCloudSyncDoneRef.current = true;
       timer = setTimeout(() => {
-        syncWithCloudForChild(parentId, selectedChildId);
+        syncWithCloudForChild(parentId);
         const childrenToSync = state.children && state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
         if (childrenToSync.length > 0) {
           requestLatestDataFromAllChildren(parentId, childrenToSync);
         }
-        syncAllChildrenFromCloud(parentId).then((cloudChildren) => {
-          if (cloudChildren && cloudChildren.length > 0) {
-            requestLatestDataFromAllChildren(parentId, cloudChildren);
-          }
-        });
-      }, 300);
+      }, 400);
     }
 
     // Auto re-sync and request fresh data when app resumes or gains focus (throttled to at most once every 30s)
@@ -150,7 +148,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleFocus);
     };
-  }, [selectedChildId, isAuthenticated]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (activeScreenExternal && activeScreenExternal !== currentScreen) {

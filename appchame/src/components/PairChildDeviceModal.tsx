@@ -235,12 +235,13 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       }
 
       setIsPairedSuccess(true);
-      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-      syncAllChildrenFromCloud();
+      try {
+        confetti({ particleCount: 40, spread: 60, origin: { y: 0.6 } });
+      } catch (_) {}
 
       setTimeout(() => {
         onClose();
-      }, 3000);
+      }, 1500);
     };
 
     const unsub = subscribePairingSession(generatedSession.code, (session) => {

@@ -888,17 +888,64 @@ let globalState: AppState = getInitialState();
 const listeners = new Set<(state: AppState) => void>();
 let isApplyingCloudUpdate = false;
 
-function applyCloudStateUpdate(updater: (prev: AppState) => AppState) {
+// Debounced asynchronous localStorage persistence to prevent blocking the UI thread
+let persistDebounceTimer: any = null;
+function schedulePersistState() {
+  if (typeof window === 'undefined') return;
+  if (persistDebounceTimer) return;
+  persistDebounceTimer = setTimeout(() => {
+    persistDebounceTimer = null;
+    try {
+      localStorage.setItem(getStorageKey(), JSON.stringify(globalState));
+    } catch (e) {}
+  }, 1000);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    if (persistDebounceTimer) {
+      clearTimeout(persistDebounceTimer);
+      persistDebounceTimer = null;
+      try {
+        localStorage.setItem(getStorageKey(), JSON.stringify(globalState));
+      } catch (e) {}
+    }
+  });
+}
+
+// Batched listener notifications using requestAnimationFrame to ensure smooth 60fps rendering
+let notifyRafTimer: any = null;
+function scheduleNotifyListeners(immediate = false) {
+  if (immediate) {
+    if (notifyRafTimer) {
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(notifyRafTimer);
+      else clearTimeout(notifyRafTimer);
+      notifyRafTimer = null;
+    }
+    listeners.forEach((fn) => fn(globalState));
+    return;
+  }
+  if (notifyRafTimer) return;
+  if (typeof requestAnimationFrame === 'function') {
+    notifyRafTimer = requestAnimationFrame(() => {
+      notifyRafTimer = null;
+      listeners.forEach((fn) => fn(globalState));
+    });
+  } else {
+    notifyRafTimer = setTimeout(() => {
+      notifyRafTimer = null;
+      listeners.forEach((fn) => fn(globalState));
+    }, 16);
+  }
+}
+
+function applyCloudStateUpdate(updater: (prev: AppState) => AppState, immediate = false) {
   isApplyingCloudUpdate = true;
   try {
     const nextState = updater(globalState);
     globalState = nextState;
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(getStorageKey(), JSON.stringify(nextState));
-      } catch (e) {}
-    }
-    listeners.forEach((fn) => fn(globalState));
+    schedulePersistState();
+    scheduleNotifyListeners(immediate);
   } finally {
     isApplyingCloudUpdate = false;
   }
@@ -944,9 +991,9 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
     newState.redemptions = curRedemptions;
   }
   globalState = newState;
+  schedulePersistState();
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem(getStorageKey(), JSON.stringify(newState));
       // PHÂN LUỒNG RÕ RÀNG: Chỉ ứng dụng Phụ huynh mới được đồng bộ cấu hình cài đặt (Settings, Giới hạn giờ) lên Cloud.
       // Ứng dụng Con CHỈ gửi số liệu thời gian đã dùng (Telemetry), KHÔNG ĐƯỢC ghi đè cài đặt của cha mẹ lên Cloud!
       if (!isApplyingCloudUpdate && !isKidAppMode()) {
@@ -962,9 +1009,6 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
         if (curId && curId !== 'child_default') {
           const curChild = newState.children.find((c) => c.id === curId) || newState.child;
           syncChildSettingsToCloud(activeParentId, curId, stripUsedTime(updatedChildSettings[curId]), curChild?.name).catch(() => {});
-          if (curChild) {
-            registerActiveChildInCloud(activeParentId, curChild).catch(() => {});
-          }
         }
         if (targetChildId && targetChildId !== curId && updatedChildSettings[targetChildId]) {
           const tChild = newState.children.find((c) => c.id === targetChildId);
@@ -975,7 +1019,7 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
       // ignore
     }
   }
-  listeners.forEach((fn) => fn(globalState));
+  scheduleNotifyListeners(true);
 }
 
 // Active Firestore & Realtime Subscriptions Management
@@ -1053,9 +1097,6 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
     const childId = child.id;
     const childName = child.name;
     const childUnsubs: Array<() => void> = [];
-
-    // Register active child in cloud metadata
-    registerActiveChildInCloud(parentId, child).catch(() => {});
 
     // --- (A) SOS Listener for this child ---
     const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
@@ -2215,7 +2256,7 @@ export const useAppState = () => {
   const [state, setState] = useState<AppState>(globalState);
 
   useEffect(() => {
-    const handler = (newState: AppState) => setState({ ...newState });
+    const handler = (newState: AppState) => setState(newState);
     listeners.add(handler);
     return () => {
       listeners.delete(handler);

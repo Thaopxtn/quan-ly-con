@@ -362,9 +362,12 @@ export function subscribeChildSettingsFromCloud(
   const unsubs: Array<() => void> = [];
   const syncKey = getPartitionedSyncKey(parentId, childId);
   let lastSeenSettingsTime = 0;
+  let lastSettingsFingerprint = '';
+  let lastSettingsEmitTime = 0;
 
   const handleSettingsUpdate = (rawVal: any) => {
     if (!rawVal) return;
+    const now = Date.now();
     const updateTime = typeof rawVal.updatedAt === 'number' ? rawVal.updatedAt : 0;
     if (updateTime && updateTime < lastSeenSettingsTime) {
       return; // Discard older/stale settings update
@@ -372,6 +375,13 @@ export function subscribeChildSettingsFromCloud(
     if (updateTime) {
       lastSeenSettingsTime = updateTime;
     }
+
+    const fp = `${rawVal.updatedAt || ''}_${rawVal.apps?.length || 0}_${rawVal.screenTimeLimitMinutes || ''}_${rawVal.kidStars ?? ''}_${rawVal.broadcastMessage?.id || ''}_${rawVal.hardwareControls?.volume ?? ''}`;
+    if (fp === lastSettingsFingerprint && now - lastSettingsEmitTime < 1500) {
+      return;
+    }
+    lastSettingsFingerprint = fp;
+    lastSettingsEmitTime = now;
 
     // Purge stale or legacy broadcastMessage (TTL 10 mins or already dismissed)
     if (rawVal.broadcastMessage) {
@@ -1876,9 +1886,23 @@ export function subscribeDetailedChildrenLive(
   let unsubFamilyChildren: (() => void) | null = null;
   let unsubFirestore: (() => void) | null = null;
 
+  let lastFingerprint = '';
+  let lastEmitTime = 0;
+  const handleChildrenUpdate = (list: any[]) => {
+    if (!list || list.length === 0) return;
+    const now = Date.now();
+    const fp = list.map((c) => `${c.id}_${c.name}_${c.activeDeviceId || ''}_${c.devices?.length || 0}_${c.battery || ''}`).join('|');
+    if (fp === lastFingerprint && now - lastEmitTime < 2000) {
+      return;
+    }
+    lastFingerprint = fp;
+    lastEmitTime = now;
+    onChildren(list);
+  };
+
   // Immediately run fetch for this parent's children
   fetchChildrenListFromCloud(parentId, parentName).then((list) => {
-    if (list.length > 0) onChildren(list);
+    if (list.length > 0) handleChildrenUpdate(list);
   }).catch(() => {});
 
   if (rtdb) {
@@ -1890,7 +1914,7 @@ export function subscribeDetailedChildrenLive(
           if (snap.exists()) {
             const val = snap.val();
             const list: any[] = Object.values(val);
-            if (list.length > 0) onChildren(list);
+            if (list.length > 0) handleChildrenUpdate(list);
           }
         },
         () => {}
@@ -1906,7 +1930,7 @@ export function subscribeDetailedChildrenLive(
             if (snap.exists()) {
               const val = snap.val();
               const list: any[] = Object.values(val);
-              if (list.length > 0) onChildren(list);
+              if (list.length > 0) handleChildrenUpdate(list);
             }
           },
           () => {}
@@ -1925,7 +1949,7 @@ export function subscribeDetailedChildrenLive(
           snapshot.forEach((d) => {
             children.push({ id: d.id, ...d.data() });
           });
-          if (children.length > 0) onChildren(children);
+          if (children.length > 0) handleChildrenUpdate(children);
         },
         () => {}
       );
