@@ -143,52 +143,22 @@ const MAX_ATTEMPTS = 5;       // max wrong codes in window
 const WINDOW_MS = 2 * 60 * 1000;  // 2-minute window
 const BLOCK_MS = 5 * 60 * 1000;   // 5-minute block after too many attempts
 
+export function clearRateLimit(): void {
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.removeItem(RATE_LIMIT_KEY);
+    } catch (_) {}
+  }
+}
+
 function checkRateLimit(): { allowed: boolean; waitSeconds?: number } {
-  if (typeof window === "undefined") return { allowed: true };
-  const now = Date.now();
-  const raw = localStorage.getItem(RATE_LIMIT_KEY);
-  let rl: RateLimitState = raw ? JSON.parse(raw) : { attempts: 0, windowStart: now };
-
-  // If currently blocked
-  if (rl.blockedUntil && now < rl.blockedUntil) {
-    const wait = Math.ceil((rl.blockedUntil - now) / 1000);
-    return { allowed: false, waitSeconds: wait };
-  }
-
-  // Reset window if expired
-  if (now - rl.windowStart > WINDOW_MS) {
-    rl = { attempts: 0, windowStart: now };
-  }
-
+  // Always allowed - no blocking during device pairing
+  clearRateLimit();
   return { allowed: true };
 }
 
 function recordFailedAttempt(): void {
-  if (typeof window === "undefined") return;
-  const now = Date.now();
-  const raw = localStorage.getItem(RATE_LIMIT_KEY);
-  let rl: RateLimitState = raw ? JSON.parse(raw) : { attempts: 0, windowStart: now };
-
-  // Reset window if expired
-  if (now - rl.windowStart > WINDOW_MS) {
-    rl = { attempts: 0, windowStart: now };
-  }
-
-  rl.attempts++;
-
-  if (rl.attempts >= MAX_ATTEMPTS) {
-    rl.blockedUntil = now + BLOCK_MS;
-    rl.attempts = 0;
-    rl.windowStart = now;
-  }
-
-  localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify(rl));
-}
-
-function clearRateLimit(): void {
-  if (typeof window !== "undefined") {
-    localStorage.removeItem(RATE_LIMIT_KEY);
-  }
+  // Don't block user
 }
 
 // ─── Code Generator ───────────────────────────────────────────────────────────

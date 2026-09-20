@@ -13,6 +13,7 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
+export const DEFAULT_4G_SERVER_URL = 'https://relatively-motors-wealth-representing.trycloudflare.com';
 const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
 const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
 
@@ -48,22 +49,27 @@ export class ServerApiClient {
   }
 
   private initServerUrl(): string {
-    if (typeof window === 'undefined') return `http://localhost:${DEFAULT_LOCAL_PORT}`;
+    if (typeof window === 'undefined') return DEFAULT_4G_SERVER_URL;
 
-    // 1. User configured URL in localStorage
+    // 1. User configured URL in localStorage (ignore if it's localhost / 127.0.0.1)
     const saved = localStorage.getItem(SERVER_URL_STORAGE_KEY);
-    if (saved && saved.trim()) {
+    if (saved && saved.trim() && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
       return saved.trim().replace(/\/+$/, '');
     }
 
-    // 2. Running on web server directly (e.g. http://localhost:3000, http://192.168.1.x:3000, or trycloudflare.com)
+    // Clean up stale localhost in localStorage
+    if (saved && (saved.includes('localhost') || saved.includes('127.0.0.1'))) {
+      try { localStorage.removeItem(SERVER_URL_STORAGE_KEY); } catch (_) {}
+    }
+
+    // 2. Running on web server directly (e.g. trycloudflare.com or custom domain)
     const host = window.location.hostname;
     if (host && host !== 'localhost' && !host.includes('github.io') && host !== '127.0.0.1') {
       return window.location.origin;
     }
 
-    // 3. Fallback default
-    return `http://localhost:${DEFAULT_LOCAL_PORT}`;
+    // 3. Fallback default: Always use public 4G Cloudflare URL on phone, NEVER localhost!
+    return DEFAULT_4G_SERVER_URL;
   }
 
   public getServerUrl(): string {
@@ -72,7 +78,12 @@ export class ServerApiClient {
 
   public setServerUrl(newUrl: string): void {
     const cleanUrl = (newUrl || '').trim().replace(/\/+$/, '');
-    this.serverUrl = cleanUrl || `http://localhost:${DEFAULT_LOCAL_PORT}`;
+    // If someone passes localhost on phone/webview, keep 4G URL instead
+    if (cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1')) {
+      this.serverUrl = DEFAULT_4G_SERVER_URL;
+    } else {
+      this.serverUrl = cleanUrl || DEFAULT_4G_SERVER_URL;
+    }
     if (typeof window !== 'undefined') {
       localStorage.setItem(SERVER_URL_STORAGE_KEY, this.serverUrl);
     }

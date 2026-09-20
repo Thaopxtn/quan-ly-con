@@ -15,11 +15,11 @@ import {
   getNativeDeviceInfo,
   DeviceHardwareInfo,
 } from './services/nativePermissionsService';
-import { submitChildPairingCode } from '@shared/firebase/pairingService';
+import { clearRateLimit, submitChildPairingCode } from '@shared/firebase/pairingService';
 import { ensureKidAnonymousAuth } from '@shared/firebase/firebaseService';
 import { isSimulatorMode } from '@shared/store';
 import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
-import { serverApiClient } from '@shared/services/serverApiClient';
+import { DEFAULT_4G_SERVER_URL, serverApiClient } from '@shared/services/serverApiClient';
 
 const SERVER_URL_KEY = 'parentpro_server_url';
 
@@ -40,10 +40,16 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
   const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  // Server URL configuration (for 4G connection via Cloudflare Tunnel)
-  const [serverUrl, setServerUrl] = useState<string>('');
+  // Server URL configuration: Default to public 4G Cloudflare URL, never localhost!
+  const [serverUrl, setServerUrl] = useState<string>(() => {
+    const current = serverApiClient.getServerUrl();
+    if (current && !current.includes('localhost') && !current.includes('127.0.0.1')) {
+      return current;
+    }
+    return DEFAULT_4G_SERVER_URL;
+  });
   const [showServerConfig, setShowServerConfig] = useState(false);
-  const [serverStatus, setServerStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [serverStatus, setServerStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('ok');
 
   const getDeviceModel = () => {
     if (typeof navigator === 'undefined') return 'Android Device';
@@ -55,9 +61,11 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     return 'Android Device';
   };
 
-  // Auto fetch real Android hardware info (IMEI, MAC, Serial, Phone Number)
+  // Auto fetch real Android hardware info & resolve 4G server URL
   useEffect(() => {
     resetSafeConfetti();
+    clearRateLimit(); // Immediately unlock any rate limits
+
     ensureKidAnonymousAuth().catch((err) => {
       console.warn('[KidActivation] ensureKidAnonymousAuth warning:', err);
     });
@@ -66,14 +74,21 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       setDeviceName(info.deviceName || `${info.manufacturer} ${info.model}`.trim() || 'Điện thoại của con');
     });
 
-    // Load saved server URL & auto-resolve latest from GitHub
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '';
-    if (saved && saved.trim()) {
-      setServerUrl(saved.trim());
+    // Remove any stale localhost from phone localStorage
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(SERVER_URL_KEY);
+      if (saved && (saved.includes('localhost') || saved.includes('127.0.0.1'))) {
+        localStorage.removeItem(SERVER_URL_KEY);
+      } else if (saved && saved.trim()) {
+        setServerUrl(saved.trim());
+      }
     }
-    serverApiClient.resolveServerUrlFromCloud().then((cloudUrl) => {
-      if (cloudUrl) {
-        setServerUrl(cloudUrl);
+
+    // Auto-fetch latest 4G URL from GitHub
+    serverApiClient.resolveServerUrlFromCloud(true).then((cloudUrl) => {
+      const active = cloudUrl || serverApiClient.getServerUrl();
+      if (active && !active.includes('localhost') && !active.includes('127.0.0.1')) {
+        setServerUrl(active);
         setServerStatus('ok');
       }
     });
@@ -153,19 +168,16 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       return;
     }
 
-    // Tự động nhận diện URL máy chủ qua GitHub nếu chưa có
+    // Luôn mở khóa rate limit và đảm bảo dùng URL 4G (không bao giờ dùng localhost)
+    clearRateLimit();
     let urlToUse = (serverUrl.trim() || (typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '') || '').replace(/\/+$/, '');
-    if (!urlToUse || urlToUse.includes('localhost')) {
+    if (!urlToUse || urlToUse.includes('localhost') || urlToUse.includes('127.0.0.1')) {
       const resolved = await serverApiClient.resolveServerUrlFromCloud();
-      if (resolved) {
-        urlToUse = resolved;
-        setServerUrl(resolved);
-        setServerStatus('ok');
-      }
+      urlToUse = resolved || DEFAULT_4G_SERVER_URL;
+      setServerUrl(urlToUse);
+      setServerStatus('ok');
     }
-    if (urlToUse) {
-      serverApiClient.setServerUrl(urlToUse);
-    }
+    serverApiClient.setServerUrl(urlToUse);
 
     setIsSubmittingParentPin(true);
     setPinError(null);

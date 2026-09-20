@@ -94,15 +94,9 @@ async function main() {
 
   let serverProcess = null;
 
-  // Step 1: Check if server is already running
-  console.log(`[1/2] ⏳ Đang kiểm tra máy chủ nội bộ (cổng ${PORT})...`);
-  const isRunning = await checkServerRunning(PORT);
-
-  if (isRunning) {
-    console.log(`[1/2] ✅ Máy chủ nội bộ ĐANG HOẠT ĐỘNG TỐT (cổng ${PORT} đã sẵn sàng)!`);
-  } else {
-    // Port might be hung or free, make sure it is clean
-    freePortIfBlocked(PORT);
+  // Step 1: Always ensure fresh server instance with latest code
+  console.log(`[1/2] ⏳ Đang khởi động máy chủ nội bộ (cổng ${PORT})...`);
+  freePortIfBlocked(PORT);
 
     console.log(`[1/2] ⏳ Đang khởi chạy máy chủ nội bộ...`);
     serverProcess = spawn('node', [path.join(ROOT_DIR, 'server.cjs')], {
@@ -130,7 +124,6 @@ async function main() {
       if (await checkServerRunning(PORT)) break;
     }
     console.log(`[1/2] ✅ Máy chủ nội bộ đã khởi động thành công (cổng ${PORT})!`);
-  }
 
   // Step 2: Locate & Launch Cloudflare Tunnel
   const cfPath = findCloudflared();
