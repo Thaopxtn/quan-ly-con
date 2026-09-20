@@ -609,12 +609,12 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onNavigate?.('pc_control');
+                            onNavigate?.('remote');
                           }}
-                          className="text-[10px] text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full font-bold hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+                          className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full font-bold hover:bg-blue-100 flex items-center gap-1 cursor-pointer"
                         >
-                          <Monitor size={10} />
-                          <span>Điều khiển PC</span>
+                          <Smartphone size={10} />
+                          <span>Điều khiển máy</span>
                         </button>
                         <button
                           type="button"
@@ -738,12 +738,12 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onNavigate?.('pc_control');
+                        onNavigate?.('remote');
                       }}
-                      className="text-[10px] text-teal-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                      className="text-[10px] text-blue-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
                     >
-                      <Monitor size={11} />
-                      <span>Quản lý PC</span>
+                      <Smartphone size={11} />
+                      <span>Điều khiển điện thoại</span>
                     </button>
                   </div>
                 )}
