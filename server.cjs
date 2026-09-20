@@ -62,6 +62,23 @@ function writeDb(type, data) {
   }
 }
 
+function getDbStats() {
+  const stats = {};
+  for (const [key, filePath] of Object.entries(DB_FILES)) {
+    let size = 0;
+    let count = 0;
+    try {
+      if (fs.existsSync(filePath)) {
+        size = fs.statSync(filePath).size;
+        const data = readDb(key);
+        count = Array.isArray(data) ? data.length : Object.keys(data).length;
+      }
+    } catch (_) {}
+    stats[key] = { size, count, path: filePath, name: path.basename(filePath) };
+  }
+  return stats;
+}
+
 // In-Memory Realtime Clients (Server-Sent Events)
 const sseClients = new Set();
 
@@ -184,6 +201,114 @@ const server = http.createServer(async (req, res) => {
       },
       activeRealtimeConnections: sseClients.size,
     }));
+    return;
+  }
+
+  // 1.1 Detailed Server & System Statistics
+  if (pathname === '/api/server-stats') {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const cpus = os.cpus() || [];
+    const memoryUsage = process.memoryUsage();
+
+    const stats = {
+      status: 'online',
+      serverTime: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      systemUptime: Math.floor(os.uptime()),
+      hostname: os.hostname(),
+      platform: os.platform(),
+      osRelease: os.release(),
+      arch: os.arch(),
+      nodeVersion: process.version,
+      pid: process.pid,
+      port: PORT,
+      cpu: {
+        model: cpus[0] ? cpus[0].model.trim() : 'Standard CPU',
+        cores: cpus.length,
+        speedMHz: cpus[0] ? cpus[0].speed : 0,
+      },
+      memory: {
+        totalBytes: totalMem,
+        freeBytes: freeMem,
+        usedBytes: usedMem,
+        usagePercent: Math.round((usedMem / totalMem) * 100),
+        processRssBytes: memoryUsage.rss,
+        processHeapBytes: memoryUsage.heapUsed,
+      },
+      network: {
+        localIps: getLocalIpAddresses(),
+        sseClientsCount: sseClients.size,
+      },
+      storage: {
+        dataDir: DATA_DIR,
+        files: getDbStats(),
+      },
+      recent: {
+        telemetry: readDb('telemetry').slice(0, 15),
+        chats: readDb('chats').slice(-15).reverse(),
+        commands: readDb('commands').slice(0, 15),
+      },
+    };
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats));
+    return;
+  }
+
+  // 1.2 Test Telemetry Injection (for verification in dashboard)
+  if (pathname === '/api/server/test-telemetry' && req.method === 'POST') {
+    const testPoint = {
+      childId: 'kid_test_demo',
+      latitude: 21.028511 + (Math.random() - 0.5) * 0.01,
+      longitude: 105.854444 + (Math.random() - 0.5) * 0.01,
+      accuracy: 10.0,
+      speed: Math.round(5 + Math.random() * 20),
+      battery: Math.round(75 + Math.random() * 24),
+      savedAt: new Date().toISOString(),
+      mock: true
+    };
+    const history = readDb('telemetry');
+    history.unshift(testPoint);
+    if (history.length > 10000) history.pop();
+    writeDb('telemetry', history);
+    broadcastRealtime('telemetry', testPoint);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, point: testPoint }));
+    return;
+  }
+
+  // 1.3 Test Chat Injection
+  if (pathname === '/api/server/test-chat' && req.method === 'POST') {
+    const body = await parseJsonBody(req);
+    const testMsg = {
+      id: 'chat_' + Date.now(),
+      sender: (body && body.sender) ? body.sender : 'Trung Tâm Máy Chủ',
+      text: (body && body.text) ? body.text : 'Tin nhắn thử nghiệm từ Trung Tâm Quản Trị Máy Chủ',
+      time: new Date().toISOString(),
+    };
+    const chats = readDb('chats');
+    chats.push(testMsg);
+    writeDb('chats', chats);
+    broadcastRealtime('chat', testMsg);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: testMsg }));
+    return;
+  }
+
+  // 1.4 Clear Test Data
+  if (pathname === '/api/server/clear-data' && req.method === 'POST') {
+    const body = await parseJsonBody(req);
+    const target = body ? body.target : 'all';
+    if (target === 'telemetry' || target === 'all') writeDb('telemetry', []);
+    if (target === 'chats' || target === 'all') writeDb('chats', []);
+    if (target === 'commands' || target === 'all') writeDb('commands', []);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, cleared: target }));
     return;
   }
 
@@ -340,93 +465,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 8. Server Management Portal & Data Inspector
-  if (pathname === '/portal' || pathname === '/hub') {
-    const localIps = getLocalIpAddresses();
-    const port = PORT;
-    const telemetry = readDb('telemetry');
-    const chats = readDb('chats');
-    const commands = readDb('commands');
-
-    const ipListHtml = localIps.map(ip => `
-      <div style="background:#f8fafc;padding:10px 14px;border-radius:10px;margin-bottom:6px;font-family:monospace;font-size:13px;border:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
-        <span>http://${ip}:${port}</span>
-        <span style="color:#059669;font-weight:bold;font-size:11px;">NỘI MẠNG WI-FI</span>
-      </div>
-    `).join('');
-
-    const html = `<!DOCTYPE html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Máy Chủ Quản Lý Con - Dữ Liệu Nội Bộ PC</title>
-  <style>
-    body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;margin:0;padding:24px;color:#f8fafc}
-    .card{max-width:620px;margin:0 auto;background:#1e293b;border-radius:24px;padding:28px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);border:1px solid #334155}
-    h1{font-size:22px;margin:0 0 6px;color:#fff;display:flex;align-items:center;justify-content:space-between}
-    .badge{background:#10b98120;color:#34d399;border:1px solid #05966950;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:700}
-    .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:20px 0}
-    .stat-box{background:#0f172a;border:1px solid #334155;border-radius:16px;padding:14px;text-align:center}
-    .stat-num{font-size:24px;font-weight:900;color:#38bdf8}
-    .stat-label{font-size:11px;color:#94a3b8;margin-top:4px;font-weight:600}
-    .btn{display:flex;align-items:center;justify-content:space-between;background:#2563eb;color:#fff;text-decoration:none;padding:14px 18px;border-radius:14px;font-weight:700;margin-bottom:10px;transition:all .15s}
-    .btn:hover{background:#1d4ed8;transform:translateY(-1px)}
-    .btn-kid{background:#059669}.btn-kid:hover{background:#047857}
-    .btn-backup{background:#334155;color:#e2e8f0;border:1px solid #475569}.btn-backup:hover{background:#475569}
-    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .notice{background:#1e3a8a30;border:1px solid #1e40af50;border-radius:14px;padding:14px;font-size:12px;color:#93c5fd;line-height:1.5;margin-bottom:20px}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>
-      <span>🏠 Máy Chủ PC Cá Nhân</span>
-      <span class="badge">● Lưu Trữ Nội Bộ</span>
-    </h1>
-    <p style="color:#94a3b8;font-size:13.5px;margin:6px 0 16px">Dữ liệu gia đình được lưu trữ an toàn ngay trên ổ cứng máy tính này (Thư mục: <code>/data</code>).</p>
-    
-    <div class="stat-grid">
-      <div class="stat-box">
-        <div class="stat-num">${telemetry.length}</div>
-        <div class="stat-label">📍 VỊ TRÍ GPS</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-num">${chats.length}</div>
-        <div class="stat-label">💬 TIN NHẮN</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-num">${commands.length}</div>
-        <div class="stat-label">⚡ LỆNH KHÓA/CHUÔNG</div>
-      </div>
-    </div>
-
-    <div class="notice">
-      🔒 <strong>Bảo mật tối đa:</strong> 100% tọa độ GPS, nhật ký di chuyển và tin nhắn được lưu trực tiếp trên ổ cứng máy tính cá nhân của bạn. Không ai có quyền truy cập ngoài bạn.
-    </div>
-
-    <div style="margin-bottom:16px">
-      <a href="/parent.html" class="btn"><span>📱 Mở Ứng Dụng Cha Mẹ (ParentPro)</span> ➔</a>
-      <a href="/kid.html" class="btn btn-kid"><span>🧒 Mở Ứng Dụng Con Cái (KidCare)</span> ➔</a>
-    </div>
-
-    <div class="grid-2" style="margin-bottom:16px">
-      <a href="/download/parent" class="btn btn-backup"><span>📥 Tải APK Bố Mẹ</span></a>
-      <a href="/download/kid" class="btn btn-backup"><span>📥 Tải APK Con</span></a>
-    </div>
-
-    <a href="/api/data/export" class="btn btn-backup" style="background:#0284c7;color:#fff;border:none">
-      <span>💾 Tải File Sao Lưu Dữ Liệu Máy Tính (.JSON)</span> 📥
-    </a>
-
-    <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin:22px 0 8px">Đường Dẫn Nội Mạng Wi-Fi Trong Nhà:</h4>
-    ${ipListHtml}
-  </div>
-</body>
-</html>`;
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
-    return;
+  // 8. Server Management Portal & Full Dashboard
+  if (pathname === '/portal' || pathname === '/hub' || pathname === '/dashboard' || pathname === '/admin') {
+    const portalFile = path.join(ROOT_DIR, 'public', 'portal.html');
+    if (fs.existsSync(portalFile)) {
+      sendFile(res, portalFile, 'text/html; charset=utf-8');
+      return;
+    }
   }
 
   // 9. Kid App Route (/kid or /kid/...)
