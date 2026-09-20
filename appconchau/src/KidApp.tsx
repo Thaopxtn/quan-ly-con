@@ -53,7 +53,7 @@ import {
 import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId } from '@shared/store';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
-import confetti from 'canvas-confetti';
+import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
 import { KidPairingModal } from './KidPairingModal';
 import { KidActivationScreen } from './KidActivationScreen';
 import { KidPermissionsScreen } from './KidPermissionsScreen';
@@ -586,7 +586,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const [appCategoryFilter, setAppCategoryFilter] = useState<'all' | 'study' | 'allowed' | 'blocked'>('all');
   const [appViewMode, setAppViewMode] = useState<'grid' | 'list'>('grid');
 
-  const loadInstalledApps = React.useCallback(async () => {
+  const hasScannedAppsRef = useRef(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const loadInstalledApps = React.useCallback(async (force = false) => {
+    if (hasScannedAppsRef.current && !force) {
+      return; // Run only once per session to completely eliminate the infinite scan/sync loop
+    }
+    hasScannedAppsRef.current = true;
     setIsScanningApps(true);
     try {
       const scanned = await fetchRealInstalledApps();
@@ -598,8 +606,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
         // Auto convert to AppItem and sync with cloud so parent sees child's real installed apps
         if (activeParentId && targetChildId) {
-          const currentSettings = state.childSettings[targetChildId];
-          const existingRules = currentSettings?.apps || state.apps || [];
+          const currentSettings = stateRef.current.childSettings?.[targetChildId];
+          const existingRules = currentSettings?.apps || stateRef.current.apps || [];
           const mergedApps: AppItem[] = scanned.map((app) => {
             const existing = existingRules.find(
               (r) =>
@@ -629,13 +637,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     } finally {
       setIsScanningApps(false);
     }
-  }, [activeParentId, targetChildId, state.childSettings, state.apps]);
+  }, [activeParentId, targetChildId]);
 
   useEffect(() => {
-    // Launch load optimization: delay real app scan by 1200ms so initial frame paints immediately
+    // Delay real app scan by 1500ms so initial frame paints immediately without blocking UI
     const timer = setTimeout(() => {
       loadInstalledApps();
-    }, 1200);
+    }, 1500);
     return () => clearTimeout(timer);
   }, [loadInstalledApps]);
 
@@ -782,10 +790,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     if (typeof window !== 'undefined') {
       (window as any).__APP_ROLE__ = 'kid';
     }
+    resetSafeConfetti();
     // Check permissions on mount and update state without hijacking the screen
     checkPermissions();
 
-    const handleStorage = () => checkPermissions();
+    const handleStorage = () => {
+      resetSafeConfetti();
+      checkPermissions();
+    };
     window.addEventListener('storage', handleStorage);
     window.addEventListener('focus', handleStorage);
     document.addEventListener('visibilitychange', handleStorage);
@@ -2146,7 +2158,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     toggleTaskCompleted(taskId, child.id);
     if (willComplete) {
       haptics.success();
-      confetti({
+      fireSafeConfetti({
         particleCount: 60,
         spread: 70,
         origin: { y: 0.7 },
@@ -2161,7 +2173,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     const res = redeemRewardOnKid(child.id, rewardId);
     if (res.success) {
       haptics.success();
-      confetti({
+      fireSafeConfetti({
         particleCount: 110,
         spread: 120,
         origin: { y: 0.5 },
@@ -2208,7 +2220,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       haptics.success();
       setMathError(false);
       setMathInput('');
-      confetti({ particleCount: 70, spread: 80 });
+      fireSafeConfetti({ particleCount: 70, spread: 80 });
       solveChallengeOnKid();
       showToast('🎉 Giỏi lắm! Con đã giải đúng bài toán và mở khóa máy thành công!');
     } else {
@@ -2224,7 +2236,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     if (idx === lockChallenge.quizChallenge.correctIndex) {
       haptics.success();
       setQuizError(false);
-      confetti({ particleCount: 70, spread: 80 });
+      fireSafeConfetti({ particleCount: 70, spread: 80 });
       setTimeout(() => {
         solveChallengeOnKid();
         showToast('🎉 Chính xác! Bạn đã mở khóa máy thành công!');
@@ -2239,6 +2251,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     return (
       <KidActivationScreen
         onActivationComplete={() => {
+          resetSafeConfetti();
           setPairedInfo(getKidDevicePairedInfo());
           setShowPermissionsScreen(true);
         }}
@@ -2250,6 +2263,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     return (
       <KidPermissionsScreen
         onBack={() => {
+          resetSafeConfetti();
           const oneMonthLater = Date.now() + 30 * 24 * 60 * 60 * 1000;
           localStorage.setItem('kidcare_permissions_dismissed_until', oneMonthLater.toString());
           setShowPermissionsScreen(false);

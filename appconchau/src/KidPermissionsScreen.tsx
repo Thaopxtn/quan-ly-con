@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { PrivacyPolicyModal } from "@shared/components/PrivacyPolicyModal";
 import { Capacitor } from "@capacitor/core";
+import { resetSafeConfetti } from "@shared/utils/safeConfetti";
 import {
   checkRealAndroidPermissions,
   openAndroidPermissionSettings,
@@ -167,31 +168,36 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
   };
 
   const savePermissions = (updated: PermissionItem[]) => {
-    const stateObj: Record<string, boolean> = {};
-    updated.forEach((p) => {
-      stateObj[p.id] = p.isGranted;
-    });
-    localStorage.setItem(PERMISSIONS_STORAGE_KEY, JSON.stringify(stateObj));
-    // Trigger storage event for KidApp listener
-    window.dispatchEvent(new Event("storage"));
+    try {
+      const stateObj: Record<string, boolean> = {};
+      updated.forEach((p) => {
+        stateObj[p.id] = p.isGranted;
+      });
+      localStorage.setItem(PERMISSIONS_STORAGE_KEY, JSON.stringify(stateObj));
+    } catch (e) {}
   };
 
   // Auto sync with real Android permissions
   const syncWithNativePermissions = async () => {
-    const realStatus = await checkRealAndroidPermissions();
-    if (realStatus) {
-      setPermissions((prev) => {
-        const updated = prev.map((p) => {
-          const val = realStatus[p.id as keyof KidPermissionsStatus];
-          return typeof val === "boolean" ? { ...p, isGranted: val } : p;
+    try {
+      const realStatus = await checkRealAndroidPermissions();
+      if (realStatus) {
+        setPermissions((prev) => {
+          const updated = prev.map((p) => {
+            const val = realStatus[p.id as keyof KidPermissionsStatus];
+            return typeof val === "boolean" ? { ...p, isGranted: val } : p;
+          });
+          setTimeout(() => savePermissions(updated), 0);
+          return updated;
         });
-        savePermissions(updated);
-        return updated;
-      });
+      }
+    } catch (e) {
+      console.warn('syncWithNativePermissions error:', e);
     }
   };
 
   useEffect(() => {
+    resetSafeConfetti();
     syncWithNativePermissions();
 
     const handleFocus = () => {
@@ -226,7 +232,7 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
         }
         return p;
       });
-      savePermissions(updated);
+      setTimeout(() => savePermissions(updated), 0);
       return updated;
     });
   };
@@ -244,7 +250,7 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
     } else {
       setPermissions((prev) => {
         const updated = prev.map((p) => ({ ...p, isGranted: true }));
-        savePermissions(updated);
+        setTimeout(() => savePermissions(updated), 0);
         showToast("🎉 Đã kích hoạt toàn bộ quyền bảo vệ an toàn!");
         return updated;
       });
@@ -279,7 +285,10 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
   const isFullyProtected = grantedCount === permissions.length;
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50 select-none overflow-hidden relative">
+    <div
+      className="flex-1 flex flex-col h-full bg-slate-50 select-none overflow-hidden relative pointer-events-auto"
+      style={{ touchAction: 'manipulation' }}
+    >
       {/* Native Status Bar Spacer */}
       <div
         className="w-full shrink-0 bg-white"

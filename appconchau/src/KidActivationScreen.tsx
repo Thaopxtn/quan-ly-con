@@ -16,7 +16,7 @@ import {
 import { submitChildPairingCode } from '@shared/firebase/pairingService';
 import { ensureKidAnonymousAuth } from '@shared/firebase/firebaseService';
 import { isSimulatorMode } from '@shared/store';
-import confetti from 'canvas-confetti';
+import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
 
 interface KidActivationScreenProps {
   onActivationComplete: (parentName: string, childName: string) => void;
@@ -47,6 +47,7 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
 
   // Auto fetch real Android hardware info (IMEI, MAC, Serial, Phone Number)
   useEffect(() => {
+    resetSafeConfetti();
     ensureKidAnonymousAuth().catch((err) => {
       console.warn('[KidActivation] ensureKidAnonymousAuth warning:', err);
     });
@@ -127,10 +128,9 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       });
 
       if (res.success && res.session) {
-        confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-        setTimeout(() => {
-          onActivationComplete(res.session!.parentName || 'Bố/Mẹ', res.session!.childName || 'Bé');
-        }, 500);
+        fireSafeConfetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+        resetSafeConfetti();
+        onActivationComplete(res.session!.parentName || 'Bố/Mẹ', res.session!.childName || 'Bé');
       } else {
         setPinError(res.error || 'Mã kết nối không chính xác hoặc đã hết hạn.');
       }

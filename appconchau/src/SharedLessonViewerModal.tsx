@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ExternalLink, Clock, CheckCircle2, BookOpen, AlertCircle, X, Sparkles, Award } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import { fireSafeConfetti } from '../../shared/utils/safeConfetti';
 import { SharedLessonLink } from '../../shared/types';
 import { EmergencyContactBar } from './EmergencyContactBar';
 
@@ -46,7 +46,7 @@ export const SharedLessonViewerModal: React.FC<SharedLessonViewerModalProps> = (
           setIsCompleted(true);
           // Confetti celebration
           try {
-            confetti({
+            fireSafeConfetti({
               particleCount: 80,
               spread: 70,
               origin: { y: 0.6 },

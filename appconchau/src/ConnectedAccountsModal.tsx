@@ -28,7 +28,6 @@ import {
   getKidDevicePairedInfo,
   PairingSession,
 } from '@shared/firebase/pairingService';
-import confetti from 'canvas-confetti';
 
 interface ConnectedAccountsModalProps {
   onClose: () => void;

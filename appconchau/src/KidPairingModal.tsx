@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 import {
   X,
   Smartphone,
@@ -9,7 +9,7 @@ import {
   ShieldCheck
 } from "lucide-react";
 import { submitChildPairingCode, getKidDevicePairedInfo } from "@shared/firebase/pairingService";
-import confetti from "canvas-confetti";
+import { fireSafeConfetti, resetSafeConfetti } from "@shared/utils/safeConfetti";
 
 interface KidPairingModalProps {
   onClose: () => void;
@@ -84,11 +84,12 @@ export const KidPairingModal: React.FC<KidPairingModalProps> = ({
       });
 
       if (res.success && res.session) {
-        confetti({
+        fireSafeConfetti({
           particleCount: 100,
           spread: 80,
           origin: { y: 0.6 },
         });
+        resetSafeConfetti();
         onPairedSuccess(res.session.parentName, res.session.childName);
         onClose();
       } else {
