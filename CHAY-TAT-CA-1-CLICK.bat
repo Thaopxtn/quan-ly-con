@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
-title Quản Lý Con - Máy Chủ & Đường Truyền 4G Tự Động
+title Quan Ly Con - May Chu va Ket Noi 4G Tu Dong
 cd /d "%~dp0"
 
-echo [KHỞI ĐỘNG] Đang chuẩn bị môi trường chạy...
+echo Dang khoi dong may chu va ket noi 4G, vui long doi giay lat...
 node start-all.cjs
 pause
