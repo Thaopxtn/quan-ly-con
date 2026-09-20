@@ -408,6 +408,11 @@ export async function connectParentWithKidCode(
     localStorage.setItem(LOCAL_PAIRING_SESSIONS_KEY, JSON.stringify(sessions));
   }
 
+  // Cập nhật sessionToken có chữ ký số vào serverApiClient
+  if (sessionToken) {
+    serverApiClient.setSessionToken(sessionToken);
+  }
+
   return { success: true, session: { ...session, sessionToken } };
 }
 
@@ -597,6 +602,11 @@ export async function submitChildPairingCode(
     sessionToken,
   };
   saveKidDevicePairedInfo(kidPairedInfo);
+
+  // Kích hoạt ngay sessionToken có chữ ký số cho serverApiClient
+  if (sessionToken) {
+    serverApiClient.setSessionToken(sessionToken);
+  }
 
   return { success: true, session: { ...session, sessionToken }, kidPairedInfo };
 }

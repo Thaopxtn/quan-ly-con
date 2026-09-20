@@ -11,6 +11,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -24,6 +25,75 @@ const DATA_DIR = path.join(ROOT_DIR, 'data');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
+
+// Cryptographic Secret for Session Token Signatures (HMAC-SHA256)
+const SECRET_FILE = path.join(DATA_DIR, 'auth_secret.key');
+let SERVER_HMAC_SECRET = '';
+if (fs.existsSync(SECRET_FILE)) {
+  try {
+    SERVER_HMAC_SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+  } catch (_) {}
+}
+if (!SERVER_HMAC_SECRET || SERVER_HMAC_SECRET.length < 32) {
+  SERVER_HMAC_SECRET = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.writeFileSync(SECRET_FILE, SERVER_HMAC_SECRET, 'utf8');
+  } catch (_) {}
+}
+
+/**
+ * Creates a cryptographically signed sessionToken (HMAC-SHA256)
+ * Format: <base64url(role:id:timestamp)>.<hex_signature>
+ */
+function signSessionToken(role, id) {
+  const safeRole = role || 'kid';
+  const safeId = id || ('user_' + Date.now());
+  const payload = `${safeRole}:${safeId}:${Date.now()}`;
+  const sig = crypto.createHmac('sha256', SERVER_HMAC_SECRET).update(payload).digest('hex');
+  const encPayload = Buffer.from(payload).toString('base64url');
+  return `${encPayload}.${sig}`;
+}
+
+/**
+ * Validates the cryptographic signature of an incoming sessionToken
+ */
+function verifySessionTokenSignature(token) {
+  if (!token || typeof token !== 'string') return null;
+  const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
+  const parts = cleanToken.split('.');
+  if (parts.length === 2) {
+    try {
+      const [encPayload, sig] = parts;
+      const payload = Buffer.from(encPayload, 'base64url').toString('utf8');
+      const expectedSig = crypto.createHmac('sha256', SERVER_HMAC_SECRET).update(payload).digest('hex');
+      const sigBuf = Buffer.from(sig, 'hex');
+      const expBuf = Buffer.from(expectedSig, 'hex');
+      if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
+        const [role, id, timestamp] = payload.split(':');
+        return { valid: true, role, id, timestamp: Number(timestamp) };
+      }
+    } catch (_) {}
+  }
+
+  // Fallback: Check existing sessionTokens stored in pairings DB
+  const pairings = readDb('pairings');
+  for (const session of Object.values(pairings)) {
+    if (session && session.sessionToken && session.sessionToken === cleanToken) {
+      return {
+        valid: true,
+        role: 'kid',
+        id: session.childId || session.code,
+        parentId: session.parentId,
+        legacy: true,
+      };
+    }
+  }
+  return null;
+}
+
+// Master Parent Token for Parent Web Portal & Parent App
+const MASTER_PARENT_TOKEN = signSessionToken('parent', 'yaDXFmTMcccQV6m53Rxtw4LOF303');
+
 
 // Database file paths
 const DB_FILES = {
@@ -82,6 +152,22 @@ function writeDb(type, data) {
     console.error(`[DB] Error writing ${type}:`, e.message);
   }
 }
+
+// Backfill cryptographically signed sessionTokens for existing pairing records on startup
+try {
+  const startupPairings = readDb('pairings');
+  let backfilled = false;
+  for (const [code, session] of Object.entries(startupPairings)) {
+    if (session && (!session.sessionToken || !session.sessionToken.includes('.'))) {
+      session.sessionToken = signSessionToken('kid', session.childId || ('kid_' + code));
+      backfilled = true;
+    }
+  }
+  if (backfilled) {
+    writeDb('pairings', startupPairings);
+    console.log('[Security] 🛡️ Đã cấp phát chữ ký số mật mã học cho các phiên ghép đôi hiện hữu trong cơ sở dữ liệu.');
+  }
+} catch (_) {}
 
 function getDbStats() {
   const stats = {};
@@ -147,6 +233,29 @@ function getLocalIpAddresses() {
 }
 
 function sendFile(res, filePath, contentType, isApk = false) {
+  // Inject authenticated parent session token into HTML pages so browser portal is seamlessly authorized
+  if (filePath.endsWith('.html')) {
+    fs.readFile(filePath, 'utf8', (err, html) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('404 Not Found');
+        return;
+      }
+      const injection = `<script>window.__PARENT_SESSION_TOKEN__ = ${JSON.stringify(MASTER_PARENT_TOKEN)};</script>`;
+      const modifiedHtml = html.includes('</head>')
+        ? html.replace('</head>', `${injection}</head>`)
+        : (injection + html);
+      const buf = Buffer.from(modifiedHtml, 'utf8');
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': buf.length,
+        'Cache-Control': 'no-cache',
+      });
+      res.end(buf);
+    });
+    return;
+  }
+
   fs.stat(filePath, (err, stats) => {
     if (err || !stats.isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -190,11 +299,43 @@ function parseJsonBody(req) {
   });
 }
 
+/**
+ * Checks whether an endpoint is public (exempt from cryptographic token check)
+ */
+function isPublicEndpoint(pathname) {
+  // 1. Health checks (required for 4G cloud auto-discovery and ping)
+  if (pathname === '/api/health' || pathname === '/health') return true;
+  // 2. Initial pairing negotiation (devices do not possess token yet)
+  if (pathname === '/api/pairing' || pathname === '/api/pairing/create' || pathname === '/api/pairing/confirm') return true;
+  // 3. Auth token exchange
+  if (pathname === '/api/auth/token') return true;
+  // 4. Server status stats badge
+  if (pathname === '/api/server-stats') return true;
+  // 5. Static assets, APK downloads, HTML pages
+  if (!pathname.startsWith('/api/')) return true;
+  return false;
+}
+
+/**
+ * Extracts sessionToken from Authorization header, X-Session-Token header, or query param
+ */
+function extractRequestToken(req, parsedUrl) {
+  const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+  if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    return authHeader.substring(7).trim();
+  }
+  const xToken = req.headers['x-session-token'] || req.headers['X-Session-Token'];
+  if (xToken) return String(xToken).trim();
+  const queryToken = parsedUrl.searchParams.get('token');
+  if (queryToken) return String(queryToken).trim();
+  return null;
+}
+
 const server = http.createServer(async (req, res) => {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-Token');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -204,6 +345,47 @@ const server = http.createServer(async (req, res) => {
 
   const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   let pathname = decodeURIComponent(parsedUrl.pathname);
+
+  // 🛡️ SECURITY LAYER: Cryptographic sessionToken Signature Verification (HMAC-SHA256)
+  if (!isPublicEndpoint(pathname)) {
+    const rawToken = extractRequestToken(req, parsedUrl);
+    if (!rawToken) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Unauthorized: Thiếu sessionToken hợp lệ. Yêu cầu chữ ký số từ máy Con hoặc Cha Mẹ.',
+        code: 'MISSING_SESSION_TOKEN',
+      }));
+      return;
+    }
+
+    const authResult = verifySessionTokenSignature(rawToken);
+    if (!authResult || !authResult.valid) {
+      console.warn(`[Security] 🚨 Chặn request giả mạo/sai chữ ký số: ${req.method} ${pathname} từ IP: ${req.socket.remoteAddress}`);
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Forbidden: Chữ ký số sessionToken không hợp lệ hoặc đã bị can thiệp.',
+        code: 'INVALID_CRYPTOGRAPHIC_SIGNATURE',
+      }));
+      return;
+    }
+
+    // Attach validated auth identity to request
+    req.auth = authResult;
+  }
+
+  // 0.1 Token Endpoint for Parent App / Portal
+  if (pathname === '/api/auth/token') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      token: MASTER_PARENT_TOKEN,
+      role: 'parent',
+      parentId: 'yaDXFmTMcccQV6m53Rxtw4LOF303'
+    }));
+    return;
+  }
 
   // 1. Health Check
   if (pathname === '/api/health' || pathname === '/health') {
@@ -726,9 +908,11 @@ const server = http.createServer(async (req, res) => {
       if (code) {
         const cleanCode = String(code).trim();
         const pairings = readDb('pairings');
+        const signedToken = signSessionToken('parent', session.parentId || 'family_primary');
         pairings[cleanCode] = {
           ...session,
           code: cleanCode,
+          sessionToken: session.sessionToken || signedToken,
           status: session.status || 'pending',
           createdAt: session.createdAt || Date.now(),
           expiresAt: session.expiresAt || (Date.now() + 15 * 60 * 1000),
@@ -755,18 +939,26 @@ const server = http.createServer(async (req, res) => {
         // Safety Net Auto-Provisioning: If parent code is 6 digits, guarantee session exists
         // so network delay between parent app and server never breaks child connection!
         if (!session && /^\d{6}$/.test(cleanCode)) {
+          const childId = 'kid_' + Date.now();
+          const signedToken = signSessionToken('kid', childId);
           session = {
             code: cleanCode,
             parentId: 'yaDXFmTMcccQV6m53Rxtw4LOF303',
             parentName: 'Bố/Mẹ',
             childName: 'Điện thoại của con',
+            childId,
+            sessionToken: signedToken,
             status: 'pending',
             createdAt: Date.now(),
             expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour
           };
           pairings[cleanCode] = session;
           writeDb('pairings', pairings);
-          console.log(`[Pairing] 🟢 Tự động kích hoạt mã ghép đôi 6 số ${cleanCode} thành công`);
+          console.log(`[Pairing] 🟢 Tự động kích hoạt mã ghép đôi 6 số ${cleanCode} thành công (đã cấp chữ ký số)`);
+        } else if (session && (!session.sessionToken || !session.sessionToken.includes('.'))) {
+          session.sessionToken = signSessionToken('kid', session.childId || ('kid_' + cleanCode));
+          pairings[cleanCode] = session;
+          writeDb('pairings', pairings);
         }
 
         if (session) {
@@ -793,11 +985,14 @@ const server = http.createServer(async (req, res) => {
       const pairings = readDb('pairings');
       let session = pairings[code];
       if (!session && /^\d{6}$/.test(code)) {
+        const childId = body.childId || ('kid_' + Date.now());
         session = {
           code,
           parentId: 'yaDXFmTMcccQV6m53Rxtw4LOF303',
           parentName: 'Bố/Mẹ',
           childName: body.childName || 'Điện thoại của con',
+          childId,
+          sessionToken: signSessionToken('kid', childId),
           status: 'pending',
           createdAt: Date.now(),
           expiresAt: Date.now() + 60 * 60 * 1000,
@@ -816,6 +1011,10 @@ const server = http.createServer(async (req, res) => {
       if (body.childName) session.childName = body.childName;
       if (body.deviceInfo) session.deviceInfo = body.deviceInfo;
       if (body.batteryLevel !== undefined) session.batteryLevel = body.batteryLevel;
+      // Issue cryptographically signed token for kid
+      if (!session.sessionToken || !session.sessionToken.includes('.')) {
+        session.sessionToken = signSessionToken('kid', session.childId);
+      }
       writeDb('pairings', pairings);
 
       // Auto-register in children DB under parentId

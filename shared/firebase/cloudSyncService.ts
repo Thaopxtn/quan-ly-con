@@ -29,6 +29,7 @@ import { getFirebaseInstance } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
 import { ChildSpecificSettings, TimeRequest, RoutePoint, SafeZone, ChildDeviceInfo, ChildPcControlConfig, ChildPcTelemetry } from "../types";
 import { debugLogService } from "../services/debugLogService";
+import { serverApiClient } from "../services/serverApiClient";
 
 export interface CloudChatMessage {
   id?: string;
@@ -1131,20 +1132,16 @@ export async function sendRemoteCommandToKid(
     });
   }
 
-  // Dual sync to local PC server if available
+  // Dual sync to local PC server if available (authenticated with cryptographic token)
   try {
-    fetch('/api/command', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: cmdId,
-        type: command,
-        childId,
-        parentId,
-        childName: childName || '',
-        payload: payload || null,
-        timestamp: now,
-      }),
+    serverApiClient.sendCommand({
+      id: cmdId,
+      type: command,
+      childId,
+      parentId,
+      childName: childName || '',
+      payload: payload || null,
+      timestamp: now,
     }).catch(() => {});
   } catch (_) {}
 
@@ -1211,13 +1208,9 @@ export async function sendRemoteCommandAck(
     });
   }
 
-  // Dual sync ACK to local PC server if reachable
+  // Dual sync ACK to local PC server if reachable (authenticated with cryptographic token)
   try {
-    fetch('/api/command/ack', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ackData),
-    }).catch(() => {});
+    serverApiClient.sendCommandAck(ackData).catch(() => {});
   } catch (_) {}
 }
 

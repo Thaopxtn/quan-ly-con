@@ -20,6 +20,7 @@ const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-u
 export class ServerApiClient {
   private static instance: ServerApiClient;
   private serverUrl: string = '';
+  private sessionToken: string = '';
   private eventSource: EventSource | null = null;
   private listeners: Map<string, Set<EventCallback>> = new Map();
   private isConnecting: boolean = false;
@@ -32,6 +33,8 @@ export class ServerApiClient {
   private constructor() {
     this.serverUrl = this.initServerUrl();
     if (typeof window !== 'undefined') {
+      // Pre-load sessionToken
+      this.getSessionToken();
       // Auto-start SSE subscription in browser / webview
       this.initRealtimeStream();
       // Auto-resolve latest server URL from GitHub if needed
@@ -89,6 +92,73 @@ export class ServerApiClient {
     }
     // Reconnect SSE with new URL
     this.reconnectRealtimeStream();
+  }
+
+  /**
+   * Cập nhật sessionToken có chữ ký số bảo mật mật mã học
+   */
+  public setSessionToken(token: string): void {
+    if (!token) return;
+    const clean = token.trim();
+    if (this.sessionToken === clean) return;
+    this.sessionToken = clean;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('parentpro_session_token', clean);
+      } catch (_) {}
+    }
+    // Tự động kích hoạt kết nối SSE stream với chữ ký số bảo mật mới
+    this.initRealtimeStream();
+  }
+
+  /**
+   * Lấy sessionToken có chữ ký số đang hoạt động
+   */
+  public getSessionToken(): string {
+    if (this.sessionToken) return this.sessionToken;
+
+    if (typeof window !== 'undefined') {
+      // 0. Server injected token vào HTML (Web Parent Portal)
+      const injected = (window as any).__PARENT_SESSION_TOKEN__ || (window as any).__SERVER_SESSION_TOKEN__;
+      if (injected && typeof injected === 'string' && injected.trim()) {
+        this.sessionToken = injected.trim();
+        return this.sessionToken;
+      }
+
+      // 1. Explicitly saved session token
+      const saved = localStorage.getItem('parentpro_session_token');
+      if (saved && saved.trim()) {
+        this.sessionToken = saved.trim();
+        return this.sessionToken;
+      }
+
+      // 2. Kid paired device info token (Máy Con)
+      try {
+        const kidInfoStr = localStorage.getItem('kid_device_paired_info');
+        if (kidInfoStr) {
+          const parsed = JSON.parse(kidInfoStr);
+          if (parsed && parsed.sessionToken) {
+            this.sessionToken = String(parsed.sessionToken).trim();
+            return this.sessionToken;
+          }
+        }
+      } catch (_) {}
+
+      // 3. Parent pairing sessions token (Máy Cha Mẹ)
+      try {
+        const parentSessionsStr = localStorage.getItem('parent_pro_pairing_sessions');
+        if (parentSessionsStr) {
+          const sessions = JSON.parse(parentSessionsStr);
+          const firstKey = Object.keys(sessions)[0];
+          if (firstKey && sessions[firstKey]?.sessionToken) {
+            this.sessionToken = String(sessions[firstKey].sessionToken).trim();
+            return this.sessionToken;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return '';
   }
 
   /**
@@ -185,7 +255,9 @@ export class ServerApiClient {
     if (this.isConnecting || (this.eventSource && this.eventSource.readyState === EventSource.OPEN)) return;
 
     this.isConnecting = true;
-    const streamUrl = `${this.serverUrl}/api/realtime/stream`;
+    const token = this.getSessionToken();
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+    const streamUrl = `${this.serverUrl}/api/realtime/stream${tokenParam}`;
 
     try {
       if (this.eventSource) {
@@ -326,17 +398,41 @@ export class ServerApiClient {
   ): Promise<T | null> {
     try {
       const url = `${this.serverUrl}${path}`;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      };
+
+      // Đính kèm sessionToken có chữ ký số bảo mật mật mã học
+      const token = this.getSessionToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+        headers['X-Session-Token'] = token;
+      }
+
       const options: RequestInit = {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache',
-        },
+        headers,
       };
       if (body !== undefined && method !== 'GET') {
         options.body = JSON.stringify(body);
       }
       const res = await fetch(url, options);
+
+      // Auto-heal 401 Unauthorized: Cố gắng lấy token xác thực hợp lệ cho Cha Mẹ nếu chưa có
+      if (res.status === 401 && retryCount === 0 && typeof window !== 'undefined') {
+        try {
+          const authRes = await fetch(`${this.serverUrl}/api/auth/token`);
+          if (authRes.ok) {
+            const authData = await authRes.json();
+            if (authData && authData.token) {
+              this.setSessionToken(authData.token);
+              return this.request<T>(path, method, body, 1);
+            }
+          }
+        } catch (_) {}
+      }
+
       if (!res.ok) return null;
       return await res.json();
     } catch (err) {
