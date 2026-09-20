@@ -69,6 +69,8 @@ export type RemoteCommandType =
   | "update_app_rule"
   | "update_app_limit"
   | "ping"
+  | "sync_request"
+  | "media_control"
   | "pc_lock"
   | "pc_unlock"
   | "pc_shutdown"
@@ -1137,6 +1139,32 @@ export async function sendRemoteCommandToKid(
   } catch (_) {}
 
   return cmdId;
+}
+
+// 8.0 Request all paired children to send their latest telemetry & state
+export async function requestLatestDataFromAllChildren(
+  parentId: string,
+  children: Array<{ id: string; name?: string }>
+): Promise<string[]> {
+  if (!parentId || !children || children.length === 0) return [];
+  const cmdIds: string[] = [];
+  for (const c of children) {
+    if (c && c.id) {
+      try {
+        const id = await sendRemoteCommandToKid(
+          parentId,
+          c.id,
+          'sync_request',
+          { requestedAt: Date.now(), reason: 'parent_app_opened' },
+          c.name
+        );
+        if (id) cmdIds.push(id);
+      } catch (err) {
+        console.warn(`[requestLatestDataFromAllChildren] Error for child ${c.id}:`, err);
+      }
+    }
+  }
+  return cmdIds;
 }
 
 // 8.1 Kid acknowledges command receipt and execution back to Parent

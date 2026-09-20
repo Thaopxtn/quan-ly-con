@@ -13,13 +13,18 @@ import {
   Smartphone,
   Info,
   Clock,
-  FileText
+  FileText,
+  Activity,
+  Zap,
+  Calendar,
+  Sliders
 } from "lucide-react";
 import { PrivacyPolicyModal } from "@shared/components/PrivacyPolicyModal";
 import { Capacitor } from "@capacitor/core";
 import {
   checkRealAndroidPermissions,
   openAndroidPermissionSettings,
+  requestAllNativeAppPermissions,
   PermissionSettingType,
   KidPermissionsStatus
 } from "./services/nativePermissionsService";
@@ -86,6 +91,51 @@ const DEFAULT_CONFIG = [
     iconBg: "bg-amber-100 text-amber-700",
     defaultGranted: true,
     instruction: "Cài đặt > Pin & Hiệu suất > Tiết kiệm pin ứng dụng > KidCare > Chọn 'Không giới hạn'.",
+  },
+  {
+    id: "usage_stats",
+    name: "Quyền Xem Thời Gian Sử Dụng (Usage Stats Access)",
+    desc: "Cho phép cha mẹ xem thời lượng sử dụng máy và từng ứng dụng (YouTube, Game...) trong ngày.",
+    icon: <Clock size={20} />,
+    iconBg: "bg-indigo-100 text-indigo-700",
+    defaultGranted: false,
+    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Truy cập dữ liệu sử dụng > KidCare > Cho phép.",
+  },
+  {
+    id: "activity_recognition",
+    name: "Quyền Sức Khỏe & Đếm Bước Chân (Health & Activity)",
+    desc: "Nhận diện hoạt động thể chất và đếm số bước chân con di chuyển mỗi ngày để khuyến khích vận động.",
+    icon: <Activity size={20} />,
+    iconBg: "bg-cyan-100 text-cyan-700",
+    defaultGranted: true,
+    instruction: "Cài đặt > Quyền ứng dụng > Hoạt động thể chất > KidCare > Cho phép.",
+  },
+  {
+    id: "camera",
+    name: "Quyền Bật Đèn Flash & Camera (Flashlight Alert)",
+    desc: "Cho phép cha mẹ bật đèn flash từ xa để tìm máy trong phòng tối hoặc phát tín hiệu khẩn cấp.",
+    icon: <Zap size={20} />,
+    iconBg: "bg-yellow-100 text-yellow-700",
+    defaultGranted: true,
+    instruction: "Cài đặt > Quyền ứng dụng > Máy ảnh > KidCare > Cho phép.",
+  },
+  {
+    id: "calendar",
+    name: "Quyền Lịch Biểu & Thời Gian Biểu (Calendar & Study)",
+    desc: "Đồng bộ lịch học, bài tập về nhà và nhắc nhở thời gian biểu của con tự động từ cha mẹ.",
+    icon: <Calendar size={20} />,
+    iconBg: "bg-teal-100 text-teal-700",
+    defaultGranted: true,
+    instruction: "Cài đặt > Quyền ứng dụng > Lịch > KidCare > Cho phép.",
+  },
+  {
+    id: "write_settings",
+    name: "Quyền Điều Chỉnh Âm Lượng & Độ Sáng (System Settings)",
+    desc: "Cho phép cha mẹ điều chỉnh âm lượng loa và hạ độ sáng màn hình để bảo vệ thị lực con vào ban đêm.",
+    icon: <Sliders size={20} />,
+    iconBg: "bg-violet-100 text-violet-700",
+    defaultGranted: false,
+    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Sửa đổi cài đặt hệ thống > Bật KidCare.",
   },
 ];
 
@@ -183,13 +233,19 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
 
   const grantAllPermissions = async () => {
     if (Capacitor.isNativePlatform()) {
-      showToast("Đang mở trang cài đặt chi tiết ứng dụng KidCare...");
-      await openAndroidPermissionSettings("app_details");
+      showToast("Đang kích hoạt toàn bộ quyền bảo vệ cho KidCare...");
+      await requestAllNativeAppPermissions();
+      const ungranted = permissions.find((p) => !p.isGranted);
+      if (ungranted) {
+        await openAndroidPermissionSettings(ungranted.id as PermissionSettingType);
+      } else {
+        await openAndroidPermissionSettings("app_details");
+      }
     } else {
       setPermissions((prev) => {
         const updated = prev.map((p) => ({ ...p, isGranted: true }));
         savePermissions(updated);
-        showToast("🎉 Đã kích hoạt toàn bộ 5 quyền bảo vệ an toàn!");
+        showToast("🎉 Đã kích hoạt toàn bộ quyền bảo vệ an toàn!");
         return updated;
       });
     }

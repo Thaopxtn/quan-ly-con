@@ -6,6 +6,12 @@ export interface KidPermissionsStatus {
   device_admin: boolean;
   location: boolean;
   battery: boolean;
+  usage_stats?: boolean;
+  write_settings?: boolean;
+  camera?: boolean;
+  activity_recognition?: boolean;
+  calendar?: boolean;
+  audio?: boolean;
   isAllGranted: boolean;
 }
 
@@ -15,6 +21,13 @@ export type PermissionSettingType =
   | 'device_admin'
   | 'location'
   | 'battery'
+  | 'usage_stats'
+  | 'write_settings'
+  | 'camera'
+  | 'activity_recognition'
+  | 'calendar'
+  | 'audio'
+  | 'notification_policy'
   | 'home_launcher'
   | 'app_details';
 
@@ -65,6 +78,13 @@ export interface KidPermissionsPluginInterface {
   getInstalledApps(): Promise<{ apps: RealInstalledApp[]; count: number }>;
   launchApp(options: { packageName: string }): Promise<{ success: boolean; packageName?: string }>;
   wakeUpDevice(): Promise<{ success: boolean }>;
+  setFlashlight(options: { enabled: boolean }): Promise<{ success: boolean; enabled?: boolean; reason?: string }>;
+  setHardwareControl(options: { volume?: number; brightness?: number; flashlight?: boolean }): Promise<{ success: boolean; volume?: number; brightness?: number; flashlight?: boolean }>;
+  getHardwareStatus(): Promise<{ volume: number; brightness: number }>;
+  controlMedia(options: { action: 'play' | 'pause' | 'play_pause' | 'next' | 'prev' | 'stop' }): Promise<{ success: boolean; action?: string }>;
+  getUsageStats(): Promise<{ isGranted: boolean; totalMinutesToday: number; appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }> }>;
+  getHealthData(): Promise<{ sensorAvailable: boolean; dailySteps: number; isActivityRecognitionGranted: boolean }>;
+  requestAllAppPermissions(): Promise<{ requested: boolean }>;
   addListener(
     eventName: 'screenStateChange',
     listenerFunc: (data: { isScreenOn: boolean; action?: string }) => void
@@ -317,6 +337,109 @@ export async function wakeUpDevice(): Promise<boolean> {
       return !!res?.success;
     } catch (err) {
       console.warn('wakeUpDevice error:', err);
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function setNativeFlashlight(enabled: boolean): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.setFlashlight({ enabled });
+      return !!res?.success;
+    } catch (err) {
+      console.warn('setNativeFlashlight error:', err);
+      return false;
+    }
+  }
+  console.log(`[Web Simulator] Simulated flashlight: ${enabled}`);
+  return true;
+}
+
+export async function setNativeHardwareControl(options: {
+  volume?: number;
+  brightness?: number;
+  flashlight?: boolean;
+}): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.setHardwareControl(options);
+      return !!res?.success;
+    } catch (err) {
+      console.warn('setNativeHardwareControl error:', err);
+      return false;
+    }
+  }
+  console.log('[Web Simulator] Simulated hardware control:', options);
+  return true;
+}
+
+export async function getNativeHardwareStatus(): Promise<{ volume: number; brightness: number }> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getHardwareStatus();
+      if (res) return { volume: res.volume, brightness: res.brightness };
+    } catch (err) {
+      console.warn('getNativeHardwareStatus error:', err);
+    }
+  }
+  return { volume: 65, brightness: 70 };
+}
+
+export async function sendNativeMediaKey(action: 'play' | 'pause' | 'play_pause' | 'next' | 'prev' | 'stop'): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.controlMedia({ action });
+      return !!res?.success;
+    } catch (err) {
+      console.warn(`sendNativeMediaKey [${action}] error:`, err);
+      return false;
+    }
+  }
+  console.log(`[Web Simulator] Simulated media action: ${action}`);
+  return true;
+}
+
+export async function getNativeUsageStats(): Promise<{
+  isGranted: boolean;
+  totalMinutesToday: number;
+  appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }>;
+}> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getUsageStats();
+      if (res) return res;
+    } catch (err) {
+      console.warn('getNativeUsageStats error:', err);
+    }
+  }
+  return { isGranted: false, totalMinutesToday: 0, appsUsage: [] };
+}
+
+export async function getNativeHealthData(): Promise<{
+  sensorAvailable: boolean;
+  dailySteps: number;
+  isActivityRecognitionGranted: boolean;
+}> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getHealthData();
+      if (res) return res;
+    } catch (err) {
+      console.warn('getNativeHealthData error:', err);
+    }
+  }
+  return { sensorAvailable: true, dailySteps: 3420, isActivityRecognitionGranted: true };
+}
+
+export async function requestAllNativeAppPermissions(): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.requestAllAppPermissions();
+      return !!res?.requested;
+    } catch (err) {
+      console.warn('requestAllNativeAppPermissions error:', err);
       return false;
     }
   }

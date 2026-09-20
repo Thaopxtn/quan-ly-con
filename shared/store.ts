@@ -91,6 +91,7 @@ import {
   subscribeChildTelemetryFromCloud,
   sendRemoteCommandToKid,
   sendRemoteCommandAck,
+  requestLatestDataFromAllChildren,
   subscribeCommandAck,
   subscribeRemoteCommandsOnKid,
   clearRemoteCommand,
@@ -4662,6 +4663,19 @@ export const useAppState = () => {
     saveAndNotify(newState);
     eventBus.publish('MEDIA_CONTROL_CMD', { childId, cmd, value }, 'parent');
     eventBus.publish('MEDIA_STATE_UPDATED', { childId, mediaPlayback: updated }, 'parent');
+
+    // Send remote command via Firebase Cloud to child device
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === childId);
+    if (parentId && childId) {
+      sendRemoteCommandToKid(
+        parentId,
+        childId,
+        'media_control',
+        { cmd, value },
+        targetChild?.name
+      ).catch(() => {});
+    }
   };
 
   const updateMediaState = (childId: string, mediaState: Partial<MediaPlaybackState>) => {
@@ -4947,5 +4961,8 @@ export const useAppState = () => {
     updateChildPcConfig,
     sendPcBroadcastMessage,
     updateChildPcTelemetry,
+    requestLatestDataFromAllChildren,
   };
 };
+
+export { requestLatestDataFromAllChildren };

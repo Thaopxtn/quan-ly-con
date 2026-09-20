@@ -20,7 +20,18 @@ import android.telephony.SubscriptionInfo;
 import java.net.NetworkInterface;
 import java.util.Collections;
 import java.util.List;
+import java.util.Calendar;
 import androidx.core.content.ContextCompat;
+
+import android.app.AppOpsManager;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
+import android.hardware.camera2.CameraManager;
+import android.hardware.Sensor;
+import android.hardware.SensorManager;
+import android.media.AudioManager;
+import android.view.KeyEvent;
+import android.view.WindowManager;
 
 import android.content.pm.ApplicationInfo;
 import android.content.pm.ResolveInfo;
@@ -261,13 +272,25 @@ public class KidPermissionsPlugin extends Plugin {
         boolean deviceAdmin = isDeviceAdminActive(context);
         boolean location = isLocationPermissionGranted(context);
         boolean battery = isBatteryOptimizationIgnored(context);
+        boolean usageStats = isUsageStatsPermissionGranted(context);
+        boolean writeSettings = isWriteSettingsPermissionGranted(context);
+        boolean camera = isCameraPermissionGranted(context);
+        boolean activityRecognition = isActivityRecognitionPermissionGranted(context);
+        boolean calendar = isCalendarPermissionGranted(context);
+        boolean audio = isAudioPermissionGranted(context);
 
         ret.put("overlay", overlay);
         ret.put("accessibility", accessibility);
         ret.put("device_admin", deviceAdmin);
         ret.put("location", location);
         ret.put("battery", battery);
-        ret.put("isAllGranted", overlay && accessibility && deviceAdmin && location && battery);
+        ret.put("usage_stats", usageStats);
+        ret.put("write_settings", writeSettings);
+        ret.put("camera", camera);
+        ret.put("activity_recognition", activityRecognition);
+        ret.put("calendar", calendar);
+        ret.put("audio", audio);
+        ret.put("isAllGranted", overlay && accessibility && deviceAdmin && location && battery && usageStats);
 
         call.resolve(ret);
     }
@@ -300,6 +323,22 @@ public class KidPermissionsPlugin extends Plugin {
                         intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + packageName));
                     }
                     break;
+                case "usage_stats":
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                    }
+                    break;
+                case "write_settings":
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        intent = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:" + packageName));
+                    }
+                    break;
+                case "notification_policy":
+                case "dnd":
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        intent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
+                    }
+                    break;
                 case "home_launcher":
                 case "launcher":
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -308,6 +347,10 @@ public class KidPermissionsPlugin extends Plugin {
                         intent = new Intent(Settings.ACTION_SETTINGS);
                     }
                     break;
+                case "camera":
+                case "activity_recognition":
+                case "calendar":
+                case "audio":
                 case "location":
                 case "app_details":
                 default:
@@ -715,5 +758,303 @@ public class KidPermissionsPlugin extends Plugin {
             }
         }
         return true;
+    }
+
+    private boolean isUsageStatsPermissionGranted(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                AppOpsManager appOps = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
+                int mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.getPackageName());
+                return mode == AppOpsManager.MODE_ALLOWED;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isWriteSettingsPermissionGranted(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return Settings.System.canWrite(context);
+        }
+        return true;
+    }
+
+    private boolean isCameraPermissionGranted(Context context) {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean isActivityRecognitionPermissionGranted(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED;
+        }
+        return true;
+    }
+
+    private boolean isCalendarPermissionGranted(Context context) {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean isAudioPermissionGranted(Context context) {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @PluginMethod
+    public void setFlashlight(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        Context context = getContext();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+                if (cameraManager != null) {
+                    String[] cameraIdList = cameraManager.getCameraIdList();
+                    if (cameraIdList.length > 0) {
+                        String cameraId = cameraIdList[0];
+                        cameraManager.setTorchMode(cameraId, enabled);
+                        JSObject ret = new JSObject();
+                        ret.put("success", true);
+                        ret.put("enabled", enabled);
+                        call.resolve(ret);
+                        return;
+                    }
+                }
+            }
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("reason", "Camera torch not available");
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e(TAG, "Error toggling flashlight", e);
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void setHardwareControl(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+        try {
+            // 1. Volume
+            if (call.hasOption("volume")) {
+                int vol = call.getInt("volume", 50);
+                vol = Math.max(0, Math.min(100, vol));
+                AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) {
+                    int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                    int targetVol = (int) Math.round((vol / 100.0) * maxVol);
+                    am.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0);
+                    ret.put("volume", vol);
+                }
+            }
+
+            // 2. Brightness
+            if (call.hasOption("brightness")) {
+                int brightVal = call.getInt("brightness", 50);
+                final int bright = Math.max(0, Math.min(100, brightVal));
+                final float winBrightness = (float) (bright / 100.0);
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        try {
+                            WindowManager.LayoutParams lp = getActivity().getWindow().getAttributes();
+                            lp.screenBrightness = winBrightness;
+                            getActivity().getWindow().setAttributes(lp);
+                        } catch (Exception ignored) {}
+                    });
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.System.canWrite(context)) {
+                    int sysBright = (int) Math.round((bright / 100.0) * 255);
+                    Settings.System.putInt(context.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, sysBright);
+                }
+                ret.put("brightness", bright);
+            }
+
+            // 3. Flashlight
+            if (call.hasOption("flashlight")) {
+                boolean flash = Boolean.TRUE.equals(call.getBoolean("flashlight", false));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    CameraManager cm = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+                    if (cm != null && cm.getCameraIdList().length > 0) {
+                        cm.setTorchMode(cm.getCameraIdList()[0], flash);
+                    }
+                }
+                ret.put("flashlight", flash);
+            }
+
+            ret.put("success", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting hardware control", e);
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void getHardwareStatus(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+        try {
+            AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+            int volumePercent = 50;
+            if (am != null) {
+                int curVol = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                if (maxVol > 0) {
+                    volumePercent = (int) Math.round((curVol * 100.0) / maxVol);
+                }
+            }
+            int brightnessPercent = 50;
+            try {
+                int sysBright = Settings.System.getInt(context.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+                brightnessPercent = (int) Math.round((sysBright * 100.0) / 255.0);
+            } catch (Exception ignored) {}
+
+            ret.put("volume", volumePercent);
+            ret.put("brightness", brightnessPercent);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error getting hardware status: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void controlMedia(PluginCall call) {
+        String action = call.getString("action", "play_pause");
+        Context context = getContext();
+        try {
+            AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                int keyCode = KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE;
+                if ("play".equalsIgnoreCase(action)) {
+                    keyCode = KeyEvent.KEYCODE_MEDIA_PLAY;
+                } else if ("pause".equalsIgnoreCase(action)) {
+                    keyCode = KeyEvent.KEYCODE_MEDIA_PAUSE;
+                } else if ("next".equalsIgnoreCase(action)) {
+                    keyCode = KeyEvent.KEYCODE_MEDIA_NEXT;
+                } else if ("prev".equalsIgnoreCase(action) || "previous".equalsIgnoreCase(action)) {
+                    keyCode = KeyEvent.KEYCODE_MEDIA_PREVIOUS;
+                } else if ("stop".equalsIgnoreCase(action)) {
+                    keyCode = KeyEvent.KEYCODE_MEDIA_STOP;
+                }
+
+                KeyEvent downEvent = new KeyEvent(KeyEvent.ACTION_DOWN, keyCode);
+                KeyEvent upEvent = new KeyEvent(KeyEvent.ACTION_UP, keyCode);
+                am.dispatchMediaKeyEvent(downEvent);
+                am.dispatchMediaKeyEvent(upEvent);
+
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("action", action);
+                call.resolve(ret);
+                return;
+            }
+            call.reject("AudioManager not available");
+        } catch (Exception e) {
+            Log.e(TAG, "Error controlling media: " + action, e);
+            call.reject("Failed to control media: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void getUsageStats(PluginCall call) {
+        new Thread(() -> {
+            Context context = getContext();
+            JSObject ret = new JSObject();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                try {
+                    UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+                    if (usm != null) {
+                        Calendar cal = Calendar.getInstance();
+                        cal.set(Calendar.HOUR_OF_DAY, 0);
+                        cal.set(Calendar.MINUTE, 0);
+                        cal.set(Calendar.SECOND, 0);
+                        long startTime = cal.getTimeInMillis();
+                        long endTime = System.currentTimeMillis();
+
+                        List<UsageStats> stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
+                        JSArray appUsageList = new JSArray();
+                        long totalMinutesToday = 0;
+
+                        if (stats != null) {
+                            for (UsageStats u : stats) {
+                                long totalTimeMillis = u.getTotalTimeInForeground();
+                                if (totalTimeMillis > 30000) {
+                                    long mins = totalTimeMillis / 60000;
+                                    totalMinutesToday += mins;
+                                    JSObject item = new JSObject();
+                                    item.put("packageName", u.getPackageName());
+                                    item.put("usedMinutes", mins);
+                                    item.put("lastTimeUsed", u.getLastTimeUsed());
+                                    appUsageList.put(item);
+                                }
+                            }
+                        }
+
+                        ret.put("isGranted", isUsageStatsPermissionGranted(context));
+                        ret.put("totalMinutesToday", totalMinutesToday);
+                        ret.put("appsUsage", appUsageList);
+                        call.resolve(ret);
+                        return;
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "queryUsageStats error: " + e.getMessage());
+                }
+            }
+            ret.put("isGranted", false);
+            ret.put("totalMinutesToday", 0);
+            ret.put("appsUsage", new JSArray());
+            call.resolve(ret);
+        }).start();
+    }
+
+    @PluginMethod
+    public void getHealthData(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+        try {
+            SensorManager sm = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+            if (sm != null) {
+                Sensor stepSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+                ret.put("sensorAvailable", stepSensor != null);
+            } else {
+                ret.put("sensorAvailable", false);
+            }
+            android.content.SharedPreferences sp = context.getSharedPreferences("KidCareHealth", Context.MODE_PRIVATE);
+            int cachedSteps = sp.getInt("daily_steps", 0);
+            ret.put("dailySteps", cachedSteps);
+            ret.put("isActivityRecognitionGranted", isActivityRecognitionPermissionGranted(context));
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error getting health data: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void requestAllAppPermissions(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && getActivity() != null) {
+            List<String> perms = new java.util.ArrayList<>();
+            perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            perms.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+            perms.add(Manifest.permission.CAMERA);
+            perms.add(Manifest.permission.RECORD_AUDIO);
+            perms.add(Manifest.permission.READ_PHONE_STATE);
+            perms.add(Manifest.permission.READ_CALENDAR);
+            perms.add(Manifest.permission.WRITE_CALENDAR);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                perms.add(Manifest.permission.ACTIVITY_RECOGNITION);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                perms.add(Manifest.permission.POST_NOTIFICATIONS);
+                perms.add(Manifest.permission.READ_PHONE_NUMBERS);
+            }
+            getActivity().requestPermissions(perms.toArray(new String[0]), 1005);
+        }
+        JSObject ret = new JSObject();
+        ret.put("requested", true);
+        call.resolve(ret);
     }
 }

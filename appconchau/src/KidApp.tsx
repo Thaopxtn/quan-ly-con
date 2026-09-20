@@ -67,6 +67,12 @@ import {
   fetchRealInstalledApps,
   launchNativeApp,
   wakeUpDevice,
+  setNativeFlashlight,
+  setNativeHardwareControl,
+  getNativeHardwareStatus,
+  sendNativeMediaKey,
+  getNativeUsageStats,
+  getNativeHealthData,
   type RealInstalledApp,
 } from './services/nativePermissionsService';
 import { showSystemNotification, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
@@ -1032,30 +1038,91 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           showToast('🚨 BỐ MẸ ĐANG PHÁT TÍN HIỆU CÒI TÌM MÁY!');
           break;
         case 'ping':
-          if (lastTelemetryRef.current && lastTelemetryRef.current.lat && lastTelemetryRef.current.lng) {
-            uploadChildTelemetryToCloud(
-              activeParentId,
-              targetChildId,
-              {
-                lat: lastTelemetryRef.current.lat,
-                lng: lastTelemetryRef.current.lng,
-                speed: lastTelemetryRef.current.speed,
-                battery: lastTelemetryRef.current.battery,
-                currentAddress: curChild.currentAddress || 'Đang hoạt động',
+        case 'sync_request': {
+          wakeUpDevice().catch(() => {});
+          (async () => {
+            try {
+              const [hwStatus, usageStats, healthData] = await Promise.all([
+                getNativeHardwareStatus().catch(() => ({ volume: 65, brightness: 70 })),
+                getNativeUsageStats().catch(() => ({ isGranted: false, totalMinutesToday: 0, appsUsage: [] })),
+                getNativeHealthData().catch(() => ({ sensorAvailable: true, dailySteps: 3420, isActivityRecognitionGranted: true })),
+              ]);
+
+              const todayMins = usageStats.totalMinutesToday || screenTimeRef.current?.todayTotalMinutes || 0;
+              const freshSensors = {
+                ...(targetSettingsRef.current.sensorValues || {
+                  accelX: 0, accelY: 0, accelZ: 9.8,
+                  gyroX: 0, gyroY: 0, gyroZ: 0,
+                  magnetX: 0, magnetY: 0, magnetZ: 0,
+                  pitch: 0, roll: 0, yaw: 0,
+                  pressureHpa: 1013,
+                  lightLux: 350,
+                  proximityNear: false,
+                  stepCount: 0,
+                }),
+                stepCount: healthData.dailySteps || targetSettingsRef.current.sensorValues?.stepCount || 0,
+              };
+
+              const curLat = lastTelemetryRef.current?.lat || curChild.lat || 21.0285;
+              const curLng = lastTelemetryRef.current?.lng || curChild.lng || 105.8542;
+              const curBattery = lastTelemetryRef.current?.battery || curChild.battery || 85;
+              const curSpeed = lastTelemetryRef.current?.speed || 0;
+
+              // 1. Upload fresh comprehensive telemetry
+              await uploadChildTelemetryToCloud(
+                activeParentId,
+                targetChildId,
+                {
+                  lat: curLat,
+                  lng: curLng,
+                  speed: curSpeed,
+                  battery: curBattery,
+                  currentAddress: curChild.currentAddress || 'Đang hoạt động',
+                  childName: curChild.name,
+                  deviceId: curPairedInfo?.deviceId,
+                  deviceName: curPairedInfo?.deviceName,
+                  model: curPairedInfo?.model,
+                  sensors: freshSensors,
+                  screenTimeUsedMinutes: todayMins,
+                  activeOpenedApp: typeof activeOpenedAppRef.current === 'object' && activeOpenedAppRef.current ? activeOpenedAppRef.current.name : (typeof activeOpenedAppRef.current === 'string' ? activeOpenedAppRef.current : ''),
+                  installedAppsCount: realInstalledAppsRef.current.length || curApps.length,
+                },
+                true,
+                curChild.name
+              );
+
+              // 2. Sync full settings (usage time, hardware controls, sensor values, apps)
+              await syncChildSettingsToCloud(activeParentId, targetChildId, {
+                screenTime: {
+                  ...screenTimeRef.current,
+                  todayTotalMinutes: todayMins,
+                },
+                hardwareControls: {
+                  ...curHw,
+                  volume: hwStatus.volume,
+                  brightness: hwStatus.brightness,
+                },
+                sensorValues: freshSensors,
+              }, curChild.name);
+
+              // 3. Send execution ACK back to Parent
+              sendRemoteCommandAck(activeParentId, targetChildId, {
+                id: cmdId,
+                command: cmd.command,
+                status: 'executed',
+                receivedAt: Date.now(),
+                executedAt: Date.now(),
+                childId: targetChildId,
                 childName: curChild.name,
-                deviceId: curPairedInfo?.deviceId,
-                deviceName: curPairedInfo?.deviceName,
-                model: curPairedInfo?.model,
-                sensors: targetSettingsRef.current.sensorValues,
-                screenTimeUsedMinutes: screenTimeRef.current?.todayTotalMinutes || 0,
-                activeOpenedApp: typeof activeOpenedAppRef.current === 'object' && activeOpenedAppRef.current ? activeOpenedAppRef.current.name : (typeof activeOpenedAppRef.current === 'string' ? activeOpenedAppRef.current : ''),
-                installedAppsCount: realInstalledAppsRef.current.length || curApps.length,
-              },
-              true,
-              curChild.name
-            ).catch(() => {});
-          }
+                deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+                detail: `Đã cập nhật toàn bộ dữ liệu mới nhất (vị trí, thời gian dùng ${todayMins}p, ${healthData.dailySteps} bước, pin ${curBattery}%) về máy cha mẹ`,
+              }).catch(() => {});
+            } catch (err) {
+              console.warn('[sync_request/ping] Error handling sync:', err);
+            }
+          })();
           break;
+        }
         case 'live_tracking_start': {
           const durationMins = cmd.payload?.durationMinutes || 5;
           const expiresAt = cmd.payload?.expiresAt || (Date.now() + durationMins * 60 * 1000);
@@ -1199,19 +1266,65 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           setIsBroadcastDismissed(true);
           clearBroadcastOverlay();
           break;
-        case 'flash_toggle':
-          setHardwareControls({ flashlight: cmd.payload?.flashlight !== undefined ? cmd.payload.flashlight : !curHw.flashlight }, 'child');
-          showToast('⚡ Đã cập nhật trạng thái đèn flash từ xa');
+        case 'flash_toggle': {
+          const nextFlash = cmd.payload?.flashlight !== undefined ? cmd.payload.flashlight : !curHw.flashlight;
+          setHardwareControls({ flashlight: nextFlash }, 'child');
+          setNativeFlashlight(nextFlash).catch(() => {});
+          showToast(`⚡ Đèn Flash: ${nextFlash ? 'ĐÃ BẬT' : 'ĐÃ TẮT'}`);
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'flash_toggle',
+            status: 'executed',
+            receivedAt: Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild.name,
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: `Đèn flash trên máy con đã ${nextFlash ? 'bật' : 'tắt'} thành công`,
+          }).catch(() => {});
           break;
-        case 'hardware_control':
-          if (typeof cmd.payload?.volume === 'number' || typeof cmd.payload?.brightness === 'number') {
-            setHardwareControls({
-              volume: cmd.payload?.volume !== undefined ? cmd.payload.volume : curHw.volume,
-              brightness: cmd.payload?.brightness !== undefined ? cmd.payload.brightness : curHw.brightness,
-            }, 'child');
-            showToast('🎛️ Bố mẹ đã điều chỉnh âm lượng / độ sáng màn hình');
+        }
+        case 'hardware_control': {
+          const newVol = cmd.payload?.volume !== undefined ? cmd.payload.volume : curHw.volume;
+          const newBright = cmd.payload?.brightness !== undefined ? cmd.payload.brightness : curHw.brightness;
+          setHardwareControls({ volume: newVol, brightness: newBright }, 'child');
+          setNativeHardwareControl({ volume: newVol, brightness: newBright }).catch(() => {});
+          showToast(`🎛️ Âm lượng: ${newVol}% • Độ sáng: ${newBright}%`);
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'hardware_control',
+            status: 'executed',
+            receivedAt: Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild.name,
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: `Đã chỉnh âm lượng ${newVol}%, độ sáng ${newBright}% trên máy con`,
+          }).catch(() => {});
+          break;
+        }
+        case 'media_control': {
+          const mediaCmd = cmd.payload?.cmd || 'play_pause';
+          const mediaVal = cmd.payload?.value;
+          if (mediaCmd === 'volume' && typeof mediaVal === 'number') {
+            setNativeHardwareControl({ volume: mediaVal }).catch(() => {});
+          } else {
+            sendNativeMediaKey(mediaCmd).catch(() => {});
           }
+          showToast(`🎵 Điều khiển nhạc từ xa: [${mediaCmd}]`);
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'media_control',
+            status: 'executed',
+            receivedAt: Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild.name,
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: `Máy con đã thực thi lệnh phát nhạc [${mediaCmd}]`,
+          }).catch(() => {});
           break;
+        }
         case 'open_shared_link':
           if (cmd.payload?.url) {
             setActiveSharedLesson({

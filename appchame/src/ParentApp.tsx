@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { useAppState, syncWithCloudForChild, syncAllChildrenFromCloud, isSimulatorMode, getActiveParentId } from '@shared/store';
+import { useAppState, syncWithCloudForChild, syncAllChildrenFromCloud, requestLatestDataFromAllChildren, isSimulatorMode, getActiveParentId } from '@shared/store';
 import { ParentBottomNav, ParentTab } from './components/ParentBottomNav';
 import { WelcomeAuthScreen } from './modules/auth/WelcomeAuthScreen';
 import { DashboardScreen } from './modules/dashboard/DashboardScreen';
@@ -108,13 +108,20 @@ export const ParentApp: React.FC<ParentAppProps> = ({
       timer = setTimeout(() => {
         syncWithCloudForChild(parentId, selectedChildId);
         syncAllChildrenFromCloud(parentId);
+        // Automatically broadcast sync command to all paired child devices
+        if (state.children && state.children.length > 0) {
+          requestLatestDataFromAllChildren(parentId, state.children);
+        }
       }, 300);
     }
 
-    // Auto re-sync when app resumes or gains focus
+    // Auto re-sync and request fresh data when app resumes or gains focus
     const handleFocus = () => {
       if (parentId) {
         syncAllChildrenFromCloud(parentId);
+        if (state.children && state.children.length > 0) {
+          requestLatestDataFromAllChildren(parentId, state.children);
+        }
       }
     };
     window.addEventListener('focus', handleFocus);
