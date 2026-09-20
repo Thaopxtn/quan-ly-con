@@ -140,9 +140,11 @@ export async function registerParentAccount(
 
       // Non-blocking background Firestore sync (never hangs authentication)
       if (db) {
-        setDoc(doc(db, "users", userCred.user.uid), parentData, { merge: true }).catch((fsErr) => {
-          console.warn("Background Firestore sync skipped:", fsErr);
-        });
+        try {
+          setDoc(doc(db, "users", userCred.user.uid), parentData, { merge: true }).catch((fsErr) => {
+            console.warn("Background Firestore sync skipped:", fsErr);
+          });
+        } catch (_) {}
       }
 
       localStorage.setItem(LOCAL_PARENT_USER_KEY, JSON.stringify(parentData));
@@ -186,16 +188,20 @@ export async function loginParentAccount(
         uid: userCred.user.uid,
         email: userCred.user.email || email,
         displayName: userCred.user.displayName || email.split("@")[0] || "Phụ Huynh",
-        photoURL: userCred.user.photoURL || undefined,
         role: "parent",
         plan: "free",
         maxChildren: 5,
         createdAt: new Date().toISOString(),
       };
+      if (userCred.user.photoURL) {
+        parentData.photoURL = userCred.user.photoURL;
+      }
 
       // Non-blocking Firestore sync with fast timeout check
       if (db) {
-        setDoc(doc(db, "users", userCred.user.uid), parentData, { merge: true }).catch(() => {});
+        try {
+          setDoc(doc(db, "users", userCred.user.uid), parentData, { merge: true }).catch(() => {});
+        } catch (_) {}
         // Try quick fetch with 1s timeout, without blocking if offline
         Promise.race([
           getDoc(doc(db, "users", userCred.user.uid)),
@@ -259,15 +265,19 @@ export async function loginWithGoogleParentAccount(): Promise<{
             uid: u.uid,
             email: u.email || "",
             displayName: u.displayName || u.email?.split("@")[0] || "Phụ Huynh Google",
-            photoURL: u.photoUrl || undefined,
             role: "parent",
             plan: "free",
             maxChildren: 5,
             createdAt: new Date().toISOString(),
           };
+          if (u.photoUrl) {
+            parentData.photoURL = u.photoUrl;
+          }
 
           if (db) {
-            setDoc(doc(db, "users", u.uid), parentData, { merge: true }).catch(() => {});
+            try {
+              setDoc(doc(db, "users", u.uid), parentData, { merge: true }).catch(() => {});
+            } catch (_) {}
           }
 
           localStorage.setItem(LOCAL_PARENT_USER_KEY, JSON.stringify(parentData));
@@ -331,16 +341,20 @@ export async function loginWithGoogleParentAccount(): Promise<{
         uid: user.uid,
         email: user.email || "",
         displayName: user.displayName || user.email?.split("@")[0] || "Phụ Huynh Google",
-        photoURL: user.photoURL || undefined,
         role: "parent",
         plan: "free",
         maxChildren: 5,
         createdAt: new Date().toISOString(),
       };
+      if (user.photoURL) {
+        parentData.photoURL = user.photoURL;
+      }
 
       // Non-blocking background Firestore sync
       if (db) {
-        setDoc(doc(db, "users", user.uid), parentData, { merge: true }).catch(() => {});
+        try {
+          setDoc(doc(db, "users", user.uid), parentData, { merge: true }).catch(() => {});
+        } catch (_) {}
       }
 
       localStorage.setItem(LOCAL_PARENT_USER_KEY, JSON.stringify(parentData));
@@ -357,11 +371,13 @@ export async function loginWithGoogleParentAccount(): Promise<{
     if (err?.code === "auth/popup-closed-by-user") {
       errorMsg = "Cửa sổ đăng nhập Google đã được đóng.";
     } else if (err?.code === "auth/popup-blocked" || err?.code === "auth/operation-not-supported-in-this-environment") {
-      errorMsg = "Trình duyệt chặn mở popup Google. Bạn có thể đăng nhập bằng Email và Mật khẩu.";
+      errorMsg = "Trình duyệt chặn mở popup Google. Bạn vui lòng đăng nhập bằng Email và Mật khẩu bên dưới.";
+    } else if (err?.code === "auth/popup-timeout") {
+      errorMsg = "Quá thời gian kết nối Google (hoặc popup bị chặn). Bạn vui lòng đăng nhập bằng Email và Mật khẩu bên dưới.";
     } else if (err?.code === "auth/operation-not-allowed") {
       errorMsg = "Đăng nhập Google chưa được kích hoạt trên Firebase Console. Vui lòng bật Google trong Authentication > Sign-in method.";
     } else if (err?.code === "auth/unauthorized-domain") {
-      errorMsg = "Tên miền hiện tại chưa được cấp quyền truy cập trong Firebase Auth.";
+      errorMsg = "Tên miền thaopxtn.github.io chưa được thêm vào Danh sách tên miền được ủy quyền (Authorized Domains) trong Firebase Authentication. Bạn vui lòng đăng nhập bằng Email và Mật khẩu bên dưới.";
     }
     return { success: false, error: errorMsg };
   }
