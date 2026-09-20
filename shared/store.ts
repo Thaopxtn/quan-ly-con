@@ -270,6 +270,8 @@ export const REMOTE_COMMAND_TITLES: Record<string, string> = {
   update_app_rule: 'Cập nhật phân loại ứng dụng 📲',
   update_app_limit: 'Cập nhật giới hạn dùng app ⏱️',
   ping: 'Kiểm tra kết nối tức thì 📡',
+  sync_request: 'Đồng bộ dữ liệu mới nhất 🔄',
+  media_control: 'Điều khiển media & âm nhạc 🎵',
   live_tracking_start: 'Bật định vị tốc độ cao 🛰️',
   live_tracking_stop: 'Tắt định vị tốc độ cao ⏹️',
 };
@@ -2172,6 +2174,68 @@ export const useAppState = () => {
     };
   }, []);
 
+  const clearLastCommandAck = () => {
+    applyCloudStateUpdate((prev) => ({
+      ...prev,
+      lastCommandAck: null,
+    }));
+  };
+
+  const dispatchRemoteCommand = async (
+    command: RemoteCommandType,
+    payload?: any,
+    targetChildId?: string,
+    customTitle?: string
+  ): Promise<string> => {
+    const childId = targetChildId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === childId) || state.child;
+    const childName = targetChild?.name || 'Con';
+    const title = customTitle || REMOTE_COMMAND_TITLES[command] || command;
+    const now = Date.now();
+    const cmdId = `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // 1. Mark as pending immediately in state
+    const pendingStatus: CommandAckStatus = {
+      id: cmdId,
+      command,
+      commandTitle: title,
+      status: 'pending',
+      childId,
+      childName,
+      deviceName: targetChild?.devices?.[0]?.deviceName || '',
+      sentAt: now,
+      detail: `Đang truyền tín hiệu đến điện thoại của ${childName}...`,
+    };
+
+    saveAndNotify({
+      ...state,
+      lastCommandAck: pendingStatus,
+    });
+
+    // 2. Dispatch command via Cloud RTDB & local server
+    sendRemoteCommandToKid(parentId, childId, command, payload, childName, cmdId).catch(() => {});
+
+    // 3. Set a 15-second timeout: If child has not acknowledged after 15s, inform parent
+    setTimeout(() => {
+      applyCloudStateUpdate((prev) => {
+        if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && prev.lastCommandAck.status === 'pending') {
+          return {
+            ...prev,
+            lastCommandAck: {
+              ...prev.lastCommandAck,
+              status: 'timeout',
+              detail: `Điện thoại của ${childName} chưa phản hồi (có thể đang tắt mạng hoặc mất sóng). Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`,
+            },
+          };
+        }
+        return prev;
+      });
+    }, 15000);
+
+    return cmdId;
+  };
+
   // Hardware Controls with Locking, Limiting & Child Permissions
   const setHardwareControls = (partial: Partial<HardwareControls>, sender: 'parent' | 'child' = 'parent') => {
     let nextVolume = partial.volume !== undefined ? partial.volume : globalState.hardwareControls.volume;
@@ -2195,17 +2259,15 @@ export const useAppState = () => {
     eventBus.publish('HARDWARE_CONTROL_CHANGED', updated, sender);
 
     if (sender === 'parent') {
-      const parentId = getActiveParentId();
       const targetChildId = state.selectedChildId;
-      const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-      if (parentId && targetChildId) {
+      if (targetChildId) {
         if (partial.flashlight !== undefined) {
-          sendRemoteCommandToKid(parentId, targetChildId, 'flash_toggle', { flashlight: partial.flashlight }, targetChild?.name).catch(() => {});
+          dispatchRemoteCommand('flash_toggle', { flashlight: partial.flashlight }, targetChildId, 'Bật/Tắt đèn Flash ⚡');
         } else if (partial.volume !== undefined || partial.brightness !== undefined) {
-          sendRemoteCommandToKid(parentId, targetChildId, 'hardware_control', {
+          dispatchRemoteCommand('hardware_control', {
             volume: partial.volume,
             brightness: partial.brightness,
-          }, targetChild?.name).catch(() => {});
+          }, targetChildId, 'Chỉnh âm lượng / độ sáng 🎛️');
         }
       }
     }
@@ -2979,6 +3041,7 @@ export const useAppState = () => {
 
     const kidPaired = getKidDevicePairedInfo();
     const effectiveChildId = customSos?.childId || kidPaired?.childId || state.selectedChildId;
+    const parentId = kidPaired?.parentId || getActiveParentId();
     const targetChild = state.children?.find((c) => c.id === effectiveChildId) || state.child;
     const sosInfo = {
       time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
@@ -2988,7 +3051,9 @@ export const useAppState = () => {
       childName: kidPaired?.childName || targetChild.name,
     };
     eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
-    triggerCloudSOS(getActiveParentId(), effectiveChildId, sosInfo).catch(() => {});
+    if (parentId && effectiveChildId) {
+      triggerCloudSOS(parentId, effectiveChildId, sosInfo).catch(() => {});
+    }
   };
 
   const cancelSOS = (childId?: string) => {
@@ -3049,68 +3114,6 @@ export const useAppState = () => {
     const updated = state.timeRequests.map((r) => (r.id === reqId ? { ...r, status } : r));
     saveAndNotify({ ...state, timeRequests: updated });
     eventBus.publish('TIME_EXTENSION_RESOLVED', { reqId, status, childId: targetChildId, childName }, 'parent');
-  };
-
-  const dispatchRemoteCommand = async (
-    command: RemoteCommandType,
-    payload?: any,
-    targetChildId?: string,
-    customTitle?: string
-  ): Promise<string> => {
-    const childId = targetChildId || state.selectedChildId;
-    const parentId = getActiveParentId();
-    const targetChild = state.children.find((c) => c.id === childId) || state.child;
-    const childName = targetChild?.name || 'Con';
-    const title = customTitle || REMOTE_COMMAND_TITLES[command] || command;
-    const now = Date.now();
-    const cmdId = `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
-
-    // 1. Mark as pending immediately in state
-    const pendingStatus: CommandAckStatus = {
-      id: cmdId,
-      command,
-      commandTitle: title,
-      status: 'pending',
-      childId,
-      childName,
-      deviceName: targetChild?.devices?.[0]?.deviceName || '',
-      sentAt: now,
-      detail: `Đang truyền tín hiệu đến điện thoại của ${childName}...`,
-    };
-
-    saveAndNotify({
-      ...state,
-      lastCommandAck: pendingStatus,
-    });
-
-    // 2. Dispatch command via Cloud RTDB & local server
-    sendRemoteCommandToKid(parentId, childId, command, payload, childName, cmdId).catch(() => {});
-
-    // 3. Set a 15-second timeout: If child has not acknowledged after 15s, inform parent
-    setTimeout(() => {
-      applyCloudStateUpdate((prev) => {
-        if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && prev.lastCommandAck.status === 'pending') {
-          return {
-            ...prev,
-            lastCommandAck: {
-              ...prev.lastCommandAck,
-              status: 'timeout',
-              detail: `Điện thoại của ${childName} chưa phản hồi (có thể đang tắt mạng hoặc mất sóng). Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`,
-            },
-          };
-        }
-        return prev;
-      });
-    }, 15000);
-
-    return cmdId;
-  };
-
-  const clearLastCommandAck = () => {
-    applyCloudStateUpdate((prev) => ({
-      ...prev,
-      lastCommandAck: null,
-    }));
   };
 
   const buzzKidPhone = (childId?: string) => {
@@ -4664,17 +4667,9 @@ export const useAppState = () => {
     eventBus.publish('MEDIA_CONTROL_CMD', { childId, cmd, value }, 'parent');
     eventBus.publish('MEDIA_STATE_UPDATED', { childId, mediaPlayback: updated }, 'parent');
 
-    // Send remote command via Firebase Cloud to child device
-    const parentId = getActiveParentId();
-    const targetChild = state.children.find((c) => c.id === childId);
-    if (parentId && childId) {
-      sendRemoteCommandToKid(
-        parentId,
-        childId,
-        'media_control',
-        { cmd, value },
-        targetChild?.name
-      ).catch(() => {});
+    // Send remote command via Firebase Cloud to child device with feedback tracking
+    if (childId) {
+      dispatchRemoteCommand('media_control', { cmd, value }, childId, `Điều khiển phát nhạc [${cmd}] 🎵`);
     }
   };
 

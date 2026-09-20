@@ -1234,9 +1234,9 @@ export function subscribeCommandAck(
               const ackKey = `${val.id}_${val.status}_${val.executedAt || val.receivedAt || 0}`;
               if (ackKey !== lastHandledAckKey) {
                 lastHandledAckKey = ackKey;
-                // Only process fresh acks (within last 3 minutes)
+                // Only process fresh acks (within last 5 minutes, tolerant to clock drift)
                 const ackAge = Date.now() - (val.executedAt || val.receivedAt || Date.now());
-                if (ackAge < 180000) {
+                if (Math.abs(ackAge) < 300000) {
                   onAck(val);
                 }
               }
@@ -1259,44 +1259,48 @@ const PERSISTENT_HANDLED_CMDS_KEY = 'kidcare_handled_commands_v1';
 const PERSISTENT_LAST_CMD_TIME_KEY = 'kidcare_last_command_time_v1';
 
 function getStoredHandledCommandIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
   try {
-    if (typeof window === 'undefined') return new Set();
     const raw = localStorage.getItem(PERSISTENT_HANDLED_CMDS_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return new Set(arr);
-    }
-  } catch (_) {}
-  return new Set();
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : new Set();
+  } catch (_) {
+    return new Set();
+  }
 }
 
-function saveHandledCommandId(id: string) {
+function saveHandledCommandId(id: string): void {
+  if (typeof window === 'undefined' || !id) return;
   try {
-    if (typeof window === 'undefined' || !id) return;
-    const set = getStoredHandledCommandIds();
-    set.add(id);
-    const arr = Array.from(set).slice(-50);
-    localStorage.setItem(PERSISTENT_HANDLED_CMDS_KEY, JSON.stringify(arr));
+    const ids = Array.from(getStoredHandledCommandIds());
+    if (!ids.includes(id)) {
+      ids.push(id);
+      // Keep only last 100 handled IDs
+      const capped = ids.slice(-100);
+      localStorage.setItem(PERSISTENT_HANDLED_CMDS_KEY, JSON.stringify(capped));
+    }
   } catch (_) {}
 }
 
 function getStoredLastCommandTime(): number {
+  if (typeof window === 'undefined') return 0;
   try {
-    if (typeof window === 'undefined') return 0;
     const raw = localStorage.getItem(PERSISTENT_LAST_CMD_TIME_KEY);
-    return raw ? parseInt(raw, 10) || 0 : 0;
-  } catch (_) {}
-  return 0;
+    return raw ? Number(raw) || 0 : 0;
+  } catch (_) {
+    return 0;
+  }
 }
 
-function saveLastCommandTime(ts: number) {
+function saveLastCommandTime(ts: number): void {
+  if (typeof window === 'undefined' || !ts) return;
   try {
-    if (typeof window === 'undefined' || !ts) return;
     localStorage.setItem(PERSISTENT_LAST_CMD_TIME_KEY, String(ts));
   } catch (_) {}
 }
 
-// 9. Subscribe to Remote Commands on Kid Device (strictly partitioned by parentId + childId)
+// 9. Child device listens to remote commands in real-time (strictly partitioned by parentId + childId)
 export function subscribeRemoteCommandsOnKid(
   parentId: string,
   childId: string,
@@ -1309,8 +1313,10 @@ export function subscribeRemoteCommandsOnKid(
   const unsubs: Array<() => void> = [];
   const syncKey = getPartitionedSyncKey(parentId, childId);
   const handledIds = getStoredHandledCommandIds();
-  // Initialize to 3 seconds before subscription or last stored command time
-  let lastHandledCmdTimestamp = Math.max(Date.now() - 3000, getStoredLastCommandTime());
+  // Initialize to last stored command time from device storage
+  // Never clamp to (Date.now() - 3000) because slight clock drift between parent and kid phones
+  // or app cold-start latency will cause valid commands to be permanently dropped!
+  let lastHandledCmdTimestamp = getStoredLastCommandTime();
 
   const handleIncoming = (data: RemoteCommandData | null) => {
     if (!data || !data.command || data.command === "none") return;
@@ -1345,14 +1351,14 @@ export function subscribeRemoteCommandsOnKid(
       return;
     }
 
-    // 4. Monotonic Sequence Check: Discard any command with timestamp <= last handled
-    if (cmdTimestamp <= lastHandledCmdTimestamp) {
+    // 4. Persistent Deduplication Check: Discard if this exact command was already executed
+    const cmdId = data.id || `cmd_${cmdTimestamp}`;
+    if (handledIds.has(cmdId)) {
       return;
     }
 
-    // 5. Persistent Deduplication Check: Discard if already executed
-    const cmdId = data.id || `cmd_${cmdTimestamp}`;
-    if (handledIds.has(cmdId)) {
+    // 5. Monotonic Sequence Check: Discard any command older than the last executed command
+    if (lastHandledCmdTimestamp > 0 && cmdTimestamp < lastHandledCmdTimestamp) {
       return;
     }
 

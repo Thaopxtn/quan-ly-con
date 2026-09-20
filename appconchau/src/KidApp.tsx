@@ -1026,6 +1026,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         detail: 'Máy con đã nhận lệnh thành công',
       }).catch(() => {});
 
+      let customAckSent = false;
+
       switch (cmd.command) {
         case 'buzz_siren':
           wakeUpDevice().catch(() => {});
@@ -1039,6 +1041,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
         case 'ping':
         case 'sync_request': {
+          customAckSent = true;
           wakeUpDevice().catch(() => {});
           (async () => {
             try {
@@ -1117,8 +1120,21 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
                 detail: `Đã cập nhật toàn bộ dữ liệu mới nhất (vị trí, thời gian dùng ${todayMins}p, ${healthData.dailySteps} bước, pin ${curBattery}%) về máy cha mẹ`,
               }).catch(() => {});
+              clearRemoteCommand(activeParentId, targetChildId, curChild?.name).catch(() => {});
             } catch (err) {
               console.warn('[sync_request/ping] Error handling sync:', err);
+              sendRemoteCommandAck(activeParentId, targetChildId, {
+                id: cmdId,
+                command: cmd.command,
+                status: 'executed',
+                receivedAt: Date.now(),
+                executedAt: Date.now(),
+                childId: targetChildId,
+                childName: curChild?.name || 'Con',
+                deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+                detail: 'Đã hoàn tất đồng bộ dữ liệu',
+              }).catch(() => {});
+              clearRemoteCommand(activeParentId, targetChildId, curChild?.name).catch(() => {});
             }
           })();
           break;
@@ -1267,6 +1283,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           clearBroadcastOverlay();
           break;
         case 'flash_toggle': {
+          customAckSent = true;
           const nextFlash = cmd.payload?.flashlight !== undefined ? cmd.payload.flashlight : !curHw.flashlight;
           setHardwareControls({ flashlight: nextFlash }, 'child');
           setNativeFlashlight(nextFlash).catch(() => {});
@@ -1282,9 +1299,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
             detail: `Đèn flash trên máy con đã ${nextFlash ? 'bật' : 'tắt'} thành công`,
           }).catch(() => {});
+          clearRemoteCommand(activeParentId, targetChildId, curChild?.name).catch(() => {});
           break;
         }
         case 'hardware_control': {
+          customAckSent = true;
           const newVol = cmd.payload?.volume !== undefined ? cmd.payload.volume : curHw.volume;
           const newBright = cmd.payload?.brightness !== undefined ? cmd.payload.brightness : curHw.brightness;
           setHardwareControls({ volume: newVol, brightness: newBright }, 'child');
@@ -1301,9 +1320,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
             detail: `Đã chỉnh âm lượng ${newVol}%, độ sáng ${newBright}% trên máy con`,
           }).catch(() => {});
+          clearRemoteCommand(activeParentId, targetChildId, curChild?.name).catch(() => {});
           break;
         }
         case 'media_control': {
+          customAckSent = true;
           const mediaCmd = cmd.payload?.cmd || 'play_pause';
           const mediaVal = cmd.payload?.value;
           if (mediaCmd === 'volume' && typeof mediaVal === 'number') {
@@ -1323,6 +1344,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
             detail: `Máy con đã thực thi lệnh phát nhạc [${mediaCmd}]`,
           }).catch(() => {});
+          clearRemoteCommand(activeParentId, targetChildId, curChild?.name).catch(() => {});
           break;
         }
         case 'open_shared_link':
@@ -1381,20 +1403,22 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
       }
 
-      // 2. Acknowledge that child device has executed the command successfully
-      sendRemoteCommandAck(activeParentId, targetChildId, {
-        id: cmdId,
-        command: cmd.command,
-        status: 'executed',
-        receivedAt: cmd.timestamp || Date.now(),
-        executedAt: Date.now(),
-        childId: targetChildId,
-        childName: curChild?.name || 'Con',
-        deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
-        detail: 'Đã thực thi thành công trên thiết bị con',
-      }).catch(() => {});
+      // 2. Acknowledge that child device has executed the command successfully (if not handled with custom detail above)
+      if (!customAckSent) {
+        sendRemoteCommandAck(activeParentId, targetChildId, {
+          id: cmdId,
+          command: cmd.command,
+          status: 'executed',
+          receivedAt: cmd.timestamp || Date.now(),
+          executedAt: Date.now(),
+          childId: targetChildId,
+          childName: curChild?.name || 'Con',
+          deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+          detail: 'Đã thực thi thành công trên thiết bị con',
+        }).catch(() => {});
 
-      clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
+        clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
+      }
     }, childRef.current?.name);
 
     return () => unsubCmd();
