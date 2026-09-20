@@ -66,11 +66,17 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       setDeviceName(info.deviceName || `${info.manufacturer} ${info.model}`.trim() || 'Điện thoại của con');
     });
 
-    // Load saved server URL
+    // Load saved server URL & auto-resolve latest from GitHub
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '';
     if (saved && saved.trim()) {
       setServerUrl(saved.trim());
     }
+    serverApiClient.resolveServerUrlFromCloud().then((cloudUrl) => {
+      if (cloudUrl) {
+        setServerUrl(cloudUrl);
+        setServerStatus('ok');
+      }
+    });
   }, []);
 
   const handleSaveServerUrl = () => {
@@ -87,6 +93,17 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     setServerStatus('checking');
     const health = await serverApiClient.checkHealth(clean);
     setServerStatus(health.ok ? 'ok' : 'error');
+  };
+
+  const handleSyncFromGithub = async () => {
+    setServerStatus('checking');
+    const cloudUrl = await serverApiClient.resolveServerUrlFromCloud(true);
+    if (cloudUrl) {
+      setServerUrl(cloudUrl);
+      setServerStatus('ok');
+    } else {
+      setServerStatus('error');
+    }
   };
 
   const handleDigitChange = (index: number, val: string) => {
@@ -136,16 +153,18 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       return;
     }
 
-    // Apply server URL before connecting if user has configured it
-    const savedUrl = typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '';
-    const urlToUse = (serverUrl.trim() || savedUrl || '').replace(/\/+$/, '');
+    // Tự động nhận diện URL máy chủ qua GitHub nếu chưa có
+    let urlToUse = (serverUrl.trim() || (typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '') || '').replace(/\/+$/, '');
+    if (!urlToUse || urlToUse.includes('localhost')) {
+      const resolved = await serverApiClient.resolveServerUrlFromCloud();
+      if (resolved) {
+        urlToUse = resolved;
+        setServerUrl(resolved);
+        setServerStatus('ok');
+      }
+    }
     if (urlToUse) {
       serverApiClient.setServerUrl(urlToUse);
-    } else {
-      // No server URL configured — prompt user to enter it
-      setShowServerConfig(true);
-      setPinError('Vui lòng nhập địa chỉ máy chủ (URL từ Bố/Mẹ) để kết nối.');
-      return;
     }
 
     setIsSubmittingParentPin(true);
@@ -314,10 +333,10 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => { setShowServerConfig(v => !v); setServerStatus('idle'); }}
-                  className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-600 font-bold transition cursor-pointer"
+                  className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-600 font-bold transition cursor-pointer"
                 >
-                  <Settings size={12} />
-                  <span>Cài đặt máy chủ</span>
+                  <Wifi size={12} className={serverUrl && !serverUrl.includes('localhost') ? 'text-emerald-500' : 'text-slate-400'} />
+                  <span>{serverUrl && !serverUrl.includes('localhost') ? 'Máy chủ: Tự động (GitHub)' : 'Cài đặt máy chủ'}</span>
                 </button>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
@@ -327,10 +346,24 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
               {/* Server URL configuration panel */}
               {showServerConfig && (
                 <div className="mt-2 pt-2 border-t border-slate-200 space-y-2 animate-in fade-in">
-                  <p className="text-[10.5px] text-blue-700 font-bold flex items-center gap-1">
-                    <Wifi size={12} />
-                    Nhập địa chỉ máy chủ (URL Cloudflare Tunnel từ Bố/Mẹ):
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10.5px] text-blue-700 font-bold flex items-center gap-1">
+                      <Wifi size={12} />
+                      Địa chỉ máy chủ (Tự động tải từ GitHub):
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleSyncFromGithub}
+                      disabled={serverStatus === 'checking'}
+                      className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {serverStatus === 'checking' ? (
+                        <span className="flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Đang tải...</span>
+                      ) : (
+                        <span>🔄 Đồng bộ từ GitHub</span>
+                      )}
+                    </button>
+                  </div>
                   <input
                     type="url"
                     inputMode="url"
@@ -349,7 +382,7 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
                       {serverStatus === 'checking' ? (
                         <span className="flex items-center justify-center gap-1"><Loader2 size={12} className="animate-spin" /> Kiểm tra...</span>
                       ) : serverStatus === 'ok' ? (
-                        <span className="text-emerald-600 flex items-center justify-center gap-1"><CheckCircle2 size={12} /> Kết nối được!</span>
+                        <span className="text-emerald-600 flex items-center justify-center gap-1"><CheckCircle2 size={12} /> Kết nối tốt!</span>
                       ) : serverStatus === 'error' ? (
                         <span className="text-rose-500">❌ Không kết nối được</span>
                       ) : 'Kiểm tra kết nối'}
@@ -364,8 +397,8 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
                     </button>
                   </div>
                   {serverUrl && (
-                    <p className="text-[10px] text-slate-400 text-center">
-                      Chỉ cần nhập 1 lần. Máy sẽ nhớ tự động lần sau.
+                    <p className="text-[10px] text-emerald-600 font-medium text-center">
+                      🟢 Đã kết nối tự động với máy chủ PC qua GitHub!
                     </p>
                   )}
                 </div>

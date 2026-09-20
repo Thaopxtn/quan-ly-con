@@ -164,7 +164,40 @@ async function main() {
       const publicUrl = match[0];
       const localIps = getLocalIps();
 
-      console.log('\n================================================================');
+      // 1. Save local discovery files
+      try {
+        fs.writeFileSync(path.join(ROOT_DIR, 'server-url.txt'), publicUrl.trim(), 'utf8');
+        fs.writeFileSync(path.join(ROOT_DIR, 'server-url.json'), JSON.stringify({ url: publicUrl.trim(), updatedAt: Date.now() }, null, 2), 'utf8');
+        
+        // Also copy into dist web folders if present
+        const copyDists = ['dist', 'dist-parent', 'dist-kid'];
+        for (const d of copyDists) {
+          const dirPath = path.join(ROOT_DIR, d);
+          if (fs.existsSync(dirPath)) {
+            fs.writeFileSync(path.join(dirPath, 'server-url.txt'), publicUrl.trim(), 'utf8');
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Lỗi ghi file server-url.txt:', err.message);
+      }
+
+      // 2. Auto-sync to GitHub so Apps can discover the PC server URL permanently
+      try {
+        console.log('\n📡 Đang tự động đồng bộ link máy chủ lên GitHub (server-url.txt)...');
+        execSync('git add server-url.txt server-url.json', { cwd: ROOT_DIR, stdio: 'ignore' });
+        const gitStatus = execSync('git status --porcelain server-url.txt server-url.json', { cwd: ROOT_DIR }).toString().trim();
+        if (gitStatus) {
+          execSync('git commit -m "chore: auto-sync server url to github [skip ci]"', { cwd: ROOT_DIR, stdio: 'ignore' });
+          execSync('git push origin main', { cwd: ROOT_DIR, stdio: 'ignore' });
+          console.log('✅ ĐÃ ĐỒNG BỘ THÀNH CÔNG LÊN GITHUB! Cả 2 App sẽ tự kết nối tự động 100%.\n');
+        } else {
+          console.log('✅ Link máy chủ trên GitHub đã đồng bộ mới nhất.\n');
+        }
+      } catch (gitErr) {
+        console.warn('⚠️ Không thể tự động push lên GitHub (vẫn dùng link 4G trực tiếp bình thường):', gitErr.message);
+      }
+
+      console.log('================================================================');
       console.log('  🎉 TẤT CẢ ĐÃ SẴN SÀNG! CÁC ĐƯỜNG LINK TRUY CẬP CỦA BẠN:');
       console.log('================================================================');
       console.log('\n🌟 1. LINK GITHUB CỐ ĐỊNH 24/7 (KHUYÊN DÙNG - KHÔNG BAO GIỜ ĐỔI):');
@@ -180,6 +213,10 @@ async function main() {
       console.log(`   📥 Tải APK Bố Mẹ (Android): ${publicUrl}/download/parent`);
       console.log(`   📥 Tải APK Con  (Android): ${publicUrl}/download/kid`);
 
+      console.log('\n📡 3. TRẠM ĐỒNG BỘ GITHUB TỰ ĐỘNG (CÁCH 1 - GẮN CỐ ĐỊNH TRONG APP):');
+      console.log(`   👉 Link Discovery:  https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt`);
+      console.log(`   👉 Trạng thái:      🟢 Tự động nhận diện cho App Cha Mẹ và App Con Cái`);
+
       if (localIps.length > 0) {
         console.log('\n📱 LINK NỘI BỘ WI-FI (KHI Ở NHÀ):');
         localIps.forEach(ip => {
@@ -189,7 +226,7 @@ async function main() {
 
       console.log('\n================================================================');
       console.log('💡 HƯỚNG DẪN DÙNG:');
-      console.log('• Gửi link 4G trên vào điện thoại Cha Mẹ và Con Cái để sử dụng.');
+      console.log('• Cả 2 ứng dụng sẽ tự động đồng bộ máy chủ qua GitHub mà không cần nhập tay.');
       console.log('• Giữ nguyên cửa sổ này để máy chủ tiếp tục chạy.');
       console.log('• Nhấn [Ctrl + C] hoặc đóng cửa sổ khi muốn dừng máy chủ.');
       console.log('================================================================\n');

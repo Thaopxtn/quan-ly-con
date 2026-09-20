@@ -253,8 +253,13 @@ export async function createChildPairingCode(
     }
   }
 
-  // Sanitize data 100% against undefined values
-  const sanitized = sanitizeForFirebase({ ...session, timestamp: now });
+  // Sanitize data 100% against undefined values & inject current server URL
+  const currentServerUrl = serverApiClient.getServerUrl();
+  const sanitized = sanitizeForFirebase({
+    ...session,
+    timestamp: now,
+    serverUrl: currentServerUrl,
+  });
 
   // Save to Local PC Server (Primary)
   try {
@@ -475,6 +480,9 @@ export async function submitChildPairingCode(
   const { db } = getFirebaseInstance();
   let session: PairingSession | null = null;
 
+  // 0. Auto-resolve latest server URL from GitHub if needed
+  await serverApiClient.resolveServerUrlFromCloud().catch(() => {});
+
   // 1. Fetch from Local Server first
   try {
     session = await serverApiClient.getPairing(cleanCode);
@@ -482,17 +490,33 @@ export async function submitChildPairingCode(
     console.warn("Server fetch pairing error:", e);
   }
 
+  // 2. Fallback to Firestore (allow 3.5s timeout for mobile networks)
   if (!session && isFirebaseConfigured() && db) {
     try {
       const snap: any = await Promise.race([
         getDoc(doc(db, "pairings", cleanCode)),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
       ]);
       if (snap && typeof snap.exists === "function" && snap.exists()) {
         session = snap.data() as PairingSession;
+        // If session carried the serverUrl from parent, immediately apply it!
+        if (session && (session as any).serverUrl) {
+          console.log(`[Pairing] 📡 Tự động cấu hình URL máy chủ từ máy Bố Mẹ: ${(session as any).serverUrl}`);
+          serverApiClient.setServerUrl((session as any).serverUrl);
+        }
       }
     } catch (e) {
       console.warn("Firestore fetch pairing error:", e);
+    }
+  }
+
+  // 3. If still not found, try one more time by forcing a refresh from GitHub
+  if (!session) {
+    const refreshedUrl = await serverApiClient.resolveServerUrlFromCloud(true);
+    if (refreshedUrl) {
+      try {
+        session = await serverApiClient.getPairing(cleanCode);
+      } catch (_) {}
     }
   }
 

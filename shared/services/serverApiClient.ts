@@ -13,6 +13,8 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
+const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
+const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
 
 export class ServerApiClient {
   private static instance: ServerApiClient;
@@ -23,12 +25,18 @@ export class ServerApiClient {
   private reconnectTimer: any = null;
   private reconnectAttempts: number = 0;
   private heartbeatWatchdog: any = null;
+  private isResolvingFromCloud: boolean = false;
+  private lastCloudResolvedTime: number = 0;
 
   private constructor() {
     this.serverUrl = this.initServerUrl();
     if (typeof window !== 'undefined') {
       // Auto-start SSE subscription in browser / webview
       this.initRealtimeStream();
+      // Auto-resolve latest server URL from GitHub if needed
+      setTimeout(() => {
+        this.resolveServerUrlFromCloud().catch(() => {});
+      }, 300);
     }
   }
 
@@ -70,6 +78,63 @@ export class ServerApiClient {
     }
     // Reconnect SSE with new URL
     this.reconnectRealtimeStream();
+  }
+
+  /**
+   * Tự động lấy URL máy chủ mới nhất từ file server-url.txt trên GitHub (Cách 1)
+   */
+  public async resolveServerUrlFromCloud(forceRefresh: boolean = false): Promise<string | null> {
+    if (typeof window === 'undefined') return null;
+
+    const now = Date.now();
+    if (!forceRefresh && (now - this.lastCloudResolvedTime < 8000)) {
+      return this.serverUrl;
+    }
+
+    // If current URL is already working and is a remote cloudflared/domain URL, verify health
+    if (!forceRefresh && this.serverUrl && !this.serverUrl.includes('localhost') && !this.serverUrl.includes('127.0.0.1')) {
+      const health = await this.checkHealth();
+      if (health.ok) {
+        return this.serverUrl;
+      }
+    }
+
+    if (this.isResolvingFromCloud) return this.serverUrl;
+    this.isResolvingFromCloud = true;
+
+    try {
+      const endpoints = [
+        `${GITHUB_RAW_SERVER_URL}?_t=${now}`,
+        `${GITHUB_PAGES_SERVER_URL}?_t=${now}`,
+      ];
+
+      for (const endpoint of endpoints) {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 4000);
+          const res = await fetch(endpoint, {
+            signal: ctrl.signal,
+            headers: { 'Cache-Control': 'no-cache' },
+          });
+          clearTimeout(timer);
+
+          if (res.ok) {
+            const text = (await res.text()).trim();
+            if (text && (text.startsWith('https://') || text.startsWith('http://'))) {
+              const cleanUrl = text.split('\n')[0].trim().replace(/\/+$/, '');
+              console.log(`[ServerApiClient] 🌐 Tự động nhận diện URL máy chủ từ GitHub: ${cleanUrl}`);
+              this.setServerUrl(cleanUrl);
+              this.lastCloudResolvedTime = Date.now();
+              return cleanUrl;
+            }
+          }
+        } catch (_) {}
+      }
+    } finally {
+      this.isResolvingFromCloud = false;
+    }
+
+    return null;
   }
 
   public async checkHealth(customUrl?: string): Promise<ServerHealth> {
@@ -236,7 +301,8 @@ export class ServerApiClient {
   private async request<T = any>(
     path: string,
     method: 'GET' | 'POST' | 'DELETE' = 'GET',
-    body?: any
+    body?: any,
+    retryCount: number = 0
   ): Promise<T | null> {
     try {
       const url = `${this.serverUrl}${path}`;
@@ -254,6 +320,13 @@ export class ServerApiClient {
       if (!res.ok) return null;
       return await res.json();
     } catch (err) {
+      // Auto-heal: If network failed and we haven't retried yet, resolve URL from GitHub and retry once
+      if (retryCount === 0 && typeof window !== 'undefined') {
+        const newUrl = await this.resolveServerUrlFromCloud(true);
+        if (newUrl && newUrl !== this.serverUrl) {
+          return this.request<T>(path, method, body, 1);
+        }
+      }
       return null;
     }
   }
