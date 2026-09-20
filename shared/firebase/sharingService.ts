@@ -1,13 +1,8 @@
 // Sharing Service — Share child management access between parent accounts
 import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, serverTimestamp } from "firebase/firestore";
-import {
-  ref as rtdbRef,
-  set as rtdbSet,
-  get as rtdbGet,
-  update as rtdbUpdate,
-} from "firebase/database";
 import { getFirebaseInstance } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
+import { serverApiClient } from "../services/serverApiClient";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -135,14 +130,12 @@ export async function createShareCode(
     localStorage.setItem(LOCAL_SHARES_KEY, JSON.stringify(shares));
   }
 
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
 
-  // Non-blocking Firebase writes
-  if (isFirebaseConfigured() && rtdb) {
-    rtdbSet(rtdbRef(rtdb, `shares/${code}`), { ...session, timestamp: now }).catch((e) =>
-      console.warn("RTDB share write skipped:", e?.code)
-    );
-  }
+  // Non-blocking writes: Server first, Firestore backup
+  serverApiClient.createShare(session).catch((e) =>
+    console.warn("Server share write skipped:", e)
+  );
   if (isFirebaseConfigured() && db) {
     setDoc(doc(db, "shares", code), { ...session, timestamp: serverTimestamp() }).catch((e) =>
       console.warn("Firestore share write skipped:", e?.code)
@@ -172,17 +165,15 @@ export async function acceptShareCode(
     return { success: false, error: "Mã chia sẻ phải gồm đúng 6 chữ số." };
   }
 
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   let session: ShareSession | null = null;
 
-  // Fetch from RTDB first
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `shares/${cleanCode}`));
-      if (snap.exists()) session = snap.val() as ShareSession;
-    } catch (e) {
-      console.warn("RTDB share fetch error:", e);
-    }
+  // Fetch from Local Server first
+  try {
+    const res = await serverApiClient.getShare(cleanCode);
+    if (res.success && res.session) session = res.session as ShareSession;
+  } catch (e) {
+    console.warn("Server share fetch error:", e);
   }
 
   // Fallback to Firestore
@@ -240,24 +231,10 @@ export async function acceptShareCode(
     connectedAt: Date.now(),
   };
 
-  // Write to both owner's and new parent's data
-  if (isFirebaseConfigured() && rtdb) {
-    Promise.all([
-      rtdbUpdate(rtdbRef(rtdb, `shares/${cleanCode}`), { status: "accepted", toParentId, toParentName, acceptedAt: Date.now() }),
-      // Store under owner's child record
-      rtdbSet(rtdbRef(rtdb, `users/${session.fromParentId}/children/${session.childId}/connectedParents/${toParentId}`), connectedParentData),
-      // Store a reference under new parent's account
-      rtdbSet(rtdbRef(rtdb, `users/${toParentId}/sharedChildren/${session.childId}`), {
-        childId: session.childId,
-        childName: session.childName,
-        childAvatar: session.childAvatar,
-        ownerParentId: session.fromParentId,
-        ownerParentName: session.fromParentName,
-        role: session.role,
-        connectedAt: Date.now(),
-      }),
-    ]).catch((e) => console.warn("RTDB share accept error:", e?.code));
-  }
+  // Write to Server
+  serverApiClient.acceptShare(cleanCode, toParentId, toParentName).catch((e) =>
+    console.warn("Server share accept error:", e)
+  );
 
   if (isFirebaseConfigured() && db) {
     Promise.all([
@@ -305,20 +282,11 @@ export async function revokeParentAccess(
   childId: string,
   targetParentId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
 
-  if (isFirebaseConfigured() && rtdb) {
-    Promise.all([
-      rtdbUpdate(rtdbRef(rtdb, `users/${ownerParentId}/children/${childId}/connectedParents/${targetParentId}`), {
-        role: "revoked",
-        revokedAt: Date.now(),
-      }),
-      rtdbUpdate(rtdbRef(rtdb, `users/${targetParentId}/sharedChildren/${childId}`), {
-        role: "revoked",
-        revokedAt: Date.now(),
-      }),
-    ]).catch((e) => console.warn("RTDB revoke error:", e?.code));
-  }
+  serverApiClient.revokeShare(ownerParentId, childId, targetParentId).catch((e) =>
+    console.warn("Server revoke error:", e)
+  );
 
   if (isFirebaseConfigured() && db) {
     Promise.all([
@@ -353,20 +321,25 @@ export async function getConnectedParents(
   ownerParentId: string,
   childId: string
 ): Promise<ConnectedParent[]> {
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   let parents: ConnectedParent[] = [];
 
-  // Try RTDB first
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `users/${ownerParentId}/children/${childId}/connectedParents`));
-      if (snap.exists()) {
-        const data = snap.val() as Record<string, ConnectedParent>;
-        parents = Object.values(data).filter((p) => p.role !== ("revoked" as any));
-      }
-    } catch (e) {
-      console.warn("RTDB connected parents fetch error:", e);
+  // Try local PC server first
+  try {
+    const res = await serverApiClient.getShare();
+    if (res.success && res.shares) {
+      const sharesList = Object.values(res.shares) as any[];
+      parents = sharesList
+        .filter((s: any) => s.childId === childId && s.status === "accepted" && s.toParentId)
+        .map((s: any) => ({
+          parentId: s.toParentId,
+          parentName: s.toParentName || "Phụ huynh",
+          role: s.role || "co_parent",
+          connectedAt: s.acceptedAt || s.createdAt || Date.now(),
+        }));
     }
+  } catch (e) {
+    console.warn("Server connected parents fetch error:", e);
   }
 
   // Fallback to Firestore

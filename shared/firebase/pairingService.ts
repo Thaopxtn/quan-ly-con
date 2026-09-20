@@ -1,16 +1,10 @@
 // Device Pairing Service between Parent App and Kid App
 // Security features: rate limiting, HMAC code signature, session token, anti brute-force
 import { doc, setDoc, getDoc, updateDoc, onSnapshot, serverTimestamp } from "firebase/firestore";
-import {
-  ref as rtdbRef,
-  set as rtdbSet,
-  get as rtdbGet,
-  update as rtdbUpdate,
-  onValue as rtdbOnValue,
-} from "firebase/database";
 import { getFirebaseInstance, ensureKidAnonymousAuth } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
 import { parentProEventBus } from "../eventBus";
+import { serverApiClient } from "../services/serverApiClient";
 
 import { ChildDeviceInfo } from "../types";
 import { registerChildDeviceInCloud } from "./cloudSyncService";
@@ -245,7 +239,7 @@ export async function createChildPairingCode(
     sessionToken: generateSessionToken(),
   };
 
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
 
   // Save to localStorage first
   if (typeof window !== "undefined") {
@@ -262,17 +256,15 @@ export async function createChildPairingCode(
   // Sanitize data 100% against undefined values
   const sanitized = sanitizeForFirebase({ ...session, timestamp: now });
 
-  // Cloud Realtime writes (Primary)
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      await rtdbSet(rtdbRef(rtdb, `pairings/${code}`), sanitized);
-      console.log(`[Pairing] ✅ RTDB code ${code} created successfully for ${session.childName}`);
-    } catch (e: any) {
-      console.error("RTDB pairing write error:", e?.code || e?.message);
-    }
+  // Save to Local PC Server (Primary)
+  try {
+    await serverApiClient.createPairing(sanitized);
+    console.log(`[Pairing] ✅ Mã ghép đôi ${code} đã tạo trên Máy Chủ cho ${session.childName}`);
+  } catch (e: any) {
+    console.warn("Server pairing write error:", e?.message);
   }
 
-  // Non-blocking Firestore write (never await so gRPC never hangs when Firestore API is disabled)
+  // Non-blocking Firestore write (optional backup)
   if (isFirebaseConfigured() && db) {
     setDoc(doc(db, "pairings", code), sanitized).catch((e: any) => {
       console.warn("Firestore pairing write skipped:", e?.code || e?.message);
@@ -309,22 +301,17 @@ export async function connectParentWithKidCode(
     return { success: false, error: "Mã ghép đôi phải gồm đúng 6 chữ số." };
   }
 
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   let session: PairingSession | null = null;
 
-  // 3. Fetch from RTDB first (fastest)
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${cleanCode}`));
-      if (snap.exists()) {
-        session = snap.val() as PairingSession;
-      }
-    } catch (e) {
-      console.warn("RTDB fetch pairing error:", e);
-    }
+  // 3. Fetch from Local PC Server first (fastest)
+  try {
+    session = await serverApiClient.getPairing(cleanCode);
+  } catch (e) {
+    console.warn("Server fetch pairing error:", e);
   }
 
-  // 4. Fallback to Firestore (with 1s timeout to prevent gRPC hangs when Firestore API is disabled)
+  // 4. Fallback to Firestore (with 1s timeout)
   if (!session && isFirebaseConfigured() && db) {
     try {
       const snap: any = await Promise.race([
@@ -411,19 +398,15 @@ export async function connectParentWithKidCode(
     sessionToken,
   };
 
-  // 10. Write updates — Firebase (non-blocking) + localStorage
-  if (isFirebaseConfigured() && rtdb) {
-    Promise.all([
-      rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), {
-        status: "paired",
-        parentId,
-        parentName: session.parentName,
-        pairedAt: Date.now(),
-        sessionToken,
-      }),
-      rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${session.childId}`), childProfileData),
-    ]).catch((e) => console.warn("RTDB update pairing error:", e?.code));
-  }
+  // 10. Write updates — Server + Firestore (non-blocking) + localStorage
+  serverApiClient.confirmPairing({
+    code: cleanCode,
+    childId: session.childId,
+    childName: session.childName,
+    parentId,
+    parentName: session.parentName,
+    sessionToken,
+  }).catch((e) => console.warn("Server update pairing error:", e?.message));
 
   if (isFirebaseConfigured() && db) {
     Promise.all([
@@ -489,16 +472,14 @@ export async function submitChildPairingCode(
     return { success: false, error: "Mã ghép đôi phải gồm 6 chữ số." };
   }
 
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   let session: PairingSession | null = null;
 
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${cleanCode}`));
-      if (snap.exists()) session = snap.val() as PairingSession;
-    } catch (e) {
-      console.warn("RTDB fetch pairing error:", e);
-    }
+  // 1. Fetch from Local Server first
+  try {
+    session = await serverApiClient.getPairing(cleanCode);
+  } catch (e) {
+    console.warn("Server fetch pairing error:", e);
   }
 
   if (!session && isFirebaseConfigured() && db) {
@@ -584,11 +565,10 @@ export async function submitChildPairingCode(
     pairedAt: Date.now(),
   });
 
-  if (isFirebaseConfigured() && rtdb) {
-    rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), sanitizedUpdate).catch((e) =>
-      console.warn("RTDB pairing update error:", e?.code || e?.message)
-    );
-  }
+  // Update Local PC Server
+  serverApiClient.confirmPairing({ code: cleanCode, ...sanitizedUpdate }).catch((e) =>
+    console.warn("Server pairing update error:", e)
+  );
   if (isFirebaseConfigured() && db) {
     updateDoc(doc(db, "pairings", cleanCode), sanitizedUpdate).catch((e) =>
       console.warn("Firestore pairing update error:", e?.code || e?.message)
@@ -634,22 +614,26 @@ export function subscribePairingSession(
   onUpdate: (session: PairingSession) => void
 ): () => void {
   const cleanCode = code.replace(/\s+/g, "").trim();
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
 
-  let unsubRtdb: (() => void) | null = null;
   let unsubFirestore: (() => void) | null = null;
 
-  if (isFirebaseConfigured() && rtdb) {
+  // Real-time listener via Server-Sent Events (SSE)
+  const unsubSse = serverApiClient.on("pairing_connected", (data: any) => {
+    if (data && (data.code === cleanCode || data.session?.code === cleanCode)) {
+      onUpdate(data.session || data);
+    }
+  });
+
+  // Server polling fallback (fast 1.5s interval while modal is open)
+  const serverPoll = setInterval(async () => {
     try {
-      const pRef = rtdbRef(rtdb, `pairings/${cleanCode}`);
-      unsubRtdb = rtdbOnValue(pRef, (snap) => {
-        if (snap.exists()) {
-          const val = snap.val() as PairingSession;
-          onUpdate(val);
-        }
-      });
+      const s = await serverApiClient.getPairing(cleanCode);
+      if (s && s.status === "paired") {
+        onUpdate(s);
+      }
     } catch (_) {}
-  }
+  }, 1500);
 
   if (isFirebaseConfigured() && db) {
     try {
@@ -695,7 +679,8 @@ export function subscribePairingSession(
   }, 1000);
 
   return () => {
-    if (unsubRtdb) unsubRtdb();
+    unsubSse();
+    clearInterval(serverPoll);
     if (unsubFirestore) unsubFirestore();
     clearInterval(localTimer);
     unsubEventBus();
@@ -769,17 +754,15 @@ export async function createKidInitiatedPairingCode(
   // 2. Phát EventBus cho môi trường tab/trình giả lập cục bộ
   parentProEventBus.emit("PAIRING_SESSION_CREATED", session, "child");
 
-  // 3. Chuẩn hóa dữ liệu chống lỗi undefined và ghi lên Firebase Realtime Database
-  const { db, rtdb } = getFirebaseInstance();
+  // 3. Chuẩn hóa dữ liệu và ghi lên Local Server (và Firestore dự phòng)
+  const { db } = getFirebaseInstance();
   const sanitizedSession = sanitizeForFirebase({ ...session, timestamp: now });
 
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      await rtdbSet(rtdbRef(rtdb, `pairings/${code}`), sanitizedSession);
-      console.log(`[Pairing] ✅ Mã ghép đôi ${code} đã sẵn sàng trên Realtime Database!`);
-    } catch (e: any) {
-      console.warn("RTDB kid pairing write warning:", e?.code || e?.message);
-    }
+  try {
+    await serverApiClient.createPairing(sanitizedSession);
+    console.log(`[Pairing] ✅ Mã ghép đôi ${code} đã sẵn sàng trên máy chủ!`);
+  } catch (e: any) {
+    console.warn("Server kid pairing write warning:", e?.message || e);
   }
 
   if (isFirebaseConfigured() && db) {
@@ -813,19 +796,14 @@ export async function requestPairingWithKidCode(
     return { success: false, error: "Mã ghép đôi phải gồm đúng 6 chữ số." };
   }
 
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   let session: PairingSession | null = null;
 
-  // 3. Fetch from RTDB first (fastest)
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${cleanCode}`));
-      if (snap.exists()) {
-        session = snap.val() as PairingSession;
-      }
-    } catch (e) {
-      console.warn("RTDB fetch pairing error:", e);
-    }
+  // 3. Fetch from Local Server first (fastest)
+  try {
+    session = await serverApiClient.getPairing(cleanCode);
+  } catch (e) {
+    console.warn("Server fetch pairing error:", e);
   }
 
   // 4. Fallback to Firestore
@@ -896,13 +874,11 @@ export async function requestPairingWithKidCode(
     approvalRequestedAt: session.approvalRequestedAt,
   });
 
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      await rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), updates);
-      console.log(`[Pairing] ✅ Đã gửi yêu cầu ghép đôi mã ${cleanCode} lên Realtime Database thành công!`);
-    } catch (e: any) {
-      console.warn("RTDB update pairing error:", e?.code || e?.message);
-    }
+  try {
+    await serverApiClient.createPairing({ code: cleanCode, ...updates });
+    console.log(`[Pairing] ✅ Đã gửi yêu cầu ghép đôi mã ${cleanCode} lên máy chủ thành công!`);
+  } catch (e: any) {
+    console.warn("Server update pairing error:", e?.message || e);
   }
 
   if (isFirebaseConfigured() && db) {
@@ -943,16 +919,13 @@ export async function approveParentPairing(
   code: string
 ): Promise<{ success: boolean; session?: PairingSession; error?: string }> {
   const cleanCode = code.replace(/\s+/g, "").trim();
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   let session: PairingSession | null = null;
 
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `pairings/${cleanCode}`));
-      if (snap.exists()) session = snap.val() as PairingSession;
-    } catch (e) {
-      console.warn("RTDB fetch pairing error:", e);
-    }
+  try {
+    session = await serverApiClient.getPairing(cleanCode);
+  } catch (e) {
+    console.warn("Server fetch pairing error:", e);
   }
 
   if (!session && isFirebaseConfigured() && db) {
@@ -1016,16 +989,14 @@ export async function approveParentPairing(
     sessionToken,
   });
 
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      await Promise.all([
-        rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), sanitizedPairingUpdate),
-        rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${session.childId}`), sanitizedChildData),
-      ]);
-      console.log(`[Pairing] ✅ Bé đã chấp nhận kết nối mã ${cleanCode} trên Realtime Database thành công!`);
-    } catch (e: any) {
-      console.warn("RTDB update pairing error:", e?.code || e?.message);
-    }
+  try {
+    await Promise.all([
+      serverApiClient.confirmPairing({ code: cleanCode, ...sanitizedPairingUpdate }),
+      serverApiClient.saveChildProfile(parentId, sanitizedChildData),
+    ]);
+    console.log(`[Pairing] ✅ Bé đã chấp nhận kết nối mã ${cleanCode} trên máy chủ thành công!`);
+  } catch (e: any) {
+    console.warn("Server update pairing error:", e?.message || e);
   }
 
   if (isFirebaseConfigured() && db) {
@@ -1089,18 +1060,16 @@ export async function rejectParentPairing(
   code: string
 ): Promise<{ success: boolean; error?: string }> {
   const cleanCode = code.replace(/\s+/g, "").trim();
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
 
   const updates = sanitizeForFirebase({
     status: "rejected",
     rejectedAt: Date.now(),
   });
 
-  if (isFirebaseConfigured() && rtdb) {
-    rtdbUpdate(rtdbRef(rtdb, `pairings/${cleanCode}`), updates).catch((e) =>
-      console.warn("RTDB update pairing error:", e?.code)
-    );
-  }
+  serverApiClient.createPairing({ code: cleanCode, ...updates }).catch((e) =>
+    console.warn("Server update pairing error:", e)
+  );
 
   if (isFirebaseConfigured() && db) {
     updateDoc(doc(db, "pairings", cleanCode), updates).catch(() => {});
@@ -1127,18 +1096,17 @@ export async function loadChildDataFromCloud(
   parentId: string,
   childId: string
 ): Promise<Record<string, any> | null> {
-  const { db, rtdb } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
 
-  // Try RTDB first (fastest)
-  if (isFirebaseConfigured() && rtdb) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `users/${parentId}/children/${childId}`));
-      if (snap.exists()) {
-        return snap.val();
-      }
-    } catch (e) {
-      console.warn("RTDB load child error:", e);
+  // Try Local Server first (fastest)
+  try {
+    const children = await serverApiClient.getChildrenList(parentId);
+    if (children && children.length > 0) {
+      const match = children.find((c: any) => c.id === childId);
+      if (match) return match;
     }
+  } catch (e) {
+    console.warn("Server load child error:", e);
   }
 
   // Fallback to Firestore

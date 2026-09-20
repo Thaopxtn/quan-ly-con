@@ -229,7 +229,7 @@ export const FamilyChatModal: React.FC<FamilyChatModalProps> = ({
     localStorage.setItem(storageKey, JSON.stringify(updated));
     setInputText("");
 
-    // Sync message to Cloud (RTDB & Firestore)
+    // Sync message to Cloud (Local Server & Firestore)
     const parentId = getActiveParentId();
     sendCloudChatMessage(parentId, childId, newMsg, childName).catch((e) => {
       console.warn("sendCloudChatMessage error:", e);

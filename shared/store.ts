@@ -1799,7 +1799,7 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
   syncParentWithAllChildren(parentId, globalState.children);
 }
 
-// Actively query and sync all children across RTDB, Firestore, and pairings
+// Actively query and sync all children across Local Server, Firestore, and pairings
 export async function syncAllChildrenFromCloud(explicitParentId?: string): Promise<ChildProfile[]> {
   const currentParent = getCurrentParentAccount();
   const parentId = explicitParentId || currentParent?.uid || getActiveParentId();
@@ -2323,7 +2323,7 @@ export const useAppState = () => {
       }, 15000);
     }
 
-    // 2. Dispatch command via Cloud RTDB & local server
+    // 2. Dispatch command via Local Server & Cloud
     sendRemoteCommandToKid(parentId, childId, command, payload, childName, cmdId).catch(() => {});
 
     return cmdId;

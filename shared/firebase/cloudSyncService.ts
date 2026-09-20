@@ -17,14 +17,14 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import {
-  ref as rtdbRef,
-  set as rtdbSet,
-  get as rtdbGet,
-  update as rtdbUpdate,
-  remove as rtdbRemove,
-  onValue as rtdbOnValue,
-  push as rtdbPush,
-} from "firebase/database";
+  rtdbRef,
+  rtdbSet,
+  rtdbGet,
+  rtdbUpdate,
+  rtdbRemove,
+  rtdbOnValue,
+  rtdbPush,
+} from "./rtdbServerAdapter";
 import { getFirebaseInstance } from "./firebaseService";
 import { isFirebaseConfigured } from "./firebaseConfig";
 import { ChildSpecificSettings, TimeRequest, RoutePoint, SafeZone, ChildDeviceInfo, ChildPcControlConfig, ChildPcTelemetry } from "../types";

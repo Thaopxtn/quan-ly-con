@@ -8,7 +8,6 @@ export interface FirebaseProjectConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
-  databaseURL?: string;
 }
 
 const FIREBASE_CONFIG_STORAGE_KEY = "parent_pro_firebase_config";
@@ -21,7 +20,6 @@ export const DEFAULT_FIREBASE_CONFIG: FirebaseProjectConfig = {
   storageBucket: "qlconcai.firebasestorage.app",
   messagingSenderId: "594726838584",
   appId: "1:594726838584:android:7a124bb24cfd34c83221cd",
-  databaseURL: "https://qlconcai-default-rtdb.europe-west1.firebasedatabase.app",
 };
 
 export function getSavedFirebaseConfig(): FirebaseProjectConfig {

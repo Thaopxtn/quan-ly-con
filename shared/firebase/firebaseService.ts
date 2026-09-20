@@ -27,13 +27,12 @@ import {
   serverTimestamp,
   Firestore,
 } from "firebase/firestore";
-import { getDatabase, Database, ref as rtdbRef, get as rtdbGet, set as rtdbSet, update as rtdbUpdate } from "firebase/database";
 import { getSavedFirebaseConfig, isFirebaseConfigured } from "./firebaseConfig";
+import { serverApiClient } from "../services/serverApiClient";
 
 let app: FirebaseApp | null = null;
 let authInstance: ReturnType<typeof getAuth> | null = null;
 let dbInstance: Firestore | null = null;
-let rtdbInstance: Database | null = null;
 
 export function getFirebaseInstance() {
   const config = getSavedFirebaseConfig();
@@ -66,15 +65,7 @@ export function getFirebaseInstance() {
     }
   }
 
-  if (app && !rtdbInstance) {
-    try {
-      rtdbInstance = config.databaseURL ? getDatabase(app, config.databaseURL) : getDatabase(app);
-    } catch (e) {
-      console.warn("Realtime Database initialization error:", e);
-    }
-  }
-
-  return { app, auth: authInstance, db: dbInstance, rtdb: rtdbInstance };
+  return { app, auth: authInstance, db: dbInstance, rtdb: { isLocalServer: true } as any };
 }
 
 /**
@@ -446,53 +437,29 @@ export function logoutKidAccount(): void {
 }
 
 /**
- * Fetches all children associated with a parent account from RTDB and Firestore
+ * Fetches all children associated with a parent account from Local Server and Firestore
  */
 export async function fetchChildrenForParentAccount(
   parentId: string
 ): Promise<Array<{ id: string; name: string; age?: number; grade?: string; avatar?: string; devices?: any[] }>> {
-  const { rtdb, db } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   const childrenMap: Map<string, any> = new Map();
 
-  // 1. Fetch from RTDB users/${parentId}/children
-  if (rtdb && parentId) {
-    try {
-      const snap = await rtdbGet(rtdbRef(rtdb, `users/${parentId}/children`));
-      if (snap.exists()) {
-        const val = snap.val();
-        if (typeof val === "object" && val !== null) {
-          Object.entries(val).forEach(([id, data]: [string, any]) => {
-            if (data && typeof data === "object") {
-              childrenMap.set(id, { id: data.id || id, ...data });
-            }
-          });
+  // 1. Fetch from Local PC Server
+  try {
+    const serverChildren = await serverApiClient.getChildrenList(parentId);
+    if (Array.isArray(serverChildren)) {
+      serverChildren.forEach(child => {
+        if (child && child.id) {
+          childrenMap.set(child.id, child);
         }
-      }
-    } catch (e) {
-      console.warn("fetchChildrenForParentAccount RTDB error:", e);
+      });
     }
+  } catch (e) {
+    console.warn("fetchChildrenForParentAccount server error:", e);
   }
 
-  // 2. Also check pairings/active_children for children linked to this parentId
-  if (rtdb) {
-    try {
-      const allActiveSnap = await rtdbGet(rtdbRef(rtdb, "pairings/active_children"));
-      if (allActiveSnap.exists()) {
-        const all = allActiveSnap.val();
-        if (typeof all === "object" && all !== null) {
-          Object.entries(all).forEach(([id, data]: [string, any]) => {
-            if (data && (data.parentId === parentId || !parentId)) {
-              if (!childrenMap.has(id)) {
-                childrenMap.set(id, { id, ...data });
-              }
-            }
-          });
-        }
-      }
-    } catch (_) {}
-  }
-
-  // 3. Fallback to Firestore if available
+  // 2. Fallback to Firestore if available and server returned no children
   if (db && parentId && childrenMap.size === 0) {
     try {
       const childrenCol = collection(db, "users", parentId, "children");
@@ -517,7 +484,7 @@ export async function createChildForParentAccount(
   parentName: string,
   childData: { name: string; birthYear?: number; age?: number; avatar?: string; gender?: "boy" | "girl"; grade?: string }
 ): Promise<{ id: string; name: string; age: number; avatar: string; grade: string }> {
-  const { rtdb, db } = getFirebaseInstance();
+  const { db } = getFirebaseInstance();
   const childId = "child_" + Date.now();
   const currentYear = new Date().getFullYear();
   const age = childData.age || (childData.birthYear ? Math.max(1, currentYear - childData.birthYear) : 8);
@@ -544,19 +511,14 @@ export async function createChildForParentAccount(
     updatedAt: Date.now(),
   };
 
-  // Save to RTDB
-  if (rtdb) {
-    try {
-      if (parentId) {
-        await rtdbSet(rtdbRef(rtdb, `users/${parentId}/children/${childId}`), newChild);
-      }
-      await rtdbSet(rtdbRef(rtdb, `pairings/active_children/${childId}`), newChild);
-    } catch (e) {
-      console.warn("createChildForParentAccount RTDB warning:", e);
-    }
+  // 1. Save to Local PC Server
+  try {
+    await serverApiClient.saveChildProfile(parentId, newChild);
+  } catch (e) {
+    console.warn("createChildForParentAccount server warning:", e);
   }
 
-  // Save to Firestore
+  // 2. Save to Firestore if available
   if (db && parentId) {
     try {
       await setDoc(doc(db, "users", parentId, "children", childId), newChild, { merge: true });
