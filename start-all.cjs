@@ -105,9 +105,15 @@ if (!cfPath) {
       const localIps = getLocalIps();
 
       console.log('\n================================================================');
-      console.log('  🎉 TẤT CẢ ĐÃ SẴN SÀNG! MÁY CHỦ ĐANG HOẠT ĐỘNG HOÀN HẢO');
+      console.log('  🎉 TẤT CẢ ĐÃ SẴN SÀNG! CÁC ĐƯỜNG LINK TRUY CẬP CỦA BẠN:');
       console.log('================================================================');
-      console.log('\n🌐 LINK TRUY CẬP TỪ MẠNG 4G BÊN NGOÀI (INTERNET):');
+      console.log('\n🌟 1. LINK GITHUB CỐ ĐỊNH 24/7 (KHUYÊN DÙNG - KHÔNG BAO GIỜ ĐỔI):');
+      console.log('   👉 Cổng Chính:      https://thaopxtn.github.io/quan-ly-con/');
+      console.log('   👉 App Cha Mẹ:      https://thaopxtn.github.io/quan-ly-con/parent.html');
+      console.log('   👉 App Con Cái:     https://thaopxtn.github.io/quan-ly-con/kid.html');
+      console.log('   (Link GitHub này chạy 24/7 trên máy chủ GitHub, tắt PC vẫn dùng được!)');
+
+      console.log('\n🌐 2. LINK MÁY CHỦ PC QUA 4G (KHI CẦN TRUY CẬP THẲNG VÀO PC):');
       console.log(`   👉 Cổng Quản Trị & Tải App: ${publicUrl}/portal`);
       console.log(`   👉 Ứng Dụng Cha Mẹ:         ${publicUrl}/parent.html`);
       console.log(`   👉 Ứng Dụng Con Cái:        ${publicUrl}/kid.html`);
