@@ -1,15 +1,16 @@
 /**
  * Unified Runner for "Quản Lý Con":
- * 1. Starts Local High-Performance Node Server (server.cjs)
+ * 1. Checks/Starts Local High-Performance Node Server (server.cjs)
  * 2. Starts Cloudflare 4G Internet Tunnel (cloudflared)
  * 3. Automatically extracts the public HTTPS 4G URL and displays clean access links
- * 4. Gracefully shuts down all child processes when closed
+ * 4. Gracefully handles ports, existing instances, and clean shutdown
  */
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 
 const ROOT_DIR = __dirname;
 const PORT = process.env.PORT || 3000;
@@ -51,43 +52,102 @@ function getLocalIps() {
   return ips;
 }
 
-console.log('================================================================');
-console.log('       🚀 KHỞI ĐỘNG HỢP NHẤT MÁY CHỦ VÀ ĐƯỜNG TRUYỀN 4G');
-console.log('                 Hệ Thống Quản Lý Con Cái');
-console.log('================================================================\n');
+// 3. Check if server is already responding
+function checkServerRunning(port) {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/api/health`, { timeout: 1500 }, (res) => {
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
 
-// 3. Start local server (server.cjs)
-console.log('[1/2] ⏳ Đang khởi động máy chủ nội bộ (cổng ' + PORT + ')...');
-const serverProcess = spawn('node', [path.join(ROOT_DIR, 'server.cjs')], {
-  cwd: ROOT_DIR,
-  stdio: ['ignore', 'pipe', 'pipe'],
-  windowsHide: true,
-});
+// 4. Free port if blocked by a dead/unresponsive process
+function freePortIfBlocked(port) {
+  try {
+    const stdout = execSync(`netstat -ano | findstr :${port}`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
+    const lines = stdout.split('\n');
+    for (const line of lines) {
+      if (line.includes('LISTENING')) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && pid !== '0' && pid != process.pid) {
+          try {
+            execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+            console.log(`[Dọn dẹp] Đã giải phóng cổng ${port} (tiến trình cũ PID: ${pid})`);
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
+}
 
-serverProcess.stdout.on('data', (d) => {
-  // Uncomment to debug server stdout:
-  // process.stdout.write(d);
-});
-serverProcess.stderr.on('data', (d) => {
-  console.error('[Server Lỗi]:', d.toString());
-});
+async function main() {
+  console.log('================================================================');
+  console.log('       🚀 KHỞI ĐỘNG HỢP NHẤT MÁY CHỦ VÀ ĐƯỜNG TRUYỀN 4G');
+  console.log('                 Hệ Thống Quản Lý Con Cái');
+  console.log('================================================================\n');
 
-serverProcess.on('exit', (code) => {
-  if (code !== null && code !== 0) {
-    console.error(`[CẢNH BÁO] Máy chủ nội bộ đã dừng với mã thoát: ${code}`);
+  let serverProcess = null;
+
+  // Step 1: Check if server is already running
+  console.log(`[1/2] ⏳ Đang kiểm tra máy chủ nội bộ (cổng ${PORT})...`);
+  const isRunning = await checkServerRunning(PORT);
+
+  if (isRunning) {
+    console.log(`[1/2] ✅ Máy chủ nội bộ ĐANG HOẠT ĐỘNG TỐT (cổng ${PORT} đã sẵn sàng)!`);
+  } else {
+    // Port might be hung or free, make sure it is clean
+    freePortIfBlocked(PORT);
+
+    console.log(`[1/2] ⏳ Đang khởi chạy máy chủ nội bộ...`);
+    serverProcess = spawn('node', [path.join(ROOT_DIR, 'server.cjs')], {
+      cwd: ROOT_DIR,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    serverProcess.stderr.on('data', (d) => {
+      const msg = d.toString();
+      if (!msg.includes('EADDRINUSE')) {
+        console.error('[Server]:', msg);
+      }
+    });
+
+    serverProcess.on('exit', (code) => {
+      if (code !== null && code !== 0) {
+        console.error(`[CẢNH BÁO] Máy chủ nội bộ đã dừng với mã: ${code}`);
+      }
+    });
+
+    // Wait a brief moment for it to be ready
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 600));
+      if (await checkServerRunning(PORT)) break;
+    }
+    console.log(`[1/2] ✅ Máy chủ nội bộ đã khởi động thành công (cổng ${PORT})!`);
   }
-});
 
-// 4. Locate Cloudflare
-const cfPath = findCloudflared();
-if (!cfPath) {
-  console.error('\n❌ KHÔNG TÌM THẤY CLOUDFLARED!');
-  console.error('Vui lòng đảm bảo file "D:\\cloudflared-windows-amd64.exe" hoặc "cloudflared.exe" tồn tại.');
-  console.log('\n[INFO] Máy chủ nội bộ vẫn đang chạy tại: http://localhost:' + PORT);
-  getLocalIps().forEach(ip => console.log('   Wi-Fi: http://' + ip + ':' + PORT));
-} else {
-  console.log('[2/2] ⏳ Đang kích hoạt đường truyền Internet 4G (Cloudflare Tunnel)...');
-  console.log('      (Đang kết nối qua: ' + cfPath + ')\n');
+  // Step 2: Locate & Launch Cloudflare Tunnel
+  const cfPath = findCloudflared();
+  if (!cfPath) {
+    console.error('\n❌ KHÔNG TÌM THẤY CLOUDFLARED!');
+    console.error('Vui lòng đảm bảo file "cloudflared.exe" tồn tại.');
+    console.log('\n[INFO] Máy chủ nội bộ vẫn đang chạy tại: http://localhost:' + PORT);
+    getLocalIps().forEach(ip => console.log('   Wi-Fi: http://' + ip + ':' + PORT));
+    return;
+  }
+
+  console.log('\n[2/2] ⏳ Đang kích hoạt đường truyền Internet 4G (Cloudflare Tunnel)...');
+
+  // Clean up any orphan old tunnel process before opening a new one
+  try {
+    execSync('taskkill /F /IM cloudflared.exe', { stdio: 'ignore' });
+  } catch (_) {}
 
   const tunnelProcess = spawn(cfPath, ['tunnel', '--url', `http://localhost:${PORT}`], {
     cwd: ROOT_DIR,
@@ -139,15 +199,15 @@ if (!cfPath) {
   tunnelProcess.stdout.on('data', handleTunnelOutput);
   tunnelProcess.stderr.on('data', handleTunnelOutput);
 
-  tunnelProcess.on('exit', (code) => {
+  tunnelProcess.on('exit', () => {
     console.log(`[Cloudflare Tunnel] Đã ngắt kết nối.`);
   });
 
   // Handle Clean Shutdown
   function cleanup() {
-    console.log('\n\n[Đang tắt] Đang đóng máy chủ và ngắt kết nối 4G an toàn...');
-    try { tunnelProcess.kill('SIGINT'); } catch (_) {}
-    try { serverProcess.kill('SIGINT'); } catch (_) {}
+    console.log('\n\n[Đang tắt] Đang đóng kết nối 4G và dọn dẹp...');
+    try { if (tunnelProcess) tunnelProcess.kill('SIGINT'); } catch (_) {}
+    try { if (serverProcess) serverProcess.kill('SIGINT'); } catch (_) {}
     setTimeout(() => process.exit(0), 500);
   }
 
@@ -155,3 +215,7 @@ if (!cfPath) {
   process.on('SIGTERM', cleanup);
   process.on('exit', cleanup);
 }
+
+main().catch(err => {
+  console.error('Lỗi khởi động:', err);
+});
