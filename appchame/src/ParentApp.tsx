@@ -100,6 +100,13 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     });
   }, []);
 
+  // Reset banner dismissal when SOS is deactivated
+  useEffect(() => {
+    if (!activeSOS) {
+      setIsSosBannerDismissed(false);
+    }
+  }, [activeSOS]);
+
   // Sync with Cloud for active parent and children (deferred 300ms to free up launch thread)
   useEffect(() => {
     const parentId = getActiveParentId();
@@ -120,18 +127,19 @@ export const ParentApp: React.FC<ParentAppProps> = ({
       }, 300);
     }
 
-    // Auto re-sync and request fresh data when app resumes or gains focus
+    // Auto re-sync and request fresh data when app resumes or gains focus (throttled to at most once every 30s)
+    let lastFocusSync = 0;
     const handleFocus = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastFocusSync < 30000) return;
+      lastFocusSync = now;
+
       if (parentId) {
         const childrenToSync = state.children && state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
         if (childrenToSync.length > 0) {
           requestLatestDataFromAllChildren(parentId, childrenToSync);
         }
-        syncAllChildrenFromCloud(parentId).then((cloudChildren) => {
-          if (cloudChildren && cloudChildren.length > 0) {
-            requestLatestDataFromAllChildren(parentId, cloudChildren);
-          }
-        });
       }
     };
     window.addEventListener('focus', handleFocus);

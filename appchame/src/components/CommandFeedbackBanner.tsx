@@ -1,28 +1,31 @@
 import React, { useEffect } from 'react';
-import { CheckCircle2, Loader2, AlertTriangle, Radio, X, Smartphone, Check } from 'lucide-react';
-import { useAppState } from '@shared/store';
+import { CheckCircle2, Loader2, AlertTriangle, X, Check } from 'lucide-react';
+import { useAppState, isSilentRemoteCommand } from '@shared/store';
 
 export const CommandFeedbackBanner: React.FC = () => {
   const { state, clearLastCommandAck } = useAppState();
   const ack = state.lastCommandAck;
 
-  // Auto-dismiss executed notification after 8 seconds
+  // Auto-dismiss notification on ALL statuses:
+  // received: 2.5s, executed: 3s, timeout: 4s, pending: 6s
   useEffect(() => {
-    if (ack && ack.status === 'executed') {
-      const timer = setTimeout(() => {
-        clearLastCommandAck();
-      }, 8000);
-      return () => clearTimeout(timer);
-    }
-  }, [ack, clearLastCommandAck]);
+    if (!ack) return;
+    const dismissTimes: Record<string, number> = {
+      received: 2500,
+      executed: 3000,
+      timeout: 4000,
+      pending: 6000,
+    };
+    const duration = dismissTimes[ack.status] || 3000;
+    const timer = setTimeout(() => {
+      clearLastCommandAck();
+    }, duration);
+    return () => clearTimeout(timer);
+  }, [ack?.id, ack?.status, clearLastCommandAck]);
 
   if (!ack) return null;
-
-  const timeStr = ack.executedAt
-    ? new Date(ack.executedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : ack.sentAt
-    ? new Date(ack.sentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : '';
+  // Completely silent for background sync / heartbeat / tracking commands
+  if (isSilentRemoteCommand(ack.command, ack.commandTitle)) return null;
 
   const isPending = ack.status === 'pending';
   const isReceived = ack.status === 'received';
@@ -36,107 +39,74 @@ export const CommandFeedbackBanner: React.FC = () => {
     : 'Con';
 
   return (
-    <div
+    <aside
       role="status"
       aria-live="polite"
-      className="fixed top-14 inset-x-3 sm:inset-x-auto sm:right-4 sm:max-w-md z-50 pointer-events-auto transition-all animate-in slide-in-from-top-3 duration-300 select-none shadow-2xl"
+      className="fixed bottom-24 inset-x-4 sm:inset-x-auto sm:right-6 sm:max-w-sm z-50 pointer-events-auto transition-all animate-in slide-in-from-bottom-4 fade-in duration-300 select-none"
     >
       <div
-        className={`rounded-2xl p-4 border-2 shadow-2xl flex flex-col gap-2 transition-colors ${
+        className={`rounded-2xl px-3.5 py-2.5 border backdrop-blur-md shadow-2xl flex items-center justify-between gap-3 transition-all ${
           isExecuted
-            ? 'bg-slate-900 border-emerald-500 text-white'
+            ? 'bg-slate-900/95 border-emerald-500/80 text-white ring-1 ring-emerald-500/30'
             : isReceived
-            ? 'bg-slate-900 border-sky-400 text-white'
+            ? 'bg-slate-900/95 border-sky-400/80 text-white ring-1 ring-sky-400/30'
             : isTimeout
-            ? 'bg-slate-900 border-amber-500 text-white'
-            : 'bg-slate-900 border-indigo-500 text-white'
+            ? 'bg-slate-900/95 border-amber-500/80 text-white ring-1 ring-amber-500/30'
+            : 'bg-slate-900/95 border-indigo-500/80 text-white ring-1 ring-indigo-500/30'
         }`}
       >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            {isPending && (
-              <div className="w-7 h-7 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center animate-spin">
-                <Loader2 size={16} />
-              </div>
-            )}
-            {isReceived && (
-              <div className="w-7 h-7 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center">
-                <Check size={16} />
-              </div>
-            )}
-            {isExecuted && (
-              <div className="w-7 h-7 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center animate-bounce">
-                <CheckCircle2 size={17} />
-              </div>
-            )}
-            {isTimeout && (
-              <div className="w-7 h-7 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                <AlertTriangle size={16} />
-              </div>
-            )}
-
-            <div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={`text-xs font-black uppercase tracking-wider ${
-                    isExecuted
-                      ? 'text-emerald-400'
-                      : isReceived
-                      ? 'text-sky-400'
-                      : isTimeout
-                      ? 'text-amber-400'
-                      : 'text-indigo-400'
-                  }`}
-                >
-                  {isExecuted
-                    ? 'Đã Thực Thi Trên Máy Con'
-                    : isReceived
-                    ? 'Máy Con Đã Nhận Lệnh'
-                    : isTimeout
-                    ? 'Chưa Nhận Được Phản Hồi'
-                    : 'Đang Gửi Lệnh Đến Máy Con...'}
-                </span>
-                {timeStr && <span className="text-[10px] text-slate-400 font-mono">({timeStr})</span>}
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={() => clearLastCommandAck()}
-            className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition active:scale-95 cursor-pointer"
-            aria-label="Đóng thông báo"
-          >
-            <X size={15} />
-          </button>
-        </div>
-
-        {/* Content detail */}
-        <div className="text-xs text-slate-200 leading-snug pl-9">
-          <div className="font-bold text-white mb-1 flex items-center gap-2">
-            <span className="text-amber-300 font-extrabold">{ack.commandTitle}</span>
-            <span className="text-[11px] bg-white/15 text-slate-200 px-2 py-0.5 rounded-full font-medium">
-              {childLabel}
-            </span>
-          </div>
-
-          <p className="text-xs text-slate-300">
-            {isExecuted
-              ? `Điện thoại của ${childLabel} đã nhận tín hiệu và hoàn thành lệnh!`
-              : isReceived
-              ? `Điện thoại của ${childLabel} đã kết nối và đang áp dụng...`
-              : isTimeout
-              ? `Điện thoại của ${childLabel} chưa phản hồi mạng. Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`
-              : `Hệ thống đang truyền lệnh đến máy ${childLabel}. Vui lòng đợi trong giây lát...`}
-          </p>
-
-          {ack.deviceName && (
-            <div className="flex items-center gap-1 text-[11px] text-slate-400 mt-1.5">
-              <Smartphone size={12} className="text-indigo-400" />
-              <span>Thiết bị: <strong className="text-slate-200">{ack.deviceName}</strong></span>
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {isPending && (
+            <div className="w-7 h-7 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 animate-spin">
+              <Loader2 size={16} />
             </div>
           )}
+          {isReceived && (
+            <div className="w-7 h-7 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0">
+              <Check size={16} />
+            </div>
+          )}
+          {isExecuted && (
+            <div className="w-7 h-7 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={17} />
+            </div>
+          )}
+          {isTimeout && (
+            <div className="w-7 h-7 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+              <AlertTriangle size={16} />
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className="text-xs font-bold text-white truncate">
+                {ack.commandTitle}
+              </span>
+              <span className="text-[10px] bg-white/20 text-slate-200 px-1.5 py-0.5 rounded-md shrink-0 font-medium">
+                {childLabel}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-300 truncate">
+              {isExecuted
+                ? 'Đã thực thi trên máy con ✓'
+                : isReceived
+                ? 'Máy con đã nhận lệnh, đang áp dụng...'
+                : isTimeout
+                ? 'Chưa phản hồi (sẽ chạy khi có mạng)'
+                : 'Đang gửi tín hiệu...'}
+            </div>
+          </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => clearLastCommandAck()}
+          className="w-6 h-6 rounded-full hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition shrink-0 cursor-pointer"
+          aria-label="Đóng thông báo"
+        >
+          <X size={14} />
+        </button>
       </div>
-    </div>
+    </aside>
   );
 };

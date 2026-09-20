@@ -276,6 +276,20 @@ export const REMOTE_COMMAND_TITLES: Record<string, string> = {
   live_tracking_stop: 'Tắt định vị tốc độ cao ⏹️',
 };
 
+export const SILENT_COMMANDS = new Set<string>([
+  'sync_request',
+  'ping',
+  'live_tracking_start',
+  'live_tracking_stop',
+]);
+
+export function isSilentRemoteCommand(command?: string, title?: string): boolean {
+  if (!command) return false;
+  if (SILENT_COMMANDS.has(command)) return true;
+  if (title && (title.includes('Đồng bộ') || title.includes('đồng bộ'))) return true;
+  return false;
+}
+
 export const DEFAULT_HARDWARE_SCHEDULES: HardwareScheduleProfile[] = [
   {
     id: 'sched_night',
@@ -606,6 +620,9 @@ function getInitialDemoState(): AppState {
 
           return {
             ...parsed,
+            activeSOS: false,
+            sosDetails: undefined,
+            lastCommandAck: null,
             children: hydratedChildren,
             child: activeChild,
             rewardsCatalog: hydratedRewards,
@@ -656,17 +673,19 @@ function getInitialDemoState(): AppState {
     kidTasks: anSettings.kidTasks,
     kidStars: anSettings.kidStars,
     activeSOS: false,
-    timeRequests: [
-      {
-        id: 'req_1',
-        childName: 'Bé An',
-        appName: 'TikTok',
-        requestedMinutes: 15,
-        reason: 'Con muốn xem video nhảy bài thể dục cô giáo dặn ạ',
-        status: 'pending',
-        time: '11:15',
-      },
-    ],
+    timeRequests: isSimulatorMode()
+      ? [
+          {
+            id: 'req_1',
+            childName: 'Bé An',
+            appName: 'TikTok',
+            requestedMinutes: 15,
+            reason: 'Con muốn xem video nhảy bài thể dục cô giáo dặn ạ',
+            status: 'pending',
+            time: '11:15',
+          },
+        ]
+      : [],
     studyModeOnly: false,
     safeSearch: true,
     theme: 'light',
@@ -987,6 +1006,17 @@ function getSosTimeMs(val: any): number {
   return isNaN(parsed) ? 0 : parsed;
 }
 
+function parseTimeStrToTodayMs(timeStr?: string): number {
+  if (!timeStr || typeof timeStr !== 'string') return 0;
+  const match = timeStr.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const d = new Date();
+  d.setHours(hours, minutes, 0, 0);
+  return d.getTime();
+}
+
 /**
  * Multi-Child Real-Time Cloud Subscription Manager
  * Subscribes to SOS, telemetry, time requests, chat, stars, and settings
@@ -1030,8 +1060,24 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
     // --- (A) SOS Listener for this child ---
     const unsubSOS = subscribeCloudSOS(parentId, childId, (sosData) => {
       if (sosData && sosData.active) {
-        const sosTimeMs = getSosTimeMs(sosData.updatedAt) || Date.now();
-        if (dismissedSosTimestamp && sosTimeMs <= dismissedSosTimestamp) {
+        let sosTimeMs = getSosTimeMs(sosData.updatedAt) || getSosTimeMs((sosData as any).timestamp) || 0;
+        if (!sosTimeMs && sosData.time) {
+          sosTimeMs = parseTimeStrToTodayMs(sosData.time);
+        }
+        const now = Date.now();
+
+        // 1. Ignore if already dismissed by user
+        if (dismissedSosTimestamp && sosTimeMs > 0 && sosTimeMs <= dismissedSosTimestamp) {
+          return;
+        }
+
+        // 2. Ignore stale/zombie SOS older than 10 minutes (600,000 ms)
+        if (sosTimeMs > 0 && (now - sosTimeMs > 10 * 60 * 1000)) {
+          return;
+        }
+
+        // 3. If timestamp is missing and user already dismissed an SOS previously
+        if (sosTimeMs === 0 && dismissedSosTimestamp > 0) {
           return;
         }
         const targetChild = globalState.children.find((k) => k.id === childId) || child;
@@ -1046,7 +1092,6 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
         };
 
         const wasActive = globalState.activeSOS;
-        const now = Date.now();
         const isRecent = now - (lastHandledSosByChild[childId] || 0) < 15000;
 
         const alertId = `sos_${childId}_${Math.floor(now / 15000)}`;
@@ -1458,6 +1503,9 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
     // --- (I) Command Acknowledgment & Feedback Loop Listener ---
     const unsubCommandAck = subscribeCommandAck(parentId, childId, (ack) => {
       if (!ack || !ack.id) return;
+      if (isSilentRemoteCommand(ack.command, (ack as any).commandTitle || REMOTE_COMMAND_TITLES[ack.command])) {
+        return;
+      }
       const cmdTitle = REMOTE_COMMAND_TITLES[ack.command] || ack.command || 'Lệnh từ xa';
       const now = Date.now();
       const timeStr = new Date(ack.executedAt || now).toLocaleTimeString('vi-VN', {
@@ -2195,43 +2243,47 @@ export const useAppState = () => {
     const now = Date.now();
     const cmdId = `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // 1. Mark as pending immediately in state
-    const pendingStatus: CommandAckStatus = {
-      id: cmdId,
-      command,
-      commandTitle: title,
-      status: 'pending',
-      childId,
-      childName,
-      deviceName: targetChild?.devices?.[0]?.deviceName || '',
-      sentAt: now,
-      detail: `Đang truyền tín hiệu đến điện thoại của ${childName}...`,
-    };
+    const isSilent = isSilentRemoteCommand(command, title);
 
-    saveAndNotify({
-      ...state,
-      lastCommandAck: pendingStatus,
-    });
+    if (!isSilent) {
+      // 1. Mark as pending immediately in state for interactive commands
+      const pendingStatus: CommandAckStatus = {
+        id: cmdId,
+        command,
+        commandTitle: title,
+        status: 'pending',
+        childId,
+        childName,
+        deviceName: targetChild?.devices?.[0]?.deviceName || '',
+        sentAt: now,
+        detail: `Đang truyền tín hiệu đến điện thoại của ${childName}...`,
+      };
+
+      saveAndNotify({
+        ...state,
+        lastCommandAck: pendingStatus,
+      });
+
+      // 3. Set a 15-second timeout: If child has not acknowledged after 15s, inform parent
+      setTimeout(() => {
+        applyCloudStateUpdate((prev) => {
+          if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && prev.lastCommandAck.status === 'pending') {
+            return {
+              ...prev,
+              lastCommandAck: {
+                ...prev.lastCommandAck,
+                status: 'timeout',
+                detail: `Điện thoại của ${childName} chưa phản hồi (có thể đang tắt mạng hoặc mất sóng). Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`,
+              },
+            };
+          }
+          return prev;
+        });
+      }, 15000);
+    }
 
     // 2. Dispatch command via Cloud RTDB & local server
     sendRemoteCommandToKid(parentId, childId, command, payload, childName, cmdId).catch(() => {});
-
-    // 3. Set a 15-second timeout: If child has not acknowledged after 15s, inform parent
-    setTimeout(() => {
-      applyCloudStateUpdate((prev) => {
-        if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && prev.lastCommandAck.status === 'pending') {
-          return {
-            ...prev,
-            lastCommandAck: {
-              ...prev.lastCommandAck,
-              status: 'timeout',
-              detail: `Điện thoại của ${childName} chưa phản hồi (có thể đang tắt mạng hoặc mất sóng). Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`,
-            },
-          };
-        }
-        return prev;
-      });
-    }, 15000);
 
     return cmdId;
   };
