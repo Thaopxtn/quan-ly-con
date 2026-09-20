@@ -13,7 +13,7 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
-export const DEFAULT_4G_SERVER_URL = 'https://relatively-motors-wealth-representing.trycloudflare.com';
+export const DEFAULT_4G_SERVER_URL = 'https://closest-surfing-same-childrens.trycloudflare.com';
 const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
 const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
 
@@ -99,15 +99,8 @@ export class ServerApiClient {
 
     const now = Date.now();
     if (!forceRefresh && (now - this.lastCloudResolvedTime < 8000)) {
-      return this.serverUrl;
-    }
-
-    // If current URL is already working and is a remote cloudflared/domain URL, verify health
-    if (!forceRefresh && this.serverUrl && !this.serverUrl.includes('localhost') && !this.serverUrl.includes('127.0.0.1')) {
       const health = await this.checkHealth();
-      if (health.ok) {
-        return this.serverUrl;
-      }
+      if (health.ok) return this.serverUrl;
     }
 
     if (this.isResolvingFromCloud) return this.serverUrl;
@@ -133,13 +126,26 @@ export class ServerApiClient {
             const text = (await res.text()).trim();
             if (text && (text.startsWith('https://') || text.startsWith('http://'))) {
               const cleanUrl = text.split('\n')[0].trim().replace(/\/+$/, '');
-              console.log(`[ServerApiClient] 🌐 Tự động nhận diện URL máy chủ từ GitHub: ${cleanUrl}`);
-              this.setServerUrl(cleanUrl);
-              this.lastCloudResolvedTime = Date.now();
-              return cleanUrl;
+              // Validate that the server is online and returning status === 'ok'
+              const health = await this.checkHealth(cleanUrl);
+              if (health.ok) {
+                console.log(`[ServerApiClient] 🌐 Tự động nhận diện URL máy chủ từ GitHub: ${cleanUrl}`);
+                this.setServerUrl(cleanUrl);
+                this.lastCloudResolvedTime = Date.now();
+                return cleanUrl;
+              }
             }
           }
         } catch (_) {}
+      }
+
+      // Check DEFAULT_4G_SERVER_URL fallback
+      if (DEFAULT_4G_SERVER_URL && DEFAULT_4G_SERVER_URL !== this.serverUrl) {
+        const health = await this.checkHealth(DEFAULT_4G_SERVER_URL);
+        if (health.ok) {
+          this.setServerUrl(DEFAULT_4G_SERVER_URL);
+          return DEFAULT_4G_SERVER_URL;
+        }
       }
     } finally {
       this.isResolvingFromCloud = false;
@@ -160,8 +166,11 @@ export class ServerApiClient {
       });
       clearTimeout(timeout);
       if (res.ok) {
-        const info = await res.json().catch(() => ({}));
-        return { ok: true, latencyMs: Date.now() - start, info };
+        const info = await res.json().catch(() => null);
+        // CRITICAL: Ensure info is valid JSON and info.status === 'ok' (not a Cloudflare error HTML page!)
+        if (info && info.status === 'ok') {
+          return { ok: true, latencyMs: Date.now() - start, info };
+        }
       }
       return { ok: false, latencyMs: Date.now() - start };
     } catch (_) {

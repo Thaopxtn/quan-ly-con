@@ -8,8 +8,6 @@ import {
   Smartphone,
   Sparkles,
   CheckCircle2,
-  Settings,
-  Wifi,
 } from 'lucide-react';
 import {
   getNativeDeviceInfo,
@@ -19,9 +17,7 @@ import { clearRateLimit, submitChildPairingCode } from '@shared/firebase/pairing
 import { ensureKidAnonymousAuth } from '@shared/firebase/firebaseService';
 import { isSimulatorMode } from '@shared/store';
 import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
-import { DEFAULT_4G_SERVER_URL, serverApiClient } from '@shared/services/serverApiClient';
-
-const SERVER_URL_KEY = 'parentpro_server_url';
+import { serverApiClient } from '@shared/services/serverApiClient';
 
 interface KidActivationScreenProps {
   onActivationComplete: (parentName: string, childName: string) => void;
@@ -40,17 +36,6 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
   const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  // Server URL configuration: Default to public 4G Cloudflare URL, never localhost!
-  const [serverUrl, setServerUrl] = useState<string>(() => {
-    const current = serverApiClient.getServerUrl();
-    if (current && !current.includes('localhost') && !current.includes('127.0.0.1')) {
-      return current;
-    }
-    return DEFAULT_4G_SERVER_URL;
-  });
-  const [showServerConfig, setShowServerConfig] = useState(false);
-  const [serverStatus, setServerStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('ok');
-
   const getDeviceModel = () => {
     if (typeof navigator === 'undefined') return 'Android Device';
     const ua = navigator.userAgent;
@@ -61,7 +46,7 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     return 'Android Device';
   };
 
-  // Auto fetch real Android hardware info & resolve 4G server URL
+  // Auto fetch real Android hardware info & resolve 4G server URL in background
   useEffect(() => {
     resetSafeConfetti();
     clearRateLimit(); // Immediately unlock any rate limits
@@ -74,52 +59,9 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       setDeviceName(info.deviceName || `${info.manufacturer} ${info.model}`.trim() || 'Điện thoại của con');
     });
 
-    // Remove any stale localhost from phone localStorage
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem(SERVER_URL_KEY);
-      if (saved && (saved.includes('localhost') || saved.includes('127.0.0.1'))) {
-        localStorage.removeItem(SERVER_URL_KEY);
-      } else if (saved && saved.trim()) {
-        setServerUrl(saved.trim());
-      }
-    }
-
-    // Auto-fetch latest 4G URL from GitHub
-    serverApiClient.resolveServerUrlFromCloud(true).then((cloudUrl) => {
-      const active = cloudUrl || serverApiClient.getServerUrl();
-      if (active && !active.includes('localhost') && !active.includes('127.0.0.1')) {
-        setServerUrl(active);
-        setServerStatus('ok');
-      }
-    });
+    // Auto-fetch latest 4G URL from GitHub in background
+    serverApiClient.resolveServerUrlFromCloud(true).catch(() => {});
   }, []);
-
-  const handleSaveServerUrl = () => {
-    const clean = serverUrl.trim().replace(/\/+$/, '');
-    if (!clean) return;
-    serverApiClient.setServerUrl(clean);
-    setShowServerConfig(false);
-    setPinError(null);
-  };
-
-  const handleTestServer = async () => {
-    const clean = serverUrl.trim().replace(/\/+$/, '');
-    if (!clean) return;
-    setServerStatus('checking');
-    const health = await serverApiClient.checkHealth(clean);
-    setServerStatus(health.ok ? 'ok' : 'error');
-  };
-
-  const handleSyncFromGithub = async () => {
-    setServerStatus('checking');
-    const cloudUrl = await serverApiClient.resolveServerUrlFromCloud(true);
-    if (cloudUrl) {
-      setServerUrl(cloudUrl);
-      setServerStatus('ok');
-    } else {
-      setServerStatus('error');
-    }
-  };
 
   const handleDigitChange = (index: number, val: string) => {
     const cleanVal = val.replace(/\D/g, '').slice(-1);
@@ -168,16 +110,9 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       return;
     }
 
-    // Luôn mở khóa rate limit và đảm bảo dùng URL 4G (không bao giờ dùng localhost)
+    // Luôn mở khóa rate limit và đảm bảo cập nhật URL 4G mới nhất từ GitHub
     clearRateLimit();
-    let urlToUse = (serverUrl.trim() || (typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '') || '').replace(/\/+$/, '');
-    if (!urlToUse || urlToUse.includes('localhost') || urlToUse.includes('127.0.0.1')) {
-      const resolved = await serverApiClient.resolveServerUrlFromCloud();
-      urlToUse = resolved || DEFAULT_4G_SERVER_URL;
-      setServerUrl(urlToUse);
-      setServerStatus('ok');
-    }
-    serverApiClient.setServerUrl(urlToUse);
+    await serverApiClient.resolveServerUrlFromCloud().catch(() => {});
 
     setIsSubmittingParentPin(true);
     setPinError(null);
@@ -334,92 +269,10 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
               )}
             </button>
 
-            {/* Instructions & Server Config */}
-            <div className="bg-slate-50 rounded-2xl p-3 text-left space-y-2 border border-slate-200/70">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-slate-700 font-bold text-xs">
-                  <Smartphone size={14} className="text-blue-600 shrink-0" />
-                  <span>Hướng dẫn nhanh:</span>
-                </div>
-                {/* Toggle server config */}
-                <button
-                  type="button"
-                  onClick={() => { setShowServerConfig(v => !v); setServerStatus('idle'); }}
-                  className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-600 font-bold transition cursor-pointer"
-                >
-                  <Wifi size={12} className={serverUrl && !serverUrl.includes('localhost') ? 'text-emerald-500' : 'text-slate-400'} />
-                  <span>{serverUrl && !serverUrl.includes('localhost') ? 'Máy chủ: Tự động (GitHub)' : 'Cài đặt máy chủ'}</span>
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                Bố/Mẹ mở ứng dụng <strong>ParentPro</strong> ➔ Bấm <strong>"Ghép đôi thiết bị"</strong> để lấy mã 6 số đọc cho con nhập.
-              </p>
-
-              {/* Server URL configuration panel */}
-              {showServerConfig && (
-                <div className="mt-2 pt-2 border-t border-slate-200 space-y-2 animate-in fade-in">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10.5px] text-blue-700 font-bold flex items-center gap-1">
-                      <Wifi size={12} />
-                      Địa chỉ máy chủ (Tự động tải từ GitHub):
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleSyncFromGithub}
-                      disabled={serverStatus === 'checking'}
-                      className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                    >
-                      {serverStatus === 'checking' ? (
-                        <span className="flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Đang tải...</span>
-                      ) : (
-                        <span>🔄 Đồng bộ từ GitHub</span>
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="url"
-                    inputMode="url"
-                    placeholder="https://xxxx.trycloudflare.com"
-                    value={serverUrl}
-                    onChange={(e) => { setServerUrl(e.target.value); setServerStatus('idle'); }}
-                    className="w-full px-3 py-2 text-[11px] font-mono rounded-xl border border-slate-300 bg-white text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleTestServer}
-                      disabled={serverStatus === 'checking' || !serverUrl.trim()}
-                      className="flex-1 py-2 text-[11px] font-bold rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-100 transition cursor-pointer disabled:opacity-50"
-                    >
-                      {serverStatus === 'checking' ? (
-                        <span className="flex items-center justify-center gap-1"><Loader2 size={12} className="animate-spin" /> Kiểm tra...</span>
-                      ) : serverStatus === 'ok' ? (
-                        <span className="text-emerald-600 flex items-center justify-center gap-1"><CheckCircle2 size={12} /> Kết nối tốt!</span>
-                      ) : serverStatus === 'error' ? (
-                        <span className="text-rose-500">❌ Không kết nối được</span>
-                      ) : 'Kiểm tra kết nối'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveServerUrl}
-                      disabled={!serverUrl.trim()}
-                      className="flex-1 py-2 text-[11px] font-black rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition cursor-pointer disabled:opacity-50"
-                    >
-                      Lưu & Áp dụng
-                    </button>
-                  </div>
-                  {serverUrl && (
-                    <p className="text-[10px] text-emerald-600 font-medium text-center">
-                      🟢 Đã kết nối tự động với máy chủ PC qua GitHub!
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <div className="pt-1 border-t border-slate-200/60 flex items-center gap-1.5 text-[10.5px] text-emerald-700 font-bold">
-                <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                <span>Không cần tài khoản Google • Không cần mật khẩu</span>
-              </div>
+            {/* Simple Assurance Footer */}
+            <div className="pt-2 flex items-center justify-center gap-1.5 text-[11px] text-emerald-700 font-bold">
+              <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+              <span>Kết nối trực tiếp 1 chạm • Không cần tài khoản</span>
             </div>
           </div>
         </div>
