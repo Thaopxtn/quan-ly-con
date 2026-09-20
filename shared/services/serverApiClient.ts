@@ -13,7 +13,7 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
-export const DEFAULT_4G_SERVER_URL = 'https://closest-surfing-same-childrens.trycloudflare.com';
+export const DEFAULT_4G_SERVER_URL = 'https://figure-fotos-forecasts-dir.trycloudflare.com';
 const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
 const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
 

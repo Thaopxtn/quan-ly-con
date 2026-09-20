@@ -180,7 +180,7 @@ async function main() {
         execSync('git add server-url.txt server-url.json', { cwd: ROOT_DIR, stdio: 'ignore' });
         const gitStatus = execSync('git status --porcelain server-url.txt server-url.json', { cwd: ROOT_DIR }).toString().trim();
         if (gitStatus) {
-          execSync('git commit -m "chore: auto-sync server url to github [skip ci]"', { cwd: ROOT_DIR, stdio: 'ignore' });
+          execSync('git commit -m "chore: auto-sync server url to github"', { cwd: ROOT_DIR, stdio: 'ignore' });
           execSync('git push origin main', { cwd: ROOT_DIR, stdio: 'ignore' });
           console.log('✅ ĐÃ ĐỒNG BỘ THÀNH CÔNG LÊN GITHUB! Cả 2 App sẽ tự kết nối tự động 100%.\n');
         } else {
@@ -193,34 +193,31 @@ async function main() {
       console.log('================================================================');
       console.log('  🎉 TẤT CẢ ĐÃ SẴN SÀNG! CÁC ĐƯỜNG LINK TRUY CẬP CỦA BẠN:');
       console.log('================================================================');
-      console.log('\n🌟 1. LINK GITHUB CỐ ĐỊNH 24/7 (KHUYÊN DÙNG - KHÔNG BAO GIỜ ĐỔI):');
-      console.log('   👉 Cổng Chính:      https://thaopxtn.github.io/quan-ly-con/');
-      console.log('   👉 App Cha Mẹ:      https://thaopxtn.github.io/quan-ly-con/parent.html');
-      console.log('   👉 App Con Cái:     https://thaopxtn.github.io/quan-ly-con/kid.html');
-      console.log('   (Link GitHub này chạy 24/7 trên máy chủ GitHub, tắt PC vẫn dùng được!)');
+      console.log('\n🌐 1. LINK ỨNG DỤNG CHA MẸ (TRÊN ĐIỆN THOẠI HOẶC MÁY TÍNH):');
+      console.log(`   👉 Trên điện thoại (4G):   ${publicUrl}/parent.html`);
+      console.log(`   👉 Trên máy tính này (PC): http://localhost:${PORT}/parent.html`);
+      console.log(`   📥 Tải App Cha Mẹ (APK):   ${publicUrl}/download/parent`);
 
-      console.log('\n🌐 2. LINK MÁY CHỦ PC QUA 4G (KHI CẦN TRUY CẬP THẲNG VÀO PC):');
-      console.log(`   👉 Cổng Quản Trị & Tải App: ${publicUrl}/portal`);
-      console.log(`   👉 Ứng Dụng Cha Mẹ:         ${publicUrl}/parent.html`);
-      console.log(`   👉 Ứng Dụng Con Cái:        ${publicUrl}/kid.html`);
-      console.log(`   📥 Tải APK Bố Mẹ (Android): ${publicUrl}/download/parent`);
-      console.log(`   📥 Tải APK Con  (Android): ${publicUrl}/download/kid`);
+      console.log('\n📱 2. LINK ỨNG DỤNG CON CÁI:');
+      console.log(`   👉 Mở App Con trên điện thoại và gõ mã 6 số từ Bố Mẹ là xong!`);
+      console.log(`   👉 Hoặc mở trên web:       ${publicUrl}/kid.html`);
+      console.log(`   📥 Tải App Con (APK):      ${publicUrl}/download/kid`);
 
-      console.log('\n📡 3. TRẠM ĐỒNG BỘ GITHUB TỰ ĐỘNG (CÁCH 1 - GẮN CỐ ĐỊNH TRONG APP):');
-      console.log(`   👉 Link Discovery:  https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt`);
-      console.log(`   👉 Trạng thái:      🟢 Tự động nhận diện cho App Cha Mẹ và App Con Cái`);
+      console.log('\n📡 3. TRẠM ĐỒNG BỘ TỰ ĐỘNG QUA GITHUB:');
+      console.log(`   👉 URL máy chủ hiện tại:    ${publicUrl}`);
+      console.log(`   👉 Trạng thái:              🟢 Đã nạp và tự động nhận diện 100%`);
 
       if (localIps.length > 0) {
-        console.log('\n📱 LINK NỘI BỘ WI-FI (KHI Ở NHÀ):');
+        console.log('\n🏠 LINK NỘI BỘ WI-FI TRONG NHÀ:');
         localIps.forEach(ip => {
-          console.log(`   👉 http://${ip}:${PORT}/portal`);
+          console.log(`   👉 http://${ip}:${PORT}/parent.html`);
         });
       }
 
       console.log('\n================================================================');
       console.log('💡 HƯỚNG DẪN DÙNG:');
-      console.log('• Cả 2 ứng dụng sẽ tự động đồng bộ máy chủ qua GitHub mà không cần nhập tay.');
       console.log('• Giữ nguyên cửa sổ này để máy chủ tiếp tục chạy.');
+      console.log('• Trên máy con: Chỉ cần gõ mã 6 số từ máy bố mẹ ➔ Kết nối thành công ngay!');
       console.log('• Nhấn [Ctrl + C] hoặc đóng cửa sổ khi muốn dừng máy chủ.');
       console.log('================================================================\n');
     }
