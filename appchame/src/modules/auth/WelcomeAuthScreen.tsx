@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Heart, User, Mail, Lock, ArrowRight, Sparkles } from 'lucide-react';
+import { ShieldCheck, Heart, User, Mail, Lock, ArrowRight } from 'lucide-react';
 import { loginParentAccount, registerParentAccount, loginWithGoogleParentAccount } from '@shared/firebase/firebaseService';
 import { isSimulatorMode } from '@shared/store';
 
@@ -72,47 +72,6 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({ onLoginSuc
     }
   };
 
-  const handleQuickStart = async () => {
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      const randomId = Math.floor(1000 + Math.random() * 9000);
-      const guestEmail = 'phuhuynh' + randomId + '@parentpro.vn';
-      const res = await registerParentAccount(guestEmail, '123456', 'Phụ Huynh');
-      if (res.success) {
-        onLoginSuccess();
-        return;
-      }
-      // Guaranteed immediate entry fallback
-      const localUid = 'usr_' + Math.random().toString(36).substring(2, 9);
-      const localParent = {
-        uid: localUid,
-        email: guestEmail,
-        displayName: 'Phụ Huynh',
-        role: 'parent' as const,
-        plan: 'free' as const,
-        maxChildren: 5,
-        createdAt: new Date().toISOString(),
-      };
-      localStorage.setItem('parent_pro_active_user', JSON.stringify(localParent));
-      onLoginSuccess();
-    } catch (e) {
-      const localUid = 'usr_' + Math.random().toString(36).substring(2, 9);
-      const localParent = {
-        uid: localUid,
-        email: 'phuhuynh@parentpro.vn',
-        displayName: 'Phụ Huynh',
-        role: 'parent' as const,
-        plan: 'free' as const,
-        maxChildren: 5,
-        createdAt: new Date().toISOString(),
-      };
-      localStorage.setItem('parent_pro_active_user', JSON.stringify(localParent));
-      onLoginSuccess();
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <div className="min-h-screen flex flex-col justify-between p-5 bg-gradient-to-b from-slate-50 via-white to-blue-50/40 select-none overflow-y-auto">
@@ -293,17 +252,6 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({ onLoginSuc
           </form>
         </div>
 
-        <div className="mt-3 text-center">
-          <button
-            type="button"
-            onClick={handleQuickStart}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white/90 hover:bg-white text-slate-700 border border-slate-200/80 rounded-full shadow-xs text-xs font-bold transition-all active:scale-95 cursor-pointer"
-          >
-            <Sparkles size={14} className="text-amber-500 fill-amber-500" />
-            <span>Khởi tạo nhanh (Dùng thử ngay)</span>
-          </button>
-        </div>
       </div>
 
       {/* Footer */}

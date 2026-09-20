@@ -285,7 +285,7 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     }
   }, [isAuthenticated, currentScreen]);
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !getCurrentParentAccount()) {
     return (
       <WelcomeAuthScreen
         onLoginSuccess={() => {

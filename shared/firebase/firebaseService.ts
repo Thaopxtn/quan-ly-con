@@ -149,19 +149,10 @@ export async function registerParentAccount(
       return { success: true, user: parentData };
     }
 
-    // Sandbox / Offline fallback
-    const mockUid = "usr_" + Math.random().toString(36).substring(2, 9);
-    const mockParent: ParentAccount = {
-      uid: mockUid,
-      email,
-      displayName: fullName,
-      role: "parent",
-      plan: "free",
-      maxChildren: 5,
-      createdAt: new Date().toISOString(),
+    return {
+      success: false,
+      error: "Hệ thống xác thực chưa sẵn sàng hoặc Firebase chưa được cấu hình.",
     };
-    localStorage.setItem(LOCAL_PARENT_USER_KEY, JSON.stringify(mockParent));
-    return { success: true, user: mockParent };
   } catch (err: any) {
     console.error("Register error:", err);
     let msg = "Đăng ký không thành công.";
@@ -221,26 +212,10 @@ export async function loginParentAccount(
       return { success: true, user: parentData };
     }
 
-    // Sandbox / Local fallback with unique generated ID
-    const saved = localStorage.getItem(LOCAL_PARENT_USER_KEY);
-    let parentAcc: ParentAccount;
-    if (saved) {
-      parentAcc = JSON.parse(saved);
-      parentAcc.email = email;
-    } else {
-      const generatedUid = "usr_" + Math.random().toString(36).substring(2, 10);
-      parentAcc = {
-        uid: generatedUid,
-        email,
-        displayName: email.split("@")[0] || "Phụ Huynh",
-        role: "parent",
-        plan: "free",
-        maxChildren: 5,
-        createdAt: new Date().toISOString(),
-      };
-    }
-    localStorage.setItem(LOCAL_PARENT_USER_KEY, JSON.stringify(parentAcc));
-    return { success: true, user: parentAcc };
+    return {
+      success: false,
+      error: "Hệ thống xác thực chưa sẵn sàng hoặc Firebase chưa được cấu hình.",
+    };
   } catch (err: any) {
     console.error("Login error:", err);
     let msg = "Đăng nhập thất bại.";
@@ -325,13 +300,13 @@ export async function loginWithGoogleParentAccount(): Promise<{
         ) {
           return {
             success: false,
-            error: `Lỗi xác thực Google: Dự án chưa cập nhật Web Client ID hoặc file google-services.json chưa đồng bộ SHA-1 mới. Vui lòng tải lại google-services.json từ Firebase Console hoặc bấm 'Khởi tạo nhanh' bên dưới để vào ngay!`,
+            error: `Lỗi xác thực Google: Dự án chưa cập nhật Web Client ID hoặc file google-services.json chưa đồng bộ SHA-1 mới. Vui lòng tải lại google-services.json từ Firebase Console hoặc đăng nhập bằng Email/Mật khẩu.`,
           };
         }
 
         return {
           success: false,
-          error: `Đăng nhập Google Native (${msg}). Bạn có thể đăng nhập bằng Email/Mật khẩu hoặc bấm 'Khởi tạo nhanh' bên dưới để vào ngay!`,
+          error: `Đăng nhập Google Native (${msg}). Bạn có thể đăng nhập bằng Email và Mật khẩu.`,
         };
       }
     }
@@ -372,26 +347,17 @@ export async function loginWithGoogleParentAccount(): Promise<{
       return { success: true, user: parentData };
     }
 
-    // Sandbox / Offline fallback for immediate testing
-    const mockUid = "usr_gg_" + Math.random().toString(36).substring(2, 9);
-    const mockParent: ParentAccount = {
-      uid: mockUid,
-      email: "google.user@parentpro.vn",
-      displayName: "Phụ Huynh Google",
-      role: "parent",
-      plan: "free",
-      maxChildren: 5,
-      createdAt: new Date().toISOString(),
+    return {
+      success: false,
+      error: "Hệ thống xác thực chưa sẵn sàng hoặc Firebase chưa được cấu hình.",
     };
-    localStorage.setItem(LOCAL_PARENT_USER_KEY, JSON.stringify(mockParent));
-    return { success: true, user: mockParent };
   } catch (err: any) {
     console.error("Google Auth error:", err);
     let errorMsg = err?.message || "Đăng nhập Google thất bại.";
     if (err?.code === "auth/popup-closed-by-user") {
       errorMsg = "Cửa sổ đăng nhập Google đã được đóng.";
     } else if (err?.code === "auth/popup-blocked" || err?.code === "auth/operation-not-supported-in-this-environment") {
-      errorMsg = "Trình duyệt chặn mở popup Google. Bạn có thể đăng nhập bằng Email hoặc bấm 'Bắt đầu nhanh' bên dưới.";
+      errorMsg = "Trình duyệt chặn mở popup Google. Bạn có thể đăng nhập bằng Email và Mật khẩu.";
     } else if (err?.code === "auth/operation-not-allowed") {
       errorMsg = "Đăng nhập Google chưa được kích hoạt trên Firebase Console. Vui lòng bật Google trong Authentication > Sign-in method.";
     } else if (err?.code === "auth/unauthorized-domain") {

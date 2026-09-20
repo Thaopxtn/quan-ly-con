@@ -262,23 +262,24 @@ export async function createChildPairingCode(
   // Sanitize data 100% against undefined values
   const sanitized = sanitizeForFirebase({ ...session, timestamp: now });
 
-  // Cloud Realtime writes
+  // Cloud Realtime writes (Primary)
   if (isFirebaseConfigured() && rtdb) {
     try {
       await rtdbSet(rtdbRef(rtdb, `pairings/${code}`), sanitized);
       console.log(`[Pairing] ✅ RTDB code ${code} created successfully for ${session.childName}`);
     } catch (e: any) {
-      console.warn("RTDB pairing write error:", e?.code || e?.message);
+      console.error("RTDB pairing write error:", e?.code || e?.message);
     }
   }
+
+  // Non-blocking Firestore write (never await so gRPC never hangs when Firestore API is disabled)
   if (isFirebaseConfigured() && db) {
-    try {
-      await setDoc(doc(db, "pairings", code), sanitized);
-      console.log(`[Pairing] ✅ Firestore code ${code} created successfully for ${session.childName}`);
-    } catch (e: any) {
-      console.warn("Firestore pairing write error:", e?.code || e?.message);
-    }
+    setDoc(doc(db, "pairings", code), sanitized).catch((e: any) => {
+      console.warn("Firestore pairing write skipped:", e?.code || e?.message);
+    });
   }
+
+  parentProEventBus.emit("PAIRING_SESSION_CREATED", session, "parent");
 
   return session;
 }
@@ -323,11 +324,14 @@ export async function connectParentWithKidCode(
     }
   }
 
-  // 4. Fallback to Firestore
+  // 4. Fallback to Firestore (with 1s timeout to prevent gRPC hangs when Firestore API is disabled)
   if (!session && isFirebaseConfigured() && db) {
     try {
-      const snap = await getDoc(doc(db, "pairings", cleanCode));
-      if (snap.exists()) {
+      const snap: any = await Promise.race([
+        getDoc(doc(db, "pairings", cleanCode)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
+      ]);
+      if (snap && typeof snap.exists === "function" && snap.exists()) {
         session = snap.data() as PairingSession;
       }
     } catch (e) {
@@ -499,8 +503,13 @@ export async function submitChildPairingCode(
 
   if (!session && isFirebaseConfigured() && db) {
     try {
-      const snap = await getDoc(doc(db, "pairings", cleanCode));
-      if (snap.exists()) session = snap.data() as PairingSession;
+      const snap: any = await Promise.race([
+        getDoc(doc(db, "pairings", cleanCode)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
+      ]);
+      if (snap && typeof snap.exists === "function" && snap.exists()) {
+        session = snap.data() as PairingSession;
+      }
     } catch (e) {
       console.warn("Firestore fetch pairing error:", e);
     }

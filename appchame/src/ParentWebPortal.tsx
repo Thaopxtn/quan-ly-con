@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ParentApp, ScreenId } from './ParentApp';
+import { WelcomeAuthScreen } from './modules/auth/WelcomeAuthScreen';
 import { useAppState, getActiveParentId } from '@shared/store';
 import { getCurrentParentAccount, logoutParentAccount } from '@shared/firebase/firebaseService';
 import { haptics } from '@shared/utils/haptics';
@@ -104,6 +105,19 @@ export const ParentWebPortal: React.FC = () => {
     { id: 'ai', label: 'Trợ lý AI Phụ Huynh', icon: Sparkles },
     { id: 'settings', label: 'Cài đặt & Tiết kiệm pin', icon: Settings },
   ];
+
+  // Mandatory Parent Account Login Gate: Must be logged in to view web portal
+  if (!currentParent) {
+    return (
+      <div className="w-full min-h-screen bg-slate-50 flex flex-col">
+        <WelcomeAuthScreen
+          onLoginSuccess={() => {
+            window.location.reload();
+          }}
+        />
+      </div>
+    );
+  }
 
   // Mobile layout (< 1024px): Seamlessly render full-screen ParentApp
   if (!isDesktop) {

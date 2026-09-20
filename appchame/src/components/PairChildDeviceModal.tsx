@@ -99,12 +99,16 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
 
   // ─── Generate PIN for Child Device ──────────────────────────────────────────
   const handleGeneratePin = async () => {
+    if (!currentParent?.uid) {
+      setGeneratePinError("Bạn cần đăng nhập tài khoản Phụ Huynh trước khi tạo mã kết nối cho thiết bị con.");
+      return;
+    }
     setIsGeneratingPin(true);
     setCopiedPin(false);
     setGeneratePinError(null);
     try {
-      const parentId = currentParent?.uid || getActiveParentId();
-      const parentName = currentParent?.displayName || "Bố/Mẹ";
+      const parentId = currentParent.uid;
+      const parentName = currentParent.displayName || "Bố/Mẹ";
 
       let finalChildId = selectedChildId;
       let finalChildName = selectedChildObj?.name || newChildName.trim() || "Bé yêu";
@@ -653,7 +657,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
                       </p>
                       <div className="pt-1 border-t border-slate-100 flex items-center gap-1.5 text-[10.5px] text-emerald-700 font-bold">
                         <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                        <span>Không cần tài khoản Google • Không cần mật khẩu</span>
+                        <span>Mã kết nối an toàn • Tự động gắn kết với tài khoản Phụ huynh</span>
                       </div>
                     </div>
 
