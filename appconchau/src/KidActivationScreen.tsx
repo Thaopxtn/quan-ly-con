@@ -8,6 +8,8 @@ import {
   Smartphone,
   Sparkles,
   CheckCircle2,
+  Settings,
+  Wifi,
 } from 'lucide-react';
 import {
   getNativeDeviceInfo,
@@ -17,6 +19,9 @@ import { submitChildPairingCode } from '@shared/firebase/pairingService';
 import { ensureKidAnonymousAuth } from '@shared/firebase/firebaseService';
 import { isSimulatorMode } from '@shared/store';
 import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
+import { serverApiClient } from '@shared/services/serverApiClient';
+
+const SERVER_URL_KEY = 'parentpro_server_url';
 
 interface KidActivationScreenProps {
   onActivationComplete: (parentName: string, childName: string) => void;
@@ -34,6 +39,11 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
   const [isSubmittingParentPin, setIsSubmittingParentPin] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
   const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+
+  // Server URL configuration (for 4G connection via Cloudflare Tunnel)
+  const [serverUrl, setServerUrl] = useState<string>('');
+  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [serverStatus, setServerStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
 
   const getDeviceModel = () => {
     if (typeof navigator === 'undefined') return 'Android Device';
@@ -55,7 +65,29 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       setDeviceInfo(info);
       setDeviceName(info.deviceName || `${info.manufacturer} ${info.model}`.trim() || 'Điện thoại của con');
     });
+
+    // Load saved server URL
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '';
+    if (saved && saved.trim()) {
+      setServerUrl(saved.trim());
+    }
   }, []);
+
+  const handleSaveServerUrl = () => {
+    const clean = serverUrl.trim().replace(/\/+$/, '');
+    if (!clean) return;
+    serverApiClient.setServerUrl(clean);
+    setShowServerConfig(false);
+    setPinError(null);
+  };
+
+  const handleTestServer = async () => {
+    const clean = serverUrl.trim().replace(/\/+$/, '');
+    if (!clean) return;
+    setServerStatus('checking');
+    const health = await serverApiClient.checkHealth(clean);
+    setServerStatus(health.ok ? 'ok' : 'error');
+  };
 
   const handleDigitChange = (index: number, val: string) => {
     const cleanVal = val.replace(/\D/g, '').slice(-1);
@@ -101,6 +133,18 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     const code = (codeToSubmit || parentPinDigits.join('')).trim();
     if (code.length !== 6) {
       setPinError('Vui lòng nhập đủ 6 chữ số mã kết nối hiển thị trên máy Bố Mẹ.');
+      return;
+    }
+
+    // Apply server URL before connecting if user has configured it
+    const savedUrl = typeof localStorage !== 'undefined' ? localStorage.getItem(SERVER_URL_KEY) : '';
+    const urlToUse = (serverUrl.trim() || savedUrl || '').replace(/\/+$/, '');
+    if (urlToUse) {
+      serverApiClient.setServerUrl(urlToUse);
+    } else {
+      // No server URL configured — prompt user to enter it
+      setShowServerConfig(true);
+      setPinError('Vui lòng nhập địa chỉ máy chủ (URL từ Bố/Mẹ) để kết nối.');
       return;
     }
 
@@ -259,15 +303,74 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
               )}
             </button>
 
-            {/* Instructions & Guarantees */}
-            <div className="bg-slate-50 rounded-2xl p-3 text-left space-y-1.5 border border-slate-200/70">
-              <div className="flex items-center gap-1.5 text-slate-700 font-bold text-xs">
-                <Smartphone size={14} className="text-blue-600 shrink-0" />
-                <span>Hướng dẫn nhanh:</span>
+            {/* Instructions & Server Config */}
+            <div className="bg-slate-50 rounded-2xl p-3 text-left space-y-2 border border-slate-200/70">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-slate-700 font-bold text-xs">
+                  <Smartphone size={14} className="text-blue-600 shrink-0" />
+                  <span>Hướng dẫn nhanh:</span>
+                </div>
+                {/* Toggle server config */}
+                <button
+                  type="button"
+                  onClick={() => { setShowServerConfig(v => !v); setServerStatus('idle'); }}
+                  className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-600 font-bold transition cursor-pointer"
+                >
+                  <Settings size={12} />
+                  <span>Cài đặt máy chủ</span>
+                </button>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 Bố/Mẹ mở ứng dụng <strong>ParentPro</strong> ➔ Bấm <strong>"Ghép đôi thiết bị"</strong> để lấy mã 6 số đọc cho con nhập.
               </p>
+
+              {/* Server URL configuration panel */}
+              {showServerConfig && (
+                <div className="mt-2 pt-2 border-t border-slate-200 space-y-2 animate-in fade-in">
+                  <p className="text-[10.5px] text-blue-700 font-bold flex items-center gap-1">
+                    <Wifi size={12} />
+                    Nhập địa chỉ máy chủ (URL Cloudflare Tunnel từ Bố/Mẹ):
+                  </p>
+                  <input
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://xxxx.trycloudflare.com"
+                    value={serverUrl}
+                    onChange={(e) => { setServerUrl(e.target.value); setServerStatus('idle'); }}
+                    className="w-full px-3 py-2 text-[11px] font-mono rounded-xl border border-slate-300 bg-white text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestServer}
+                      disabled={serverStatus === 'checking' || !serverUrl.trim()}
+                      className="flex-1 py-2 text-[11px] font-bold rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-100 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {serverStatus === 'checking' ? (
+                        <span className="flex items-center justify-center gap-1"><Loader2 size={12} className="animate-spin" /> Kiểm tra...</span>
+                      ) : serverStatus === 'ok' ? (
+                        <span className="text-emerald-600 flex items-center justify-center gap-1"><CheckCircle2 size={12} /> Kết nối được!</span>
+                      ) : serverStatus === 'error' ? (
+                        <span className="text-rose-500">❌ Không kết nối được</span>
+                      ) : 'Kiểm tra kết nối'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveServerUrl}
+                      disabled={!serverUrl.trim()}
+                      className="flex-1 py-2 text-[11px] font-black rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition cursor-pointer disabled:opacity-50"
+                    >
+                      Lưu & Áp dụng
+                    </button>
+                  </div>
+                  {serverUrl && (
+                    <p className="text-[10px] text-slate-400 text-center">
+                      Chỉ cần nhập 1 lần. Máy sẽ nhớ tự động lần sau.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="pt-1 border-t border-slate-200/60 flex items-center gap-1.5 text-[10.5px] text-emerald-700 font-bold">
                 <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
                 <span>Không cần tài khoản Google • Không cần mật khẩu</span>
