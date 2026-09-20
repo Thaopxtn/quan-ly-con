@@ -107,21 +107,30 @@ export const ParentApp: React.FC<ParentAppProps> = ({
     if (parentId) {
       timer = setTimeout(() => {
         syncWithCloudForChild(parentId, selectedChildId);
-        syncAllChildrenFromCloud(parentId);
-        // Automatically broadcast sync command to all paired child devices
-        if (state.children && state.children.length > 0) {
-          requestLatestDataFromAllChildren(parentId, state.children);
+        const childrenToSync = state.children && state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+        if (childrenToSync.length > 0) {
+          requestLatestDataFromAllChildren(parentId, childrenToSync);
         }
+        syncAllChildrenFromCloud(parentId).then((cloudChildren) => {
+          if (cloudChildren && cloudChildren.length > 0) {
+            requestLatestDataFromAllChildren(parentId, cloudChildren);
+          }
+        });
       }, 300);
     }
 
     // Auto re-sync and request fresh data when app resumes or gains focus
     const handleFocus = () => {
       if (parentId) {
-        syncAllChildrenFromCloud(parentId);
-        if (state.children && state.children.length > 0) {
-          requestLatestDataFromAllChildren(parentId, state.children);
+        const childrenToSync = state.children && state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+        if (childrenToSync.length > 0) {
+          requestLatestDataFromAllChildren(parentId, childrenToSync);
         }
+        syncAllChildrenFromCloud(parentId).then((cloudChildren) => {
+          if (cloudChildren && cloudChildren.length > 0) {
+            requestLatestDataFromAllChildren(parentId, cloudChildren);
+          }
+        });
       }
     };
     window.addEventListener('focus', handleFocus);

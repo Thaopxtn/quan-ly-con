@@ -3110,6 +3110,14 @@ export const useAppState = () => {
     if (status === 'approved') {
       const extraMinutes = pendingReq?.requestedMinutes || 15;
       extendChildTimeNow(extraMinutes, targetChildId);
+    } else {
+      dispatchRemoteCommand('broadcast_msg', {
+        id: `rej_${Date.now()}`,
+        title: 'Yêu cầu thêm giờ',
+        message: `Bố mẹ chưa duyệt thêm giờ lúc này. Con hãy nghỉ ngơi hoặc hoàn thành bài tập nhé!`,
+        sticker: '⏳',
+        speakTTS: false,
+      }, targetChildId, 'Từ chối xin thêm giờ ⏱️');
     }
     const updated = state.timeRequests.map((r) => (r.id === reqId ? { ...r, status } : r));
     saveAndNotify({ ...state, timeRequests: updated });

@@ -93,6 +93,7 @@ import {
   autoDiscoverMatchingChild,
   logChildRoutePointToCloud,
   triggerCloudSOS,
+  subscribeCloudSOS,
   subscribeCloudChatMessages,
   sendCloudChatMessage,
   syncChildSettingsToCloud,
@@ -227,6 +228,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     sendKidResponseToParent,
     updateAppRule,
     setTrackingCollectionConfig,
+    cancelSOS,
   } = useAppState();
 
   const [pairedInfo, setPairedInfo] = useState<KidPairedInfo | null>(() => getKidDevicePairedInfo());
@@ -1441,6 +1443,28 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
     return () => unsubLive();
   }, [activeParentId, targetChildId]);
+
+  // Real-time Database SOS State Listener on Kid Device
+  // When Parent resolves/cancels SOS from Parent app, automatically dismiss SOS alarm on Kid device!
+  useEffect(() => {
+    if (!activeParentId || !targetChildId) return;
+
+    const unsubSos = subscribeCloudSOS(
+      activeParentId,
+      targetChildId,
+      (sosData) => {
+        if (!sosData || sosData.active === false) {
+          if (activeSOS) {
+            cancelSOS(targetChildId);
+            showToast('✅ Bố mẹ đã xác nhận an toàn và tắt báo động SOS!');
+          }
+        }
+      },
+      childRef.current?.name
+    );
+
+    return () => unsubSos();
+  }, [activeParentId, targetChildId, activeSOS, cancelSOS]);
 
   // Background Real-time Chat Listener on Kid Device
   // Receives parent messages even when FamilyChatModal is closed,
