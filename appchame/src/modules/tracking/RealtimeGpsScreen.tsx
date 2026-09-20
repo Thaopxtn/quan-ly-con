@@ -67,12 +67,16 @@ function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: numbe
 export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, onNavigate }) => {
   const { state, buzzKidPhone, switchActiveChildDevice, switchChild, setTrackingCollectionConfig } = useAppState();
   const { children, selectedChildId, child, safeZones, childSettings } = state;
+  const safeChildren = useMemo(() => (Array.isArray(children) ? children : []), [children]);
+  const safeSafeZones = useMemo(() => (Array.isArray(safeZones) ? safeZones : []), [safeZones]);
 
   // View mode: 'all' (track all children together) or 'single' (focused tracking)
-  const [viewMode, setViewMode] = useState<'all' | 'single'>(children.length > 1 ? 'all' : 'single');
+  const [viewMode, setViewMode] = useState<'all' | 'single'>(safeChildren.length > 1 ? 'all' : 'single');
   // Layout in 'all' mode: 'panorama' (1 map + list) or 'multimap' (grid of live maps)
   const [allLayoutMode, setAllLayoutMode] = useState<'panorama' | 'multimap'>('panorama');
-  const [focusedChildId, setFocusedChildId] = useState<string>(selectedChildId || children[0]?.id || 'child_1');
+  const [focusedChildId, setFocusedChildId] = useState<string>(
+    selectedChildId || safeChildren[0]?.id || child?.id || 'child_1'
+  );
   const [expandedChildMapId, setExpandedChildMapId] = useState<string | null>(null);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -90,7 +94,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
   // Manage Live Tracking activation on mount / target child change
   useEffect(() => {
     const parentId = getActiveParentId();
-    const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+    const targetChildIds = viewMode === 'all' ? safeChildren.map((c) => c.id) : [focusedChildId];
 
     // Check bandwidth upload frequency first
     const uploadsLastHour = getTelemetryUploadCountLastHour();
@@ -106,17 +110,17 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     setIsLiveActive(true);
 
     targetChildIds.forEach((cid) => {
-      const c = children.find((ch) => ch.id === cid);
+      const c = safeChildren.find((ch) => ch.id === cid);
       startLiveTracking(parentId, cid, 5, c?.name).catch(() => {});
     });
 
     return () => {
       targetChildIds.forEach((cid) => {
-        const c = children.find((ch) => ch.id === cid);
+        const c = safeChildren.find((ch) => ch.id === cid);
         stopLiveTracking(parentId, cid, c?.name).catch(() => {});
       });
     };
-  }, [viewMode, focusedChildId, children]);
+  }, [viewMode, focusedChildId, safeChildren]);
 
   // Live countdown timer & 15-minute continuous bandwidth guard
   useEffect(() => {
@@ -126,9 +130,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         if (now >= liveExpiresAt) {
           setIsLiveActive(false);
           const parentId = getActiveParentId();
-          const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+          const targetChildIds = viewMode === 'all' ? safeChildren.map((c) => c.id) : [focusedChildId];
           targetChildIds.forEach((cid) => {
-            const c = children.find((ch) => ch.id === cid);
+            const c = safeChildren.find((ch) => ch.id === cid);
             stopLiveTracking(parentId, cid, c?.name).catch(() => {});
           });
         } else {
@@ -139,9 +143,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
             setShowQuotaWarning(true);
             setQuotaWarningReason('Chế độ xem vị trí trực tiếp đã chạy liên tục hơn 15 phút.');
             const parentId = getActiveParentId();
-            const targetChildIds = viewMode === 'all' ? children.map((c) => c.id) : [focusedChildId];
+            const targetChildIds = viewMode === 'all' ? safeChildren.map((c) => c.id) : [focusedChildId];
             targetChildIds.forEach((cid) => {
-              const c = children.find((ch) => ch.id === cid);
+              const c = safeChildren.find((ch) => ch.id === cid);
               stopLiveTracking(parentId, cid, c?.name).catch(() => {});
             });
           }
@@ -203,7 +207,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     const parentId = getActiveParentId();
     const unsubs: Array<() => void> = [];
 
-    children.forEach((c) => {
+    safeChildren.forEach((c) => {
       const unsub = subscribeChildTelemetryFromCloud(parentId, c.id, (telemetry) => {
         if (telemetry) {
           setTelemetryMap((prev) => ({
@@ -221,7 +225,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         try { u(); } catch (_) {}
       });
     };
-  }, [children]);
+  }, [safeChildren]);
 
   // Periodic ticker for seconds ago
   useEffect(() => {
@@ -233,28 +237,32 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
 
   // Compute live enhanced data for every child
   const enrichedChildren: EnrichedChildProfile[] = useMemo(() => {
-    return children.map((c) => {
+    return safeChildren.map((c) => {
       const tel = telemetryMap[c.id];
-      const lat = tel?.lat ?? c.lat;
-      const lng = tel?.lng ?? c.lng;
-      const battery = tel?.battery ?? c.battery;
-      const speed = tel?.speed ?? c.speed;
-      const address = tel?.currentAddress ?? c.currentAddress;
-      const isScreenOn = tel?.isScreenOn ?? c.isScreenOn;
-      const screenState = tel?.screenState ?? c.screenState;
-      const appStatus = tel?.appStatus ?? c.appStatus;
-      const syncMode = tel?.syncMode ?? c.syncMode;
+      const lat = typeof tel?.lat === 'number' && Number.isFinite(tel.lat)
+        ? tel.lat
+        : (typeof c?.lat === 'number' && Number.isFinite(c.lat) ? c.lat : 21.028511);
+      const lng = typeof tel?.lng === 'number' && Number.isFinite(tel.lng)
+        ? tel.lng
+        : (typeof c?.lng === 'number' && Number.isFinite(c.lng) ? c.lng : 105.854444);
+      const battery = tel?.battery ?? c?.battery ?? 100;
+      const speed = tel?.speed ?? c?.speed ?? 0;
+      const address = tel?.currentAddress || c?.currentAddress || 'Đang cập nhật vị trí...';
+      const isScreenOn = tel?.isScreenOn ?? c?.isScreenOn ?? true;
+      const screenState = tel?.screenState || c?.screenState || 'active';
+      const appStatus = tel?.appStatus || c?.appStatus || 'active_in_app';
+      const syncMode = tel?.syncMode || c?.syncMode || 'realtime';
 
       // Geofence check
       let inZoneName: string | null = null;
       let nearestZoneName: string | null = null;
       let minDistance = Infinity;
 
-      if (Array.isArray(safeZones) && safeZones.length > 0) {
-        safeZones.forEach((z) => {
-          if (!z.isActive) return;
+      if (safeSafeZones.length > 0) {
+        safeSafeZones.forEach((z) => {
+          if (!z.isActive || typeof z.lat !== 'number' || typeof z.lng !== 'number') return;
           const dist = getDistanceMeters(lat, lng, z.lat, z.lng);
-          if (dist <= z.radius && !inZoneName) {
+          if (dist <= (z.radius || 300) && !inZoneName) {
             inZoneName = z.name;
           }
           if (dist < minDistance) {
@@ -267,12 +275,18 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
       const hasValidNearestZone = Boolean(
         nearestZoneName && Number.isFinite(minDistance) && minDistance < 500000
       );
-      const formattedDistance = minDistance >= 1000
-        ? `${(minDistance / 1000).toFixed(1)}km`
-        : `${Math.round(minDistance)}m`;
+      const formattedDistance = Number.isFinite(minDistance)
+        ? minDistance >= 1000
+          ? `${(minDistance / 1000).toFixed(1)}km`
+          : `${Math.round(minDistance)}m`
+        : '';
 
       return {
         ...c,
+        id: c.id,
+        name: c.name || 'Con',
+        avatar: c.avatar || '👦',
+        grade: c.grade || 'Học sinh',
         lat,
         lng,
         battery,
@@ -288,16 +302,39 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         formattedDistance,
       };
     });
-  }, [children, telemetryMap, safeZones]);
+  }, [safeChildren, telemetryMap, safeSafeZones]);
 
   // Fallback enriched child if enrichedChildren is empty
   const fallbackChild: EnrichedChildProfile = {
-    ...child,
-    address: child.currentAddress,
+    id: child?.id || 'child_default',
+    name: child?.name || 'Bé',
+    avatar: child?.avatar || '👦',
+    age: child?.age ?? 10,
+    grade: child?.grade || 'Lớp 5',
+    school: child?.school || 'Trường Tiểu học',
+    phone: child?.phone || '0987654321',
+    lat: typeof child?.lat === 'number' && Number.isFinite(child.lat) ? child.lat : 21.028511,
+    lng: typeof child?.lng === 'number' && Number.isFinite(child.lng) ? child.lng : 105.854444,
+    battery: child?.battery ?? 100,
+    speed: child?.speed ?? 0,
+    currentAddress: child?.currentAddress || 'Hà Nội, Việt Nam',
+    address: child?.currentAddress || 'Hà Nội, Việt Nam',
+    lastUpdated: child?.lastUpdated || new Date().toISOString(),
+    isScreenOn: child?.isScreenOn ?? true,
+    screenState: child?.screenState || 'active',
+    appStatus: child?.appStatus || 'active_in_app',
+    syncMode: child?.syncMode || 'realtime',
+    status: child?.status || 'online',
     inZoneName: null,
     nearestZoneName: null,
     hasValidNearestZone: false,
     formattedDistance: '',
+    devices: child?.devices || [],
+    birthYear: child?.birthYear,
+    gender: child?.gender,
+    activeDeviceId: child?.activeDeviceId,
+    activeOpenedApp: child?.activeOpenedApp,
+    screenTimeUsedMinutes: child?.screenTimeUsedMinutes,
   };
 
   // Active child for single mode
@@ -306,13 +343,13 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     enrichedChildren[0] ||
     fallbackChild;
 
-  const currentChildSettings = childSettings[currentChild.id];
+  const currentChildSettings = childSettings ? childSettings[currentChild.id] : undefined;
   const isCurrentGpsDisabled =
     currentChildSettings?.trackingConfig?.enableGpsTracking === false ||
     currentChildSettings?.trackingConfig?.isMasterTrackingEnabled === false;
 
   // Multi-device tracking for current child
-  const childDevices: ChildDeviceInfo[] = currentChild.devices && currentChild.devices.length > 0
+  const childDevices: ChildDeviceInfo[] = (currentChild.devices && currentChild.devices.length > 0)
     ? currentChild.devices
     : [
         {
@@ -336,17 +373,25 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     return childDevices.find((d) => d.deviceId === selectedDeviceId || d.id === selectedDeviceId) || childDevices[0];
   }, [childDevices, selectedDeviceId]);
 
-  const activeDeviceLat = activeDevice?.lat || activeDevice?.telemetry?.lat || currentChild.lat;
-  const activeDeviceLng = activeDevice?.lng || activeDevice?.telemetry?.lng || currentChild.lng;
+  const activeDeviceLat = typeof activeDevice?.lat === 'number' && Number.isFinite(activeDevice.lat)
+    ? activeDevice.lat
+    : (typeof activeDevice?.telemetry?.lat === 'number' && Number.isFinite(activeDevice.telemetry.lat)
+      ? activeDevice.telemetry.lat
+      : currentChild.lat);
+  const activeDeviceLng = typeof activeDevice?.lng === 'number' && Number.isFinite(activeDevice.lng)
+    ? activeDevice.lng
+    : (typeof activeDevice?.telemetry?.lng === 'number' && Number.isFinite(activeDevice.telemetry.lng)
+      ? activeDevice.telemetry.lng
+      : currentChild.lng);
   const activeDeviceBattery = activeDevice?.battery ?? activeDevice?.telemetry?.battery ?? currentChild.battery;
   const activeDeviceAddress = activeDevice?.currentAddress || activeDevice?.telemetry?.currentAddress || currentChild.address;
   const activeDeviceSpeed = activeDevice?.speed ?? activeDevice?.telemetry?.speed ?? currentChild.speed;
 
   // Centroid & zoom calculation for All Children overview
   const { centroidLat, centroidLng, familyZoom } = useMemo(() => {
-    const validCoords = enrichedChildren.filter((c) => c.lat && c.lng);
+    const validCoords = enrichedChildren.filter((c) => typeof c.lat === 'number' && Number.isFinite(c.lat) && typeof c.lng === 'number' && Number.isFinite(c.lng));
     if (validCoords.length === 0) {
-      return { centroidLat: 10.762622, centroidLng: 106.682245, familyZoom: 14 };
+      return { centroidLat: 21.028511, centroidLng: 105.854444, familyZoom: 14 };
     }
 
     const avgLat = validCoords.reduce((sum, c) => sum + c.lat, 0) / validCoords.length;
@@ -375,7 +420,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     setSecondsAgo(0);
     try {
       const parentId = getActiveParentId();
-      children.forEach((c) => {
+      safeChildren.forEach((c) => {
         sendRemoteCommandToKid(parentId, c.id, 'ping', undefined, c.name).catch(() => {});
       });
     } catch (e) {
@@ -568,7 +613,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
       )}
 
       {/* Child Switcher Navigation Strip (All Children vs Specific Child) */}
-      {children.length > 1 && (
+      {safeChildren.length > 1 && (
         <div className="bg-white px-3 py-2 border-b border-slate-100 flex items-center space-x-2 overflow-x-auto select-none scrollbar-none shadow-2xs">
           <button
             type="button"
@@ -583,10 +628,10 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
             }`}
           >
             <Users size={14} />
-            <span>Tất cả các con ({children.length} bé)</span>
+            <span>Tất cả các con ({safeChildren.length} bé)</span>
           </button>
 
-          {children.map((c) => {
+          {safeChildren.map((c) => {
             const isSelected = viewMode === 'single' && focusedChildId === c.id;
             return (
               <button
@@ -648,7 +693,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                   }}
                   topControl={renderLiveTrackingFloatingWidget()}
                   childName="Tất cả các con"
-                  childAddress={`Đang hiển thị vị trí của ${children.length} bé trong khu vực`}
+                  childAddress={`Đang hiển thị vị trí của ${safeChildren.length} bé trong khu vực`}
                   className="w-full h-[400px] min-h-[350px]"
                 />
               </div>
@@ -700,8 +745,8 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                               </span>
                             </div>
                             <div className="mt-0.5">
-                              {childSettings[kid.id]?.trackingConfig?.enableGpsTracking === false ||
-                              childSettings[kid.id]?.trackingConfig?.isMasterTrackingEnabled === false ? (
+                              {childSettings?.[kid.id]?.trackingConfig?.enableGpsTracking === false ||
+                              childSettings?.[kid.id]?.trackingConfig?.isMasterTrackingEnabled === false ? (
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                   <span className="text-[10.5px] text-amber-600 font-bold flex items-center gap-1">
                                     <AlertTriangle size={12} className="shrink-0 text-amber-500" />
@@ -794,7 +839,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                             {kid.address}
                           </p>
                           <span className="text-[9px] font-mono text-slate-400 mt-0.5 block">
-                            Tọa độ: {kid.lat.toFixed(4)}, {kid.lng.toFixed(4)}
+                            Tọa độ: {typeof kid?.lat === 'number' && Number.isFinite(kid.lat) ? kid.lat.toFixed(4) : '21.0285'}, {typeof kid?.lng === 'number' && Number.isFinite(kid.lng) ? kid.lng.toFixed(4) : '105.8544'}
                           </span>
                         </div>
                       </div>
@@ -837,7 +882,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                         </button>
 
                         <a
-                          href={`https://www.google.com/maps/dir/?api=1&destination=${kid.lat},${kid.lng}`}
+                          href={`https://www.google.com/maps/dir/?api=1&destination=${Number.isFinite(kid.lat) ? kid.lat : 21.028511},${Number.isFinite(kid.lng) ? kid.lng : 105.854444}`}
                           target="_blank"
                           rel="noreferrer"
                           className="py-2 px-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl flex flex-col items-center justify-center transition active:scale-95 text-center font-bold"
@@ -942,7 +987,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                   {/* Action row */}
                   <div className="p-3 pt-1 flex items-center justify-between gap-2">
                     <div className="text-[10px] text-slate-500 font-mono">
-                      GPS: {kid.lat.toFixed(4)}, {kid.lng.toFixed(4)}
+                      GPS: {typeof kid?.lat === 'number' && Number.isFinite(kid.lat) ? kid.lat.toFixed(4) : '21.0285'}, {typeof kid?.lng === 'number' && Number.isFinite(kid.lng) ? kid.lng.toFixed(4) : '105.8544'}
                     </div>
                     <div className="flex items-center space-x-2">
                       <button
@@ -955,7 +1000,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                       </button>
 
                       <a
-                        href={`https://www.google.com/maps/dir/?api=1&destination=${kid.lat},${kid.lng}`}
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${Number.isFinite(kid.lat) ? kid.lat : 21.028511},${Number.isFinite(kid.lng) ? kid.lng : 105.854444}`}
                         target="_blank"
                         rel="noreferrer"
                         className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 active:scale-95 transition"
@@ -976,7 +1021,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         /* ========================================================= */
         <div className="flex-1 flex flex-col">
           {/* Back to All Children Banner */}
-          {children.length > 1 && (
+          {safeChildren.length > 1 && (
             <div className="bg-blue-600 bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-white flex items-center justify-between shadow-xs">
               <span className="text-xs font-bold flex items-center gap-1.5">
                 <Users size={14} />
@@ -1195,7 +1240,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
               </button>
 
               <a
-                href={`https://www.google.com/maps/dir/?api=1&destination=${currentChild.lat},${currentChild.lng}`}
+                href={`https://www.google.com/maps/dir/?api=1&destination=${Number.isFinite(currentChild?.lat) ? currentChild.lat : 21.028511},${Number.isFinite(currentChild?.lng) ? currentChild.lng : 105.854444}`}
                 target="_blank"
                 rel="noreferrer"
                 className="py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center justify-center space-x-1.5 transition shadow-xs shadow-blue-500/20 active:scale-95 text-center font-bold text-xs"

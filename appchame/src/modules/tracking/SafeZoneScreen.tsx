@@ -43,7 +43,20 @@ const PRESET_ICONS = [
 export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
   const { state, toggleSafeZone, addSafeZone, updateSafeZone, deleteSafeZone } = useAppState();
   const { safeZones, children, selectedChildId, child } = state;
-  const currentChild = children?.find((c) => c.id === selectedChildId) || child;
+  const safeSafeZones = Array.isArray(safeZones) ? safeZones : [];
+  const currentChild =
+    (Array.isArray(children) ? children.find((c) => c.id === selectedChildId) : undefined) ||
+    child || {
+      id: 'child_default',
+      name: 'Bé',
+      avatar: '👦',
+      lat: 21.028511,
+      lng: 105.854444,
+      currentAddress: 'Hà Nội, Việt Nam',
+      battery: 100,
+      speed: 0,
+      phone: '0987654321',
+    };
 
   // Modal State (Add or Edit)
   const [showModal, setShowModal] = useState(false);
@@ -54,8 +67,12 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
   const [selectedIcon, setSelectedIcon] = useState('school');
   const [notifyOnEnter, setNotifyOnEnter] = useState(true);
   const [notifyOnExit, setNotifyOnExit] = useState(true);
-  const [zoneLat, setZoneLat] = useState(currentChild.lat);
-  const [zoneLng, setZoneLng] = useState(currentChild.lng);
+  const [zoneLat, setZoneLat] = useState(
+    typeof currentChild?.lat === 'number' && Number.isFinite(currentChild.lat) ? currentChild.lat : 21.028511
+  );
+  const [zoneLng, setZoneLng] = useState(
+    typeof currentChild?.lng === 'number' && Number.isFinite(currentChild.lng) ? currentChild.lng : 105.854444
+  );
 
   // Simulation test state
   const [showSimModal, setShowSimModal] = useState(false);
@@ -82,13 +99,13 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
   const openAddModal = () => {
     setEditingZoneId(null);
     setZoneName('');
-    setZoneAddress(currentChild.currentAddress || 'Vị trí hiện tại của con');
+    setZoneAddress(currentChild?.currentAddress || 'Vị trí hiện tại của con');
     setZoneRadius(300);
     setSelectedIcon('school');
     setNotifyOnEnter(true);
     setNotifyOnExit(true);
-    setZoneLat(currentChild.lat);
-    setZoneLng(currentChild.lng);
+    setZoneLat(typeof currentChild?.lat === 'number' && Number.isFinite(currentChild.lat) ? currentChild.lat : 21.028511);
+    setZoneLng(typeof currentChild?.lng === 'number' && Number.isFinite(currentChild.lng) ? currentChild.lng : 105.854444);
     setShowModal(true);
   };
 
@@ -106,9 +123,9 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
   };
 
   const handleUseCurrentChildLocation = () => {
-    setZoneLat(currentChild.lat);
-    setZoneLng(currentChild.lng);
-    setZoneAddress(currentChild.currentAddress || 'Vị trí hiện tại của con');
+    setZoneLat(typeof currentChild?.lat === 'number' && Number.isFinite(currentChild.lat) ? currentChild.lat : 21.028511);
+    setZoneLng(typeof currentChild?.lng === 'number' && Number.isFinite(currentChild.lng) ? currentChild.lng : 105.854444);
+    setZoneAddress(currentChild?.currentAddress || 'Vị trí hiện tại của con');
   };
 
   const handleSaveZone = () => {
@@ -200,13 +217,13 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
       {/* Geofence Map View */}
       <div className="p-3">
         <InteractiveMap
-          safeZones={safeZones}
-          centerLat={currentChild.lat}
-          centerLng={currentChild.lng}
-          childAddress={currentChild.currentAddress}
-          childName={currentChild.name}
-          childAvatar={currentChild.avatar}
-          battery={currentChild.battery}
+          safeZones={safeSafeZones}
+          centerLat={currentChild?.lat ?? 21.028511}
+          centerLng={currentChild?.lng ?? 105.854444}
+          childAddress={currentChild?.currentAddress || 'Hà Nội, Việt Nam'}
+          childName={currentChild?.name || 'Bé'}
+          childAvatar={currentChild?.avatar}
+          battery={currentChild?.battery ?? 100}
           previewZone={previewZoneData}
           className="h-60"
         />
@@ -220,12 +237,12 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
             <span>Danh sách vùng an toàn</span>
           </h3>
           <span className="text-[11px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full">
-            {safeZones.filter((z) => z.isActive).length}/{safeZones.length} Đang kích hoạt
+            {safeSafeZones.filter((z) => z.isActive).length}/{safeSafeZones.length} Đang kích hoạt
           </span>
         </div>
 
         <div className="space-y-2.5">
-          {safeZones.map((zone) => (
+          {safeSafeZones.map((zone) => (
             <div
               key={zone.id}
               className={`bg-white rounded-2xl p-3.5 border transition ${

@@ -33,7 +33,18 @@ type DayFilter = 'today' | 'yesterday' | 'twoDaysAgo';
 
 export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }) => {
   const { state } = useAppState();
-  const { child: currentChild, selectedChildId, routeHistory } = state;
+  const { child: rawChild, children, selectedChildId, routeHistory } = state;
+  const currentChild =
+    (Array.isArray(children) ? children.find((c) => c.id === selectedChildId) : undefined) ||
+    rawChild || {
+      id: 'child_default',
+      name: 'Bé',
+      avatar: '👦',
+      lat: 21.028511,
+      lng: 105.854444,
+      currentAddress: 'Hà Nội, Việt Nam',
+    };
+  const safeRouteHistory = Array.isArray(routeHistory) ? routeHistory : [];
 
   const [selectedDay, setSelectedDay] = useState<DayFilter>('today');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -65,7 +76,7 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
   // Get active route points based on selected day (Real cloud points prioritized for today)
   const activeRoutePoints: RoutePoint[] =
     selectedDay === 'today'
-      ? (cloudRoutePoints.length > 0 ? cloudRoutePoints : (routeHistory.length > 0 ? routeHistory : INITIAL_ROUTE))
+      ? (cloudRoutePoints.length > 0 ? cloudRoutePoints : (safeRouteHistory.length > 0 ? safeRouteHistory : INITIAL_ROUTE))
       : (MOCK_ROUTES_BY_DAY[selectedDay] || INITIAL_ROUTE);
 
   // Playback timer
@@ -234,11 +245,11 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
           playbackProgress={progress}
           activePointIndex={selectedPointIndex}
           onSelectPoint={handleJumpPoint}
-          centerLat={activeRoutePoints[selectedPointIndex]?.lat || currentChild.lat}
-          centerLng={activeRoutePoints[selectedPointIndex]?.lng || currentChild.lng}
-          childAddress={activeRoutePoints[selectedPointIndex]?.address || currentChild.currentAddress}
-          childName={currentChild.name}
-          childAvatar={currentChild.avatar}
+          centerLat={activeRoutePoints[selectedPointIndex]?.lat || currentChild?.lat || 21.028511}
+          centerLng={activeRoutePoints[selectedPointIndex]?.lng || currentChild?.lng || 105.854444}
+          childAddress={activeRoutePoints[selectedPointIndex]?.address || currentChild?.currentAddress || 'Hà Nội, Việt Nam'}
+          childName={currentChild?.name || 'Bé'}
+          childAvatar={currentChild?.avatar}
           className="h-60"
         />
       </div>

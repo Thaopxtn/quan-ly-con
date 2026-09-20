@@ -74,17 +74,26 @@ const TILE_SIZE = 256;
 
 // Web Mercator projection formulas
 function latLngToWorldPixel(lat: number, lng: number, zoom: number) {
-  const scale = TILE_SIZE * Math.pow(2, zoom);
-  const x = ((lng + 180) / 360) * scale;
-  const latClamped = Math.max(-85, Math.min(85, lat));
+  const safeLat = typeof lat === 'number' && Number.isFinite(lat) ? lat : 21.028511;
+  const safeLng = typeof lng === 'number' && Number.isFinite(lng) ? lng : 105.854444;
+  const safeZoom = typeof zoom === 'number' && Number.isFinite(zoom) ? zoom : 16;
+  const scale = TILE_SIZE * Math.pow(2, safeZoom);
+  const x = ((safeLng + 180) / 360) * scale;
+  const latClamped = Math.max(-85, Math.min(85, safeLat));
   const latRad = (latClamped * Math.PI) / 180;
   const mercN = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
   const y = (0.5 - mercN / (2 * Math.PI)) * scale;
-  return { x, y };
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+  };
 }
 
 function metersPerPixel(lat: number, zoom: number) {
-  return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
+  const safeLat = typeof lat === 'number' && Number.isFinite(lat) ? lat : 21.028511;
+  const safeZoom = typeof zoom === 'number' && Number.isFinite(zoom) ? zoom : 16;
+  const res = (156543.03392 * Math.cos((safeLat * Math.PI) / 180)) / Math.pow(2, safeZoom);
+  return Number.isFinite(res) && res > 0 ? res : 1;
 }
 
 export const InteractiveMap: React.FC<InteractiveMapProps> = ({
@@ -114,6 +123,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   activeChildId,
   onSelectChild,
 }) => {
+  const safeSafeZones = useMemo(() => (Array.isArray(safeZones) ? safeZones : []), [safeZones]);
+  const safeRoutePoints = useMemo(() => (Array.isArray(routePoints) ? routePoints : []), [routePoints]);
+  const safeAllChildren = useMemo(() => (Array.isArray(allChildren) ? allChildren : []), [allChildren]);
+
   // Zoom levels: 12 (city), 15 (neighborhood), 16 (street), 18 (building)
   const [zoom, setZoom] = useState<number>(initialZoom || 16);
   const [activeLayer, setActiveLayer] = useState<MapLayer>('street');
@@ -150,26 +163,48 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
   // Coordinates resolution
   const effectiveLat = useMemo(() => {
-    if (previewZone && previewZone.lat) return previewZone.lat;
-    if (!isPlayingRoute && routePoints && routePoints.length > 0 && routePoints[activePointIndex]?.lat) {
-      return routePoints[activePointIndex].lat;
+    if (previewZone && typeof previewZone.lat === 'number' && Number.isFinite(previewZone.lat)) {
+      return previewZone.lat;
     }
-    if (routePoints && routePoints.length > 0 && routePoints[0]?.lat) {
-      return routePoints[0].lat;
+    if (
+      !isPlayingRoute &&
+      safeRoutePoints.length > 0 &&
+      typeof safeRoutePoints[activePointIndex]?.lat === 'number' &&
+      Number.isFinite(safeRoutePoints[activePointIndex].lat)
+    ) {
+      return safeRoutePoints[activePointIndex].lat;
     }
-    return centerLat;
-  }, [previewZone, routePoints, activePointIndex, isPlayingRoute, centerLat]);
+    if (
+      safeRoutePoints.length > 0 &&
+      typeof safeRoutePoints[0]?.lat === 'number' &&
+      Number.isFinite(safeRoutePoints[0].lat)
+    ) {
+      return safeRoutePoints[0].lat;
+    }
+    return typeof centerLat === 'number' && Number.isFinite(centerLat) ? centerLat : 21.028511;
+  }, [previewZone, safeRoutePoints, activePointIndex, isPlayingRoute, centerLat]);
 
   const effectiveLng = useMemo(() => {
-    if (previewZone && previewZone.lng) return previewZone.lng;
-    if (!isPlayingRoute && routePoints && routePoints.length > 0 && routePoints[activePointIndex]?.lng) {
-      return routePoints[activePointIndex].lng;
+    if (previewZone && typeof previewZone.lng === 'number' && Number.isFinite(previewZone.lng)) {
+      return previewZone.lng;
     }
-    if (routePoints && routePoints.length > 0 && routePoints[0]?.lng) {
-      return routePoints[0].lng;
+    if (
+      !isPlayingRoute &&
+      safeRoutePoints.length > 0 &&
+      typeof safeRoutePoints[activePointIndex]?.lng === 'number' &&
+      Number.isFinite(safeRoutePoints[activePointIndex].lng)
+    ) {
+      return safeRoutePoints[activePointIndex].lng;
     }
-    return centerLng;
-  }, [previewZone, routePoints, activePointIndex, isPlayingRoute, centerLng]);
+    if (
+      safeRoutePoints.length > 0 &&
+      typeof safeRoutePoints[0]?.lng === 'number' &&
+      Number.isFinite(safeRoutePoints[0].lng)
+    ) {
+      return safeRoutePoints[0].lng;
+    }
+    return typeof centerLng === 'number' && Number.isFinite(centerLng) ? centerLng : 105.854444;
+  }, [previewZone, safeRoutePoints, activePointIndex, isPlayingRoute, centerLng]);
 
   // Center coordinate in world pixels
   const centerWorld = useMemo(() => {
@@ -183,12 +218,17 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   // Convert any LatLng to screen coordinates
   const latLngToScreen = useCallback(
     (lat: number, lng: number) => {
-      const world = latLngToWorldPixel(lat, lng, zoom);
+      const safeLat = typeof lat === 'number' && Number.isFinite(lat) ? lat : effectiveLat;
+      const safeLng = typeof lng === 'number' && Number.isFinite(lng) ? lng : effectiveLng;
+      const world = latLngToWorldPixel(safeLat, safeLng, zoom);
       const x = screenCenterX + (world.x - centerWorld.x);
       const y = screenCenterY + (world.y - centerWorld.y);
-      return { x, y };
+      return {
+        x: Number.isFinite(x) ? x : 0,
+        y: Number.isFinite(y) ? y : 0,
+      };
     },
-    [zoom, screenCenterX, screenCenterY, centerWorld]
+    [zoom, screenCenterX, screenCenterY, centerWorld, effectiveLat, effectiveLng]
   );
 
   // Tiles grid calculation
@@ -285,14 +325,15 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const mainChildPos = latLngToScreen(effectiveLat, effectiveLng);
 
   const routePolylineSvg = useMemo(() => {
-    if (!routePoints || routePoints.length < 2) return '';
-    return routePoints
+    if (!safeRoutePoints || safeRoutePoints.length < 2) return '';
+    return safeRoutePoints
+      .filter((pt) => typeof pt?.lat === 'number' && Number.isFinite(pt.lat) && typeof pt?.lng === 'number' && Number.isFinite(pt.lng))
       .map((pt, idx) => {
         const p = latLngToScreen(pt.lat, pt.lng);
         return `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
       })
       .join(' ');
-  }, [routePoints, latLngToScreen]);
+  }, [safeRoutePoints, latLngToScreen]);
 
   return (
     <div
@@ -395,10 +436,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         />
 
         {/* Safe Zones Circles */}
-        {safeZones.map((zone) => {
+        {safeSafeZones.map((zone) => {
           if (!zone.isActive && !previewZone) return null;
           const pos = latLngToScreen(zone.lat, zone.lng);
-          const rPx = Math.max(18, zone.radius / mPerPx);
+          const rPx = Math.max(18, (zone.radius || 300) / mPerPx);
           const strokeColor = zone.color || '#10b981';
           return (
             <g key={zone.id}>
@@ -439,7 +480,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
       {/* ─── Layer 3: Interactive Markers (Safe Zone Labels, Child Pins) ─────── */}
       {/* Safe Zone Icon Labels */}
-      {safeZones.map((zone) => {
+      {safeSafeZones.map((zone) => {
         if (!zone.isActive) return null;
         const pos = latLngToScreen(zone.lat, zone.lng);
         return (
@@ -457,9 +498,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       })}
 
       {/* Route Point Markers */}
-      {routePoints &&
-        routePoints.length > 0 &&
-        routePoints.map((pt, idx) => {
+      {safeRoutePoints.length > 0 &&
+        safeRoutePoints.map((pt, idx) => {
           const pos = latLngToScreen(pt.lat, pt.lng);
           const isSelected = idx === activePointIndex;
           return (
@@ -476,7 +516,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                 className={`w-4 h-4 rounded-full flex items-center justify-center shadow-md border-2 border-white ${
                   idx === 0
                     ? 'bg-emerald-500 text-white'
-                    : idx === routePoints.length - 1
+                    : idx === safeRoutePoints.length - 1
                     ? 'bg-rose-500 text-white'
                     : isSelected
                     ? 'bg-blue-600 ring-2 ring-blue-400'
@@ -490,9 +530,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         })}
 
       {/* All Children Pins (When viewing all children) */}
-      {allChildren &&
-        allChildren.length > 1 &&
-        allChildren.map((kid) => {
+      {safeAllChildren.length > 1 &&
+        safeAllChildren.map((kid) => {
           const pos = latLngToScreen(kid.lat, kid.lng);
           const isFocused = activeChildId === kid.id;
           return (
@@ -531,7 +570,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         })}
 
       {/* Main Single Child GPS Pin (When single child or fallback) */}
-      {(!allChildren || allChildren.length <= 1) && (
+      {safeAllChildren.length <= 1 && (
         <div
           className="absolute z-24 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none"
           style={{ left: `${mainChildPos.x}px`, top: `${mainChildPos.y}px` }}
@@ -551,7 +590,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                 />
               ) : (
                 <div className="w-full h-full bg-blue-600 rounded-full flex items-center justify-center text-white font-black text-sm">
-                  {childName.slice(0, 1).toUpperCase()}
+                  {(childName || 'Bé').slice(0, 1).toUpperCase()}
                 </div>
               )}
               {/* Online pulse dot */}
@@ -775,7 +814,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           <div className="flex items-center space-x-1.5 truncate pr-2">
             <MapPin size={13} className="text-rose-500 shrink-0" />
             <span className="font-bold text-slate-900 truncate">
-              {childAddress || `Tọa độ: ${effectiveLat.toFixed(4)}, ${effectiveLng.toFixed(4)}`}
+              {childAddress || `Tọa độ: ${Number.isFinite(effectiveLat) ? effectiveLat.toFixed(4) : '21.0285'}, ${Number.isFinite(effectiveLng) ? effectiveLng.toFixed(4) : '105.8544'}`}
             </span>
           </div>
           <div className="flex items-center space-x-2 shrink-0 text-[10px] font-mono text-slate-400 font-medium">

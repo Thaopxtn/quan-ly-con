@@ -3,6 +3,7 @@ import { MapPin, Shield, History } from 'lucide-react';
 import { RealtimeGpsScreen } from './RealtimeGpsScreen';
 import { SafeZoneScreen } from './SafeZoneScreen';
 import { RouteHistoryScreen } from './RouteHistoryScreen';
+import { ErrorBoundary } from '@shared/components/ErrorBoundary';
 import { haptics } from '@shared/utils/haptics';
 
 export type TrackingTab = 'live' | 'safezone' | 'history';
@@ -72,13 +73,31 @@ export const TrackingHubScreen: React.FC<TrackingHubScreenProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {activeTab === 'live' && (
-          <RealtimeGpsScreen onBack={onBack} onNavigate={handleInternalNavigate} />
+          <ErrorBoundary
+            fallbackTitle="Không thể tải bản đồ trực tiếp"
+            fallbackMessage="Đang kết nối lại với vệ tinh GPS của bé..."
+            onGoHome={onBack}
+          >
+            <RealtimeGpsScreen onBack={onBack} onNavigate={handleInternalNavigate} />
+          </ErrorBoundary>
         )}
         {activeTab === 'safezone' && (
-          <SafeZoneScreen onBack={() => setActiveTab('live')} />
+          <ErrorBoundary
+            fallbackTitle="Không thể tải danh sách vùng an toàn"
+            fallbackMessage="Đang tải lại thông số geofencing..."
+            onGoHome={onBack}
+          >
+            <SafeZoneScreen onBack={() => setActiveTab('live')} />
+          </ErrorBoundary>
         )}
         {activeTab === 'history' && (
-          <RouteHistoryScreen onBack={() => setActiveTab('live')} />
+          <ErrorBoundary
+            fallbackTitle="Không thể tải lịch sử di chuyển"
+            fallbackMessage="Đang tải lại dữ liệu lộ trình của bé..."
+            onGoHome={onBack}
+          >
+            <RouteHistoryScreen onBack={() => setActiveTab('live')} />
+          </ErrorBoundary>
         )}
       </div>
     </div>

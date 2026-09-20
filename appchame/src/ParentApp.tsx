@@ -32,6 +32,7 @@ import { BellRing, FileText } from 'lucide-react';
 import { getCurrentParentAccount, logoutParentAccount } from '@shared/firebase/firebaseService';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
+import { ErrorBoundary } from '@shared/components/ErrorBoundary';
 
 export type ScreenId =
   | 'welcome'
@@ -389,91 +390,103 @@ export const ParentApp: React.FC<ParentAppProps> = ({
 
       {/* Screen Views - Clean Unified Hubs with Code-Splitting */}
       <div className={`flex-1 flex flex-col overflow-y-auto ${isDesktopWeb ? 'pb-6' : 'pb-[max(84px,calc(68px+env(safe-area-inset-bottom)))]'}`}>
-        <Suspense fallback={<ScreenShimmer />}>
-          {(currentScreen === 'welcome' || currentScreen === 'dashboard') && (
-            <DashboardScreen onNavigate={handleNavigate} />
-          )}
+        <ErrorBoundary
+          fallbackTitle="Lỗi hiển thị màn hình"
+          fallbackMessage="Đang xảy ra sự cố hiển thị. Vui lòng bấm Thử lại hoặc Quay về Trang chủ."
+          onGoHome={() => setCurrentScreen('dashboard')}
+        >
+          <Suspense fallback={<ScreenShimmer />}>
+            {(currentScreen === 'welcome' || currentScreen === 'dashboard') && (
+              <DashboardScreen onNavigate={handleNavigate} />
+            )}
 
-          {/* 1. Location & Safety Hub */}
-          {currentScreen === 'tracking' && (
-            <TrackingHubScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              initialTab={trackingTab}
-              onNavigate={handleNavigate}
-            />
-          )}
+            {/* 1. Location & Safety Hub */}
+            {currentScreen === 'tracking' && (
+              <ErrorBoundary
+                fallbackTitle="Không thể tải Bản đồ Vị trí"
+                fallbackMessage="Đang kết nối lại với vệ tinh GPS của bé..."
+                onGoHome={() => setCurrentScreen('dashboard')}
+              >
+                <TrackingHubScreen
+                  onBack={() => setCurrentScreen('dashboard')}
+                  initialTab={trackingTab}
+                  onNavigate={handleNavigate}
+                />
+              </ErrorBoundary>
+            )}
 
-          {/* 2. Screen Time & App Usage Control Hub */}
-          {currentScreen === 'screentime' && (
-            <UsageControlHubScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              initialTab={usageTab}
-              onNavigate={handleNavigate}
-            />
-          )}
+            {/* 2. Screen Time & App Usage Control Hub */}
+            {currentScreen === 'screentime' && (
+              <UsageControlHubScreen
+                onBack={() => setCurrentScreen('dashboard')}
+                initialTab={usageTab}
+                onNavigate={handleNavigate}
+              />
+            )}
 
-          {/* 3. Reports, Learning & Health Hub */}
-          {currentScreen === 'reports' && (
-            <ReportsHubScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              initialTab={reportsTab}
-              onNavigate={handleNavigate}
-            />
-          )}
+            {/* 3. Reports, Learning & Health Hub */}
+            {currentScreen === 'reports' && (
+              <ReportsHubScreen
+                onBack={() => setCurrentScreen('dashboard')}
+                initialTab={reportsTab}
+                onNavigate={handleNavigate}
+              />
+            )}
 
-          {/* 4. Family Members & Smart Devices Hub */}
-          {currentScreen === 'family' && (
-            <FamilyHubScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              initialTab={familyTab}
-              onNavigate={handleNavigate}
-            />
-          )}
+            {/* 4. Family Members & Smart Devices Hub */}
+            {currentScreen === 'family' && (
+              <FamilyHubScreen
+                onBack={() => setCurrentScreen('dashboard')}
+                initialTab={familyTab}
+                onNavigate={handleNavigate}
+              />
+            )}
 
-          {/* 5. Alerts & Notifications */}
-          {currentScreen === 'alerts' && (
-            <AlertsScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              onNavigate={handleNavigate}
-            />
-          )}
+            {/* 5. Alerts & Notifications */}
+            {currentScreen === 'alerts' && (
+              <AlertsScreen
+                onBack={() => setCurrentScreen('dashboard')}
+                onNavigate={handleNavigate}
+              />
+            )}
 
-          {/* 6. Remote Control & Live Inspection Center */}
-          {currentScreen === 'remote' && (
-            <RemoteControlCenter onBack={() => setCurrentScreen('dashboard')} />
-          )}
+            {/* 6. Remote Control & Live Inspection Center */}
+            {currentScreen === 'remote' && (
+              <RemoteControlCenter onBack={() => setCurrentScreen('dashboard')} />
+            )}
 
-          {/* 6.5. PC Remote Control & Management */}
-          {currentScreen === 'pc_control' && (
-            <PcControlCenter onBack={() => setCurrentScreen('dashboard')} />
-          )}
+            {/* 6.5. PC Remote Control & Management */}
+            {currentScreen === 'pc_control' && (
+              <PcControlCenter onBack={() => setCurrentScreen('dashboard')} />
+            )}
 
-          {/* 7. AI Assistant */}
-          {currentScreen === 'ai' && (
-            <AIAssistantScreen onBack={() => setCurrentScreen('dashboard')} />
-          )}
+            {/* 7. AI Assistant */}
+            {currentScreen === 'ai' && (
+              <AIAssistantScreen onBack={() => setCurrentScreen('dashboard')} />
+            )}
 
-          {/* 8. Emergency SOS Screen */}
-          {currentScreen === 'sos' && (
-            <SosMonitorScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              onNavigate={handleNavigate}
-            />
-          )}
+            {/* 8. Emergency SOS Screen */}
+            {currentScreen === 'sos' && (
+              <SosMonitorScreen
+                onBack={() => setCurrentScreen('dashboard')}
+                onNavigate={handleNavigate}
+              />
+            )}
 
-          {/* 9. Premium Membership */}
-          {currentScreen === 'premium' && (
-            <PremiumScreen onBack={() => setCurrentScreen('dashboard')} />
-          )}
+            {/* 9. Premium Membership */}
+            {currentScreen === 'premium' && (
+              <PremiumScreen onBack={() => setCurrentScreen('dashboard')} />
+            )}
 
-          {/* 10. Settings & Account */}
-          {currentScreen === 'settings' && (
-            <SettingsScreen
-              onBack={() => setCurrentScreen('dashboard')}
-              onLogout={handleLogout}
-            />
-          )}
-        </Suspense>
+            {/* 10. Settings & Account */}
+            {currentScreen === 'settings' && (
+              <SettingsScreen
+                onBack={() => setCurrentScreen('dashboard')}
+                onLogout={handleLogout}
+              />
+            )}
+          </Suspense>
+        </ErrorBoundary>
       </div>
 
       {/* Bottom Navigation (Visible on main screens for mobile, hidden on desktop web) */}
