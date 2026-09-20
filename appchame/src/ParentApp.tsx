@@ -23,6 +23,7 @@ const RemoteControlCenter = lazy(() => import('./modules/remote/RemoteControlCen
 const PcControlCenter = lazy(() => import('./modules/pc/PcControlCenter').then((m) => ({ default: m.PcControlCenter })));
 
 import { SystemNotificationBanner } from './components/SystemNotificationBanner';
+import { CommandFeedbackBanner } from './components/CommandFeedbackBanner';
 import { notifyEmergencyAlert, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
 import { OfflineBanner } from '@shared/components/OfflineBanner';
@@ -335,6 +336,9 @@ export const ParentApp: React.FC<ParentAppProps> = ({
           />
         );
       })()}
+
+      {/* Real-time Command Feedback Banner */}
+      <CommandFeedbackBanner />
 
       {/* Pending Child Time Request Banner */}
       {pendingTimeRequest && currentScreen !== 'sos' && (

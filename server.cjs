@@ -372,14 +372,15 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // 4. Remote Command API (Parent sends lock/buzz -> stored on PC -> sent to Kid/PC Agent)
+  // 4. Remote Command API (Parent sends lock/buzz -> stored on PC -> sent to Kid)
   if (pathname === '/api/command') {
     if (req.method === 'POST') {
       const data = await parseJsonBody(req);
-      if (data && data.childId && data.type) {
-        data.id = 'cmd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-        data.createdAt = new Date().toISOString();
-        data.status = 'pending';
+      if (data && data.childId && (data.type || data.command)) {
+        data.id = data.id || ('cmd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
+        data.type = data.type || data.command;
+        data.createdAt = data.createdAt || new Date().toISOString();
+        data.status = data.status || 'pending';
 
         const commands = readDb('commands');
         commands.unshift(data);
@@ -400,6 +401,43 @@ const server = http.createServer(async (req, res) => {
       const filtered = childId ? commands.filter(c => c.childId === childId) : commands;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ commands: filtered.slice(0, 50) }));
+      return;
+    }
+  }
+
+  // 4.1 Remote Command ACK API (Kid sends execution feedback back to Parent)
+  if (pathname === '/api/command/ack') {
+    if (req.method === 'POST') {
+      const ack = await parseJsonBody(req);
+      const cmdId = ack && (ack.commandId || ack.id);
+      if (cmdId) {
+        const commands = readDb('commands');
+        const targetCmd = commands.find(c => c.id === cmdId);
+        if (targetCmd) {
+          targetCmd.status = ack.status || 'executed';
+          targetCmd.acknowledgedAt = new Date().toISOString();
+          if (ack.deviceName) targetCmd.deviceName = ack.deviceName;
+          if (ack.childName) targetCmd.childName = ack.childName;
+          if (ack.detail) targetCmd.detail = ack.detail;
+          writeDb('commands', commands);
+        }
+        broadcastRealtime('command_ack', {
+          commandId: cmdId,
+          command: ack.command || (targetCmd ? targetCmd.type : ''),
+          status: ack.status || 'executed',
+          childId: ack.childId,
+          childName: ack.childName,
+          deviceName: ack.deviceName,
+          detail: ack.detail || 'Thực thi thành công trên máy con',
+          executedAt: ack.executedAt || Date.now(),
+          timestamp: new Date().toISOString(),
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, ackReceived: true, commandId: cmdId }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing commandId or id' }));
       return;
     }
   }

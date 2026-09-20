@@ -25,7 +25,12 @@ import {
   Compass,
   Activity,
   Maximize2,
-  BookOpen
+  BookOpen,
+  CheckCircle2,
+  Loader2,
+  AlertTriangle,
+  Check,
+  X
 } from "lucide-react";
 import { useAppState } from "@shared/store";
 import { HardwareControlActivity } from "./HardwareControlActivity";
@@ -64,7 +69,7 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
   onBack,
   initialActivity = "hub",
 }) => {
-  const { state, buzzKidPhone, lockChildDeviceNow, unlockChildDeviceNow, extendChildTimeNow } = useAppState();
+  const { state, buzzKidPhone, lockChildDeviceNow, unlockChildDeviceNow, extendChildTimeNow, clearLastCommandAck } = useAppState();
   const targetChildId = state.selectedChildId;
   const child = state.children.find((c) => c.id === targetChildId) || state.children[0] || state.child;
   const settings = state.childSettings[targetChildId] || {
@@ -407,6 +412,108 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
         {toastMsg && (
           <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white text-xs font-bold px-4 py-2 rounded-full shadow-xl border border-slate-700 backdrop-blur-md animate-in fade-in">
             {toastMsg}
+          </div>
+        )}
+
+        {/* Real-Time Command Delivery & Feedback Card */}
+        {state.lastCommandAck && (
+          <div
+            className={`p-3.5 rounded-2xl border transition-all duration-300 shadow-sm ${
+              state.lastCommandAck.status === 'executed'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                : state.lastCommandAck.status === 'received'
+                ? 'bg-sky-50 border-sky-300 text-sky-950'
+                : state.lastCommandAck.status === 'timeout'
+                ? 'bg-amber-50 border-amber-300 text-amber-950'
+                : 'bg-indigo-50 border-indigo-300 text-indigo-950'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2.5">
+                {state.lastCommandAck.status === 'pending' && (
+                  <div className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0 animate-spin mt-0.5">
+                    <Loader2 size={16} />
+                  </div>
+                )}
+                {state.lastCommandAck.status === 'received' && (
+                  <div className="w-7 h-7 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0 mt-0.5">
+                    <Check size={16} />
+                  </div>
+                )}
+                {state.lastCommandAck.status === 'executed' && (
+                  <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 animate-bounce mt-0.5">
+                    <CheckCircle2 size={17} />
+                  </div>
+                )}
+                {state.lastCommandAck.status === 'timeout' && (
+                  <div className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                    <AlertTriangle size={16} />
+                  </div>
+                )}
+
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`text-xs font-black uppercase tracking-wider ${
+                        state.lastCommandAck.status === 'executed'
+                          ? 'text-emerald-700'
+                          : state.lastCommandAck.status === 'received'
+                          ? 'text-sky-700'
+                          : state.lastCommandAck.status === 'timeout'
+                          ? 'text-amber-800'
+                          : 'text-indigo-700'
+                      }`}
+                    >
+                      {state.lastCommandAck.status === 'executed'
+                        ? 'ĐÃ THỰC THI TRÊN MÁY CON'
+                        : state.lastCommandAck.status === 'received'
+                        ? 'MÁY CON ĐÃ NHẬN LỆNH'
+                        : state.lastCommandAck.status === 'timeout'
+                        ? 'CHƯA NHẬN ĐƯỢC PHẢN HỒI'
+                        : 'ĐANG GỬI LỆNH ĐẾN MÁY CON...'}
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/80 shadow-2xs">
+                      {state.lastCommandAck.commandTitle}
+                    </span>
+                  </div>
+
+                  {(() => {
+                    const cName = state.lastCommandAck.childName || 'Con';
+                    const cLabel = cName.startsWith('Bé ') ? cName : `Bé ${cName}`;
+                    return (
+                      <p className="text-[11.5px] text-slate-700 mt-1 leading-snug">
+                        {state.lastCommandAck.status === 'executed'
+                          ? `Thiết bị của ${cLabel} đã nhận tín hiệu và hoàn thành lệnh lúc ${
+                              state.lastCommandAck.executedAt
+                                ? new Date(state.lastCommandAck.executedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                : ''
+                            }!`
+                          : state.lastCommandAck.status === 'received'
+                          ? `Điện thoại của ${cLabel} đã kết nối và đang áp dụng...`
+                          : state.lastCommandAck.status === 'timeout'
+                          ? `Điện thoại của ${cLabel} chưa phản hồi mạng. Lệnh sẽ tự động chạy ngay khi máy con mở 4G/WiFi.`
+                          : `Đang truyền tín hiệu đến máy của ${cLabel}...`}
+                      </p>
+                    );
+                  })()}
+
+                  {state.lastCommandAck.deviceName && (
+                    <p className="text-[10.5px] text-slate-500 mt-1 flex items-center gap-1">
+                      <Smartphone size={11} className="text-slate-400" />
+                      <span>Thiết bị: <strong className="text-slate-700">{state.lastCommandAck.deviceName}</strong></span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <button
+                onClick={() => clearLastCommandAck()}
+                className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                title="Đóng thông báo"
+              >
+                <X size={14} />
+              </button>
+            </div>
           </div>
         )}
 

@@ -91,6 +91,20 @@ export interface RemoteCommandData {
   childName?: string;
 }
 
+export interface CommandAckData {
+  id: string; // commandId
+  command: RemoteCommandType;
+  status: 'received' | 'executed' | 'failed';
+  receivedAt?: number;
+  executedAt?: number;
+  childId: string;
+  childName: string;
+  deviceId?: string;
+  deviceName?: string;
+  detail?: string;
+  error?: string;
+}
+
 export function normalizeChildSlug(name?: string): string {
   if (!name) return "";
   return name
@@ -1057,13 +1071,14 @@ export async function sendRemoteCommandToKid(
   childId: string,
   command: RemoteCommandType,
   payload?: any,
-  childName?: string
-): Promise<void> {
+  childName?: string,
+  customCmdId?: string
+): Promise<string> {
   const { rtdb } = getFirebaseInstance();
-  if (!isFirebaseConfigured() || !childId) return;
+  if (!isFirebaseConfigured() || !childId) return "";
 
   const now = Date.now();
-  const cmdId = `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
+  const cmdId = customCmdId || `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
 
   const cmdData: RemoteCommandData = {
     id: cmdId,
@@ -1103,6 +1118,112 @@ export async function sendRemoteCommandToKid(
       });
     });
   }
+
+  // Dual sync to local PC server if available
+  try {
+    fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: cmdId,
+        type: command,
+        childId,
+        parentId,
+        childName: childName || '',
+        payload: payload || null,
+        timestamp: now,
+      }),
+    }).catch(() => {});
+  } catch (_) {}
+
+  return cmdId;
+}
+
+// 8.1 Kid acknowledges command receipt and execution back to Parent
+export async function sendRemoteCommandAck(
+  parentId: string,
+  childId: string,
+  ack: CommandAckData
+): Promise<void> {
+  const { rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return;
+
+  const now = Date.now();
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  const ackData: CommandAckData = {
+    ...ack,
+    executedAt: ack.executedAt || now,
+    receivedAt: ack.receivedAt || now,
+  };
+
+  debugLogService.log({
+    direction: 'kid->cloud',
+    category: 'command',
+    action: `remote_cmd_ack_${ack.command}_${ack.status}`,
+    status: 'info',
+    summary: `Máy con (${ack.childName || childId}) ${ack.status === 'executed' ? 'đã thực thi thành công' : 'đã nhận'} lệnh [${ack.command}]`,
+    childId,
+    childName: ack.childName,
+    payload: ackData,
+  });
+
+  if (rtdb) {
+    rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/lastAck`), ackData).catch((e) => {
+      console.warn('[sendRemoteCommandAck] RTDB ack error:', e);
+    });
+  }
+
+  // Dual sync ACK to local PC server if reachable
+  try {
+    fetch('/api/command/ack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ackData),
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+// 8.2 Subscribe to Command ACK on Parent Device
+export function subscribeCommandAck(
+  parentId: string,
+  childId: string,
+  onAck: (ack: CommandAckData) => void
+): () => void {
+  const { rtdb } = getFirebaseInstance();
+  if (!isFirebaseConfigured() || !childId) return () => {};
+
+  const syncKey = getPartitionedSyncKey(parentId, childId);
+  let lastHandledAckKey = '';
+
+  if (rtdb) {
+    try {
+      const unsub = rtdbOnValue(
+        rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/lastAck`),
+        (snap) => {
+          if (snap.exists()) {
+            const val = snap.val() as CommandAckData;
+            if (val && val.id && val.status) {
+              const ackKey = `${val.id}_${val.status}_${val.executedAt || val.receivedAt || 0}`;
+              if (ackKey !== lastHandledAckKey) {
+                lastHandledAckKey = ackKey;
+                // Only process fresh acks (within last 3 minutes)
+                const ackAge = Date.now() - (val.executedAt || val.receivedAt || Date.now());
+                if (ackAge < 180000) {
+                  onAck(val);
+                }
+              }
+            }
+          }
+        },
+        () => {}
+      );
+      return () => {
+        try { unsub(); } catch (_) {}
+      };
+    } catch (_) {}
+  }
+
+  return () => {};
 }
 
 // Persistent Handled Commands set across re-subscriptions and re-renders
@@ -1190,8 +1311,8 @@ export function subscribeRemoteCommandsOnKid(
       return;
     }
 
-    // 3. TTL Freshness Check (TTL 60s): Discard any command older than 60 seconds
-    if (now - cmdTimestamp > 60000) {
+    // 3. TTL Freshness Check (TTL 300s / 5 mins): Discard any command older than 5 minutes
+    if (now - cmdTimestamp > 300000) {
       clearRemoteCommand(parentId, childId, childName).catch(() => {});
       return;
     }

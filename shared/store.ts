@@ -90,8 +90,12 @@ import {
   subscribeChildStarsFromCloud,
   subscribeChildTelemetryFromCloud,
   sendRemoteCommandToKid,
+  sendRemoteCommandAck,
+  subscribeCommandAck,
   subscribeRemoteCommandsOnKid,
   clearRemoteCommand,
+  RemoteCommandType,
+  CommandAckData,
   sendCloudTimeRequest,
   subscribeCloudTimeRequests,
   resolveCloudTimeRequest,
@@ -231,7 +235,43 @@ export interface AppState {
   rewardsCatalog: RewardItem[];
   starHistory: StarTransaction[];
   redemptions: RewardRedemption[];
+
+  // Remote Command Delivery & Acknowledgment Tracking
+  lastCommandAck?: CommandAckStatus | null;
 }
+
+export interface CommandAckStatus {
+  id: string;
+  command: string;
+  commandTitle: string;
+  status: 'pending' | 'received' | 'executed' | 'timeout' | 'failed';
+  childId: string;
+  childName: string;
+  deviceName?: string;
+  sentAt: number;
+  executedAt?: number;
+  detail?: string;
+}
+
+export const REMOTE_COMMAND_TITLES: Record<string, string> = {
+  buzz_siren: 'Hú còi tìm máy khẩn cấp 🚨',
+  lock_now: 'Khóa máy tức thì 🔒',
+  unlock_now: 'Mở khóa thiết bị 🔓',
+  extend_time: 'Gia hạn thêm thời gian ⏱️',
+  kiosk_lock: 'Bật chế độ ghim học tập 📌',
+  kiosk_unlock: 'Tắt chế độ ghim học tập 🔓',
+  broadcast_msg: 'Phát thông điệp đè màn hình 📢',
+  clear_broadcast: 'Tắt thông điệp đè ✕',
+  flash_toggle: 'Bật/Tắt đèn Flash ⚡',
+  hardware_control: 'Chỉnh âm lượng / độ sáng 🎛️',
+  open_shared_link: 'Gửi bài học cho con 🎓',
+  close_shared_link: 'Đóng bài học từ xa ✕',
+  update_app_rule: 'Cập nhật phân loại ứng dụng 📲',
+  update_app_limit: 'Cập nhật giới hạn dùng app ⏱️',
+  ping: 'Kiểm tra kết nối tức thì 📡',
+  live_tracking_start: 'Bật định vị tốc độ cao 🛰️',
+  live_tracking_stop: 'Tắt định vị tốc độ cao ⏹️',
+};
 
 export const DEFAULT_HARDWARE_SCHEDULES: HardwareScheduleProfile[] = [
   {
@@ -648,6 +688,7 @@ function getInitialDemoState(): AppState {
     rewardsCatalog: INITIAL_REWARDS_CATALOG,
     starHistory: INITIAL_STAR_HISTORY,
     redemptions: INITIAL_REDEMPTIONS,
+    lastCommandAck: null,
   };
 }
 
@@ -764,6 +805,7 @@ function getInitialRealState(): AppState {
     rewardsCatalog: [],
     starHistory: [],
     redemptions: [],
+    lastCommandAck: null,
   };
 
   if (typeof window !== 'undefined') {
@@ -1409,6 +1451,50 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
       }
     });
     childUnsubs.push(unsubPcTelemetry);
+
+    // --- (I) Command Acknowledgment & Feedback Loop Listener ---
+    const unsubCommandAck = subscribeCommandAck(parentId, childId, (ack) => {
+      if (!ack || !ack.id) return;
+      const cmdTitle = REMOTE_COMMAND_TITLES[ack.command] || ack.command || 'Lệnh từ xa';
+      const now = Date.now();
+      const timeStr = new Date(ack.executedAt || now).toLocaleTimeString('vi-VN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      const targetChild = globalState.children.find((ch) => ch.id === childId) || child;
+      const childDisplayName = ack.childName || targetChild?.name || 'Con';
+
+      applyCloudStateUpdate((prev) => {
+        const prevAck = prev.lastCommandAck;
+        const updatedAck: CommandAckStatus = {
+          id: ack.id,
+          command: ack.command,
+          commandTitle: cmdTitle,
+          status: ack.status,
+          childId: ack.childId || childId,
+          childName: childDisplayName,
+          deviceName: ack.deviceName || prevAck?.deviceName || '',
+          sentAt: prevAck?.id === ack.id ? prevAck.sentAt : (ack.receivedAt || now),
+          executedAt: ack.executedAt || now,
+          detail: ack.detail || (ack.status === 'executed' ? 'Đã thực thi thành công trên máy con' : 'Máy con đã nhận lệnh'),
+        };
+
+        return {
+          ...prev,
+          lastCommandAck: updatedAck,
+        };
+      });
+
+      if (ack.status === 'executed') {
+        showSystemNotification(`✅ MÁY CON ĐÃ THỰC THI LỆNH!`, {
+          body: `Bé ${childDisplayName} đã nhận & thực thi [${cmdTitle}] lúc ${timeStr}!`,
+          soundType: 'info',
+          tag: `ack_${ack.id}`,
+        });
+      }
+    });
+    childUnsubs.push(unsubCommandAck);
 
     activeParentChildUnsubs.set(childId, childUnsubs);
   });
@@ -2964,17 +3050,75 @@ export const useAppState = () => {
     eventBus.publish('TIME_EXTENSION_RESOLVED', { reqId, status, childId: targetChildId, childName }, 'parent');
   };
 
+  const dispatchRemoteCommand = async (
+    command: RemoteCommandType,
+    payload?: any,
+    targetChildId?: string,
+    customTitle?: string
+  ): Promise<string> => {
+    const childId = targetChildId || state.selectedChildId;
+    const parentId = getActiveParentId();
+    const targetChild = state.children.find((c) => c.id === childId) || state.child;
+    const childName = targetChild?.name || 'Con';
+    const title = customTitle || REMOTE_COMMAND_TITLES[command] || command;
+    const now = Date.now();
+    const cmdId = `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // 1. Mark as pending immediately in state
+    const pendingStatus: CommandAckStatus = {
+      id: cmdId,
+      command,
+      commandTitle: title,
+      status: 'pending',
+      childId,
+      childName,
+      deviceName: targetChild?.devices?.[0]?.deviceName || '',
+      sentAt: now,
+      detail: `Đang truyền tín hiệu đến điện thoại của ${childName}...`,
+    };
+
+    saveAndNotify({
+      ...state,
+      lastCommandAck: pendingStatus,
+    });
+
+    // 2. Dispatch command via Cloud RTDB & local server
+    sendRemoteCommandToKid(parentId, childId, command, payload, childName, cmdId).catch(() => {});
+
+    // 3. Set a 15-second timeout: If child has not acknowledged after 15s, inform parent
+    setTimeout(() => {
+      applyCloudStateUpdate((prev) => {
+        if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && prev.lastCommandAck.status === 'pending') {
+          return {
+            ...prev,
+            lastCommandAck: {
+              ...prev.lastCommandAck,
+              status: 'timeout',
+              detail: `Điện thoại của ${childName} chưa phản hồi (có thể đang tắt mạng hoặc mất sóng). Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`,
+            },
+          };
+        }
+        return prev;
+      });
+    }, 15000);
+
+    return cmdId;
+  };
+
+  const clearLastCommandAck = () => {
+    applyCloudStateUpdate((prev) => ({
+      ...prev,
+      lastCommandAck: null,
+    }));
+  };
+
   const buzzKidPhone = (childId?: string) => {
     const targetId = childId || state.selectedChildId;
-    const parentId = getActiveParentId();
-    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
-    sendRemoteCommandToKid(parentId, targetId, 'buzz_siren', undefined, targetChild?.name).catch(() => {});
+    dispatchRemoteCommand('buzz_siren', undefined, targetId, 'Hú còi tìm máy khẩn cấp 🚨');
   };
 
   const lockChildDeviceNow = (childId?: string) => {
     const targetId = childId || state.selectedChildId;
-    const parentId = getActiveParentId();
-    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
     const updatedLock: LockChallengeState = {
       ...currentSettings.lockChallenge,
@@ -2995,18 +3139,14 @@ export const useAppState = () => {
         },
       },
     });
-    if (parentId && targetId) {
-      sendRemoteCommandToKid(parentId, targetId, 'lock_now', {
-        title: 'Thiết bị đang bị khóa từ xa',
-        description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
-      }, targetChild?.name).catch(() => {});
-    }
+    dispatchRemoteCommand('lock_now', {
+      title: 'Thiết bị đang bị khóa từ xa',
+      description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+    }, targetId, 'Khóa máy tức thì 🔒');
   };
 
   const unlockChildDeviceNow = (childId?: string) => {
     const targetId = childId || state.selectedChildId;
-    const parentId = getActiveParentId();
-    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
     const updatedLock: LockChallengeState = {
       ...currentSettings.lockChallenge,
@@ -3025,15 +3165,13 @@ export const useAppState = () => {
         },
       },
     });
-    if (parentId && targetId && !isKidAppMode()) {
-      sendRemoteCommandToKid(parentId, targetId, 'unlock_now', undefined, targetChild?.name).catch(() => {});
+    if (!isKidAppMode()) {
+      dispatchRemoteCommand('unlock_now', undefined, targetId, 'Mở khóa thiết bị 🔓');
     }
   };
 
   const extendChildTimeNow = (minutes: number, childId?: string) => {
     const targetId = childId || state.selectedChildId;
-    const parentId = getActiveParentId();
-    const targetChild = state.children.find((c) => c.id === targetId) || state.child;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
     const currentLimit = currentSettings.screenTimeLimitMinutes || 135;
     const newLimit = minutes === -1 ? Math.max(currentLimit, 1440) : (currentLimit + minutes);
@@ -3055,11 +3193,11 @@ export const useAppState = () => {
         },
       },
     });
-    if (parentId && targetId && !isKidAppMode()) {
+    if (!isKidAppMode()) {
       if (minutes === -1) {
-        sendRemoteCommandToKid(parentId, targetId, 'unlock_now', { minutes: -1 }, targetChild?.name).catch(() => {});
+        dispatchRemoteCommand('unlock_now', { minutes: -1 }, targetId, 'Mở khóa dùng tự do 🔓');
       } else {
-        sendRemoteCommandToKid(parentId, targetId, 'extend_time', { minutes }, targetChild?.name).catch(() => {});
+        dispatchRemoteCommand('extend_time', { minutes }, targetId, `Cộng thêm +${minutes} phút ⏱️`);
       }
     }
   };
@@ -4754,6 +4892,8 @@ export const useAppState = () => {
     unlockChildDeviceNow,
     buzzKidPhone,
     extendChildTimeNow,
+    dispatchRemoteCommand,
+    clearLastCommandAck,
     syncWithCloudForChild,
     syncAllChildrenFromCloud,
     toggleTaskCompleted,

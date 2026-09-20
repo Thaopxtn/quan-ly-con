@@ -81,6 +81,7 @@ import { CompulsoryResponseOverlay } from '../../shared/components/CompulsoryRes
 import {
   uploadChildTelemetryToCloud,
   subscribeRemoteCommandsOnKid,
+  sendRemoteCommandAck,
   clearRemoteCommand,
   flushOfflineTelemetryQueue,
   autoDiscoverMatchingChild,
@@ -1004,6 +1005,21 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const curChild = childRef.current;
       const curPairedInfo = pairedInfoRef.current;
 
+      const cmdId = cmd.id || `cmd_${cmd.timestamp || Date.now()}`;
+
+      // 1. Immediately acknowledge that child phone has received the command
+      sendRemoteCommandAck(activeParentId, targetChildId, {
+        id: cmdId,
+        command: cmd.command,
+        status: 'received',
+        receivedAt: Date.now(),
+        executedAt: Date.now(),
+        childId: targetChildId,
+        childName: curChild?.name || 'Con',
+        deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+        detail: 'Máy con đã nhận lệnh thành công',
+      }).catch(() => {});
+
       switch (cmd.command) {
         case 'buzz_siren':
           wakeUpDevice().catch(() => {});
@@ -1251,6 +1267,19 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         default:
           break;
       }
+
+      // 2. Acknowledge that child device has executed the command successfully
+      sendRemoteCommandAck(activeParentId, targetChildId, {
+        id: cmdId,
+        command: cmd.command,
+        status: 'executed',
+        receivedAt: cmd.timestamp || Date.now(),
+        executedAt: Date.now(),
+        childId: targetChildId,
+        childName: curChild?.name || 'Con',
+        deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+        detail: 'Đã thực thi thành công trên thiết bị con',
+      }).catch(() => {});
 
       clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
     }, childRef.current?.name);
