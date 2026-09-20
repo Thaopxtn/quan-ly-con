@@ -5,6 +5,7 @@ const config: CapacitorConfig = {
   appName: 'ParentPro - Cha Mẹ',
   webDir: 'dist-parent',
   server: {
+    url: 'https://thaopxtn.github.io/quan-ly-con/parent.html',
     androidScheme: 'https',
     cleartext: true,
   },

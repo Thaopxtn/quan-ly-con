@@ -5,6 +5,7 @@ const config: CapacitorConfig = {
   appName: 'KidCare - Con Cái',
   webDir: 'dist-kid',
   server: {
+    url: 'https://thaopxtn.github.io/quan-ly-con/kid.html',
     androidScheme: 'https',
     cleartext: true,
   },
