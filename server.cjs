@@ -106,6 +106,60 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Server Management Portal
+  if (pathname === '/portal' || pathname === '/hub') {
+    const localIps = getLocalIpAddresses();
+    const port = PORT;
+    const ipListHtml = localIps.map(ip => `
+      <div style="background:#f8fafc;padding:12px;border-radius:10px;margin-bottom:8px;font-family:monospace;font-size:13px;border:1px solid #e2e8f0;">
+        <strong>Wi-Fi IP:</strong> http://${ip}:${port}
+      </div>
+    `).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Cổng Quản Trị Máy Chủ - Quản Lý Con</title>
+  <style>
+    body{font-family:system-ui,-apple-system,sans-serif;background:#f1f5f9;margin:0;padding:24px;color:#1e293b}
+    .card{max-width:580px;margin:0 auto;background:#fff;border-radius:20px;padding:28px;box-shadow:0 10px 25px -5px rgba(0,0,0,0.05);border:1px solid #e2e8f0}
+    h1{font-size:22px;margin:0 0 8px;color:#0f172a;display:flex;align-items:center;gap:10px}
+    .badge{display:inline-block;background:#dcfce7;color:#15803d;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
+    .btn{display:flex;align-items:center;justify-content:space-between;background:#2563eb;color:#fff;text-decoration:none;padding:14px 18px;border-radius:14px;font-weight:700;margin-bottom:10px;transition:all .15s}
+    .btn:hover{background:#1d4ed8;transform:translateY(-1px)}
+    .btn-kid{background:#059669}.btn-kid:hover{background:#047857}
+    .btn-apk{background:#f8fafc;color:#0f172a;border:1.5px solid #cbd5e1}.btn-apk:hover{background:#f1f5f9}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🏠 Máy Chủ Quản Lý Con <span class="badge">● Online</span></h1>
+    <p style="color:#64748b;font-size:14px;margin-bottom:20px">Máy tính cá nhân của bạn đang hoạt động như một máy chủ phục vụ ứng dụng cho cả gia đình.</p>
+    
+    <div style="margin-bottom:20px">
+      <a href="/parent.html" class="btn"><span>📱 Mở Ứng Dụng Cha Mẹ (ParentPro)</span> ➔</a>
+      <a href="/kid.html" class="btn btn-kid"><span>🧒 Mở Ứng Dụng Con Cái (KidCare)</span> ➔</a>
+    </div>
+
+    <h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;margin:24px 0 10px">Tải File APK Cài Đặt Android</h3>
+    <div class="grid">
+      <a href="/download/parent" class="btn btn-apk"><span>📥 Tải APK Bố Mẹ</span></a>
+      <a href="/download/kid" class="btn btn-apk"><span>📥 Tải APK Con</span></a>
+    </div>
+
+    <h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;margin:24px 0 10px">Địa Chỉ Truy Cập Nội Mạng (Cùng Wi-Fi)</h3>
+    ${ipListHtml}
+  </div>
+</body>
+</html>`;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(html);
+    return;
+  }
+
   // APK Downloads
   if (pathname === '/download/parent' || pathname === '/download/parent.apk') {
     const apkPath = path.join(ROOT_DIR, 'ParentPro-AppChaMe.apk');
