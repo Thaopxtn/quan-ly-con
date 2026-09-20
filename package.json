@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "serve": "node server.cjs",
+    "start:all": "node start-all.cjs",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build",
     "preview": "vite preview",
