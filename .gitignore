@@ -50,3 +50,7 @@ desktop.ini
 cloudflared*.exe
 *.exe
 
+# Local PC Database (Private GPS & Chat storage)
+data/
+
+
