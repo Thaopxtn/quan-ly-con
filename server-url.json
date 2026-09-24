@@ -1,4 +1,11 @@
 {
-  "url": "https://brunswick-amplifier-meetings-airport.trycloudflare.com",
-  "updatedAt": 1790224714005
+  "url": "https://conclusion-live-interior-fred.trycloudflare.com",
+  "localIps": [
+    "http://192.168.1.4:3000",
+    "http://192.168.235.1:3000",
+    "http://192.168.18.1:3000",
+    "http://172.26.0.1:3000"
+  ],
+  "updatedAt": 1790224718390,
+  "dateStr": "2026-09-24T04:38:38.390Z"
 }
