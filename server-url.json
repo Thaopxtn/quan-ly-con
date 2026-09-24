@@ -1,4 +1,11 @@
 {
-  "url": "https://everything-solution-tin-chosen.trycloudflare.com",
-  "updatedAt": 1789934438344
+  "url": "https://pencil-ent-uncle-discussion.trycloudflare.com",
+  "localIps": [
+    "http://192.168.1.4:3000",
+    "http://192.168.235.1:3000",
+    "http://192.168.18.1:3000",
+    "http://172.26.0.1:3000"
+  ],
+  "updatedAt": 1790221459887,
+  "dateStr": "2026-09-24T03:44:19.887Z"
 }
