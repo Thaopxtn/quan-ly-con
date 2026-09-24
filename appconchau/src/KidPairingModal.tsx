@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { submitChildPairingCode, getKidDevicePairedInfo } from "@shared/firebase/pairingService";
 import { fireSafeConfetti, resetSafeConfetti } from "@shared/utils/safeConfetti";
+import { getNativeDeviceInfo, getNativeBatteryInfo } from "./services/nativePermissionsService";
 
 interface KidPairingModalProps {
   onClose: () => void;
@@ -78,9 +79,27 @@ export const KidPairingModal: React.FC<KidPairingModalProps> = ({
     setErrorMsg(null);
 
     try {
+      const [hwInfo, batInfo] = await Promise.all([
+        getNativeDeviceInfo().catch(() => null),
+        getNativeBatteryInfo().catch(() => null),
+      ]);
+      const activeDevId = hwInfo?.hardwareId || ('dev_' + Date.now());
+      const activeDevName = hwInfo?.deviceName || `${hwInfo?.manufacturer || ''} ${hwInfo?.model || ''}`.trim() || 'Thiết bị của con';
+      const realBattery = (batInfo && typeof batInfo.level === 'number' && batInfo.level >= 0) ? batInfo.level : 100;
+
       const res = await submitChildPairingCode(code, {
-        model: "iPhone 13",
-        osVersion: "iOS 17.5",
+        deviceId: activeDevId,
+        hardwareIdType: (hwInfo?.hardwareIdType as any) || 'android_id',
+        deviceName: activeDevName,
+        model: hwInfo?.model || (typeof navigator !== 'undefined' ? navigator.platform : 'Android Device'),
+        manufacturer: hwInfo?.manufacturer || 'Android',
+        androidId: hwInfo?.androidId,
+        serial: hwInfo?.serial,
+        mac: hwInfo?.mac,
+        imei: hwInfo?.imei,
+        phoneNumber: hwInfo?.phoneNumber,
+        osVersion: hwInfo?.osVersion || 'Android',
+        battery: realBattery,
       });
 
       if (res.success && res.session) {

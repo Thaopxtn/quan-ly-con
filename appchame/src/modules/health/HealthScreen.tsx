@@ -248,7 +248,7 @@ export const HealthScreen: React.FC<HealthScreenProps> = ({ onBack }) => {
             <span>Đánh giá sức khỏe tổng thể AI:</span>
           </span>
           <p className="text-emerald-900 leading-relaxed">
-            {health.aiSuggestion || 'Bé An có nhịp sinh hoạt rất điều độ, năng lượng vận động tốt và ngủ đủ giấc. Nên duy trì uống nước đều đặn khi học bài.'}
+            {health.aiSuggestion || `${child?.name || 'Bé'} có nhịp sinh hoạt rất điều độ, năng lượng vận động tốt và ngủ đủ giấc. Nên duy trì uống nước đều đặn khi học bài.`}
           </p>
         </div>
       </div>

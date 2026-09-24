@@ -180,7 +180,7 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
               <div className="space-y-0.5">
                 <p className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
                   <ShieldCheck size={14} className="text-emerald-400" />
-                  <span>AI: Bé An đang ngồi học bài đúng tư thế</span>
+                  <span>AI: {state.child?.name || 'Bé'} đang ngồi học bài đúng tư thế</span>
                 </p>
                 <p className="text-[10px] text-slate-400">Khoảng cách mắt đến màn hình: 42cm (Đạt chuẩn)</p>
               </div>

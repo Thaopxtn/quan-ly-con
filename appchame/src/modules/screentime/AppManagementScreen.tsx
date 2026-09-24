@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { AppItem } from '@shared/types';
-import { INITIAL_APPS } from '@shared/mockData';
 import { haptics } from '@shared/utils/haptics';
 
 interface AppManagementScreenProps {
@@ -47,7 +46,7 @@ export const AppManagementScreen: React.FC<AppManagementScreenProps> = ({ onBack
       ? childSettings.apps
       : (state.apps && state.apps.length > 0)
         ? state.apps
-        : INITIAL_APPS;
+        : [];
     // Ensure all apps have required fields
     return raw.map((a) => ({
       ...a,
@@ -256,7 +255,17 @@ export const AppManagementScreen: React.FC<AppManagementScreenProps> = ({ onBack
 
       {/* App List Container */}
       <div className="flex-1 px-4 space-y-2.5 overflow-y-auto">
-        {filteredAndSortedApps.length === 0 ? (
+        {allApps.length === 0 ? (
+          <div className="bg-white rounded-3xl p-8 text-center space-y-3 border border-slate-200/80 mt-2 shadow-xs">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+              <Smartphone size={28} />
+            </div>
+            <h4 className="text-sm font-bold text-slate-800">Chưa có dữ liệu ứng dụng</h4>
+            <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
+              Thiết bị của {child?.name || 'con'} chưa gửi danh sách ứng dụng đã cài đặt lên hệ thống. Hãy mở ứng dụng trẻ em trên máy con để đồng bộ ứng dụng thực tế.
+            </p>
+          </div>
+        ) : filteredAndSortedApps.length === 0 ? (
           <div className="bg-white rounded-3xl p-8 text-center space-y-2 border border-slate-200/80 mt-2 shadow-xs">
             <div className="text-3xl">🔍</div>
             <h4 className="text-sm font-bold text-slate-800">Không tìm thấy ứng dụng nào</h4>

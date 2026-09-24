@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { exec, execSync, spawn } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -20,6 +21,39 @@ const ROOT_DIR = __dirname;
 const DIST_PARENT = path.join(ROOT_DIR, 'dist-parent');
 const DIST_KID = path.join(ROOT_DIR, 'dist-kid');
 const DATA_DIR = path.join(ROOT_DIR, 'data');
+
+// Windows Startup Folder & Shortcuts
+const STARTUP_DIR = process.env.APPDATA
+  ? path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+  : null;
+const STARTUP_LNK = STARTUP_DIR ? path.join(STARTUP_DIR, 'ParentPro-Server-AutoStart.lnk') : null;
+const STARTUP_VBS = STARTUP_DIR ? path.join(STARTUP_DIR, 'ParentPro-Server-AutoStart.vbs') : null;
+
+function checkAutoStartStatus() {
+  if (STARTUP_LNK && fs.existsSync(STARTUP_LNK)) return true;
+  if (STARTUP_VBS && fs.existsSync(STARTUP_VBS)) return true;
+  return false;
+}
+
+// In-Memory Ring Buffer for Realtime Server Log Viewer
+const MAX_SERVER_LOGS = 150;
+const SERVER_LOGS = [];
+function logServerEvent(level, message, meta = null) {
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('vi-VN') + '.' + String(now.getMilliseconds()).padStart(3, '0');
+  const entry = {
+    id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    time: timeStr,
+    timestamp: now.toISOString(),
+    level, // 'HTTP' | 'CMD' | 'GPS' | 'CHAT' | 'INFO' | 'WARN' | 'ERROR'
+    message,
+    meta,
+  };
+  SERVER_LOGS.push(entry);
+  if (SERVER_LOGS.length > MAX_SERVER_LOGS) {
+    SERVER_LOGS.shift();
+  }
+}
 
 // Ensure local data storage directory exists on PC
 if (!fs.existsSync(DATA_DIR)) {
@@ -130,28 +164,82 @@ for (const [key, filePath] of Object.entries(DB_FILES)) {
   }
 }
 
+const DB_MEMORY_CACHE = {};
+const DIRTY_DB_KEYS = new Set();
+let flushTimer = null;
+
 function readDb(type) {
+  if (DB_MEMORY_CACHE[type] !== undefined) {
+    return DB_MEMORY_CACHE[type];
+  }
   try {
     const file = DB_FILES[type];
     if (file && fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      DB_MEMORY_CACHE[type] = data;
+      return data;
     }
   } catch (e) {
     console.error(`[DB] Error reading ${type}:`, e.message);
   }
-  return OBJECT_DB_KEYS.has(type) ? {} : [];
+  const emptyVal = OBJECT_DB_KEYS.has(type) ? {} : [];
+  DB_MEMORY_CACHE[type] = emptyVal;
+  return emptyVal;
 }
 
 function writeDb(type, data) {
-  try {
-    const file = DB_FILES[type];
-    if (file) {
-      fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  DB_MEMORY_CACHE[type] = data;
+  DIRTY_DB_KEYS.add(type);
+  scheduleFlush();
+}
+
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushDirtyDbs();
+  }, 2000);
+}
+
+function flushDirtyDbs() {
+  if (DIRTY_DB_KEYS.size === 0) return;
+  const keysToFlush = Array.from(DIRTY_DB_KEYS);
+  DIRTY_DB_KEYS.clear();
+
+  for (const key of keysToFlush) {
+    const file = DB_FILES[key];
+    const data = DB_MEMORY_CACHE[key];
+    if (file && data !== undefined) {
+      try {
+        const tmpFile = file + '.tmp';
+        fs.writeFile(tmpFile, JSON.stringify(data, null, 2), 'utf8', (err) => {
+          if (!err) {
+            fs.rename(tmpFile, file, () => {});
+          }
+        });
+      } catch (e) {
+        console.error(`[DB] Async flush error for ${key}:`, e.message);
+      }
     }
-  } catch (e) {
-    console.error(`[DB] Error writing ${type}:`, e.message);
   }
 }
+
+function flushDirtyDbsSync() {
+  if (DIRTY_DB_KEYS.size === 0) return;
+  for (const key of DIRTY_DB_KEYS) {
+    const file = DB_FILES[key];
+    const data = DB_MEMORY_CACHE[key];
+    if (file && data !== undefined) {
+      try {
+        fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+      } catch (_) {}
+    }
+  }
+  DIRTY_DB_KEYS.clear();
+}
+
+process.on('SIGINT', () => { flushDirtyDbsSync(); process.exit(0); });
+process.on('SIGTERM', () => { flushDirtyDbsSync(); process.exit(0); });
 
 // Backfill cryptographically signed sessionTokens for existing pairing records on startup
 try {
@@ -189,11 +277,30 @@ function getDbStats() {
 // In-Memory Realtime Clients (Server-Sent Events)
 const sseClients = new Set();
 
+// Anti-Spam & Rate Limiting Maps (Prevents socket/API flood from parents or children)
+const commandRateLimitMap = new Map(); // key: `${childId}:${cmd}`, value: { time: number, commandId: string }
+const timeRequestRateLimitMap = new Map(); // key: childId, value: number
+const sosRateLimitMap = new Map(); // key: childId, value: { time: number, alert: any }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of commandRateLimitMap.entries()) {
+    if (now - val.time > 60000) commandRateLimitMap.delete(key);
+  }
+  for (const [key, time] of timeRequestRateLimitMap.entries()) {
+    if (now - time > 60000) timeRequestRateLimitMap.delete(key);
+  }
+  for (const [key, val] of sosRateLimitMap.entries()) {
+    if (now - val.time > 60000) sosRateLimitMap.delete(key);
+  }
+}, 10 * 60 * 1000);
+
 function broadcastRealtime(event, payload) {
   const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const client of sseClients) {
     try {
       client.res.write(message);
+      if (typeof client.res.flush === 'function') client.res.flush();
     } catch (_) {
       sseClients.delete(client);
     }
@@ -285,13 +392,22 @@ function sendFile(res, filePath, contentType, isApk = false) {
 }
 
 function parseJsonBody(req) {
+  if (req._parsedBody !== undefined) return Promise.resolve(req._parsedBody);
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    req.on('data', chunk => { 
+      body += chunk; 
+      if (body.length > 5 * 1024 * 1024) {
+        req.destroy();
+        reject(new Error('Payload Too Large'));
+      }
+    });
     req.on('end', () => {
       try {
-        resolve(body ? JSON.parse(body) : {});
+        req._parsedBody = body ? JSON.parse(body) : {};
+        resolve(req._parsedBody);
       } catch (err) {
+        req._parsedBody = {};
         resolve({});
       }
     });
@@ -305,12 +421,12 @@ function parseJsonBody(req) {
 function isPublicEndpoint(pathname) {
   // 1. Health checks (required for 4G cloud auto-discovery and ping)
   if (pathname === '/api/health' || pathname === '/health') return true;
-  // 2. Initial pairing negotiation (devices do not possess token yet)
-  if (pathname === '/api/pairing' || pathname === '/api/pairing/create' || pathname === '/api/pairing/confirm') return true;
+  // 2. Initial pairing negotiation & device sharing (devices do not possess token yet)
+  if (pathname === '/api/pairing' || pathname.startsWith('/api/pairing/') || pathname === '/api/pairing/create' || pathname === '/api/pairing/confirm' || pathname === '/api/sharing' || pathname.startsWith('/api/sharing/')) return true;
   // 3. Auth token exchange
   if (pathname === '/api/auth/token') return true;
-  // 4. Server status stats badge
-  if (pathname === '/api/server-stats') return true;
+  // 4. Server status stats badge & server management endpoints
+  if (pathname === '/api/server-stats' || pathname.startsWith('/api/server/')) return true;
   // 5. Static assets, APK downloads, HTML pages
   if (!pathname.startsWith('/api/')) return true;
   return false;
@@ -332,10 +448,11 @@ function extractRequestToken(req, parsedUrl) {
 }
 
 const server = http.createServer(async (req, res) => {
-  // CORS Headers
+  // CORS Headers - Allow full cross-origin from mobile apps, Capacitor WebView & Web
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Session-Token');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Max-Age', '86400');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -345,6 +462,10 @@ const server = http.createServer(async (req, res) => {
 
   const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   let pathname = decodeURIComponent(parsedUrl.pathname);
+
+  if (!pathname.startsWith('/api/realtime/stream') && !pathname.endsWith('.png') && !pathname.endsWith('.ico') && !pathname.endsWith('.js') && !pathname.endsWith('.css') && pathname !== '/api/server/logs' && pathname !== '/api/server-stats') {
+    logServerEvent('HTTP', `${req.method} ${pathname}`);
+  }
 
   // 🛡️ SECURITY LAYER: Cryptographic sessionToken Signature Verification (HMAC-SHA256)
   if (!isPublicEndpoint(pathname)) {
@@ -377,6 +498,17 @@ const server = http.createServer(async (req, res) => {
 
   // 0.1 Token Endpoint for Parent App / Portal
   if (pathname === '/api/auth/token') {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Method Not Allowed' }));
+      return;
+    }
+    const authHeader = req.headers['authorization'] || req.headers['Authorization'];
+    if (!authHeader || authHeader !== 'Bearer parent_master_secret_2026') {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Unauthorized: Invalid master secret.' }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
@@ -448,6 +580,34 @@ const server = http.createServer(async (req, res) => {
         dataDir: DATA_DIR,
         files: getDbStats(),
       },
+      autostartEnabled: checkAutoStartStatus(),
+      tunnelUrl: (() => {
+        const txtPath = path.join(ROOT_DIR, 'server-url.txt');
+        if (fs.existsSync(txtPath)) {
+          try { return fs.readFileSync(txtPath, 'utf8').trim(); } catch (_) {}
+        }
+        return '';
+      })(),
+      children: (() => {
+        const childrenDb = readDb('children');
+        const settingsDb = readDb('settings');
+        const activeChildren = [];
+        for (const pId of Object.keys(childrenDb)) {
+          if (Array.isArray(childrenDb[pId])) {
+            for (const child of childrenDb[pId]) {
+              const setting = settingsDb[child.id] || {};
+              activeChildren.push({
+                ...child,
+                isLocked: setting.isLocked || false,
+                screenTimeLimitMinutes: setting.screenTimeLimitMinutes || 120,
+                pcTelemetry: setting.pcTelemetry || null,
+              });
+            }
+          }
+        }
+        return activeChildren;
+      })(),
+      logs: SERVER_LOGS.slice(-40),
       recent: {
         telemetry: readDb('telemetry').slice(0, 15),
         chats: readDb('chats').slice(-15).reverse(),
@@ -515,15 +675,122 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 1.5 AutoStart Status & Toggle (Windows Startup Automation)
+  if (pathname === '/api/server/autostart') {
+    if (req.method === 'GET') {
+      const enabled = checkAutoStartStatus();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, enabled, startupPath: STARTUP_LNK || STARTUP_VBS }));
+      return;
+    }
+    if (req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      const enable = body && body.enable !== undefined ? Boolean(body.enable) : !checkAutoStartStatus();
+      try {
+        const action = enable ? 'install' : 'uninstall';
+        const psScript = path.join(ROOT_DIR, 'scripts', 'setup-autostart.ps1');
+        execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psScript}" -Action ${action}`, { cwd: ROOT_DIR });
+        const nowEnabled = checkAutoStartStatus();
+        logServerEvent('INFO', `Đã ${nowEnabled ? 'BẬT' : 'TẮT'} tự khởi động máy chủ cùng Windows`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          enabled: nowEnabled,
+          message: nowEnabled
+            ? 'Đã bật tự động khởi động máy chủ ngầm khi mở máy tính!'
+            : 'Đã tắt tự động khởi động cùng Windows.'
+        }));
+      } catch (err) {
+        logServerEvent('ERROR', 'Lỗi thiết lập autostart: ' + err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+      return;
+    }
+  }
+
+  // 1.6 Open Data Directory in Windows Explorer
+  if (pathname === '/api/server/open-data' && req.method === 'POST') {
+    try {
+      exec(`explorer.exe "${DATA_DIR}"`);
+      logServerEvent('INFO', 'Đã mở thư mục lưu trữ CSDL trong Windows Explorer');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Đã mở thư mục dữ liệu trên máy tính' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 1.7 Open Desktop Software App Window
+  if (pathname === '/api/server/launch-app-window' && req.method === 'POST') {
+    try {
+      const launcherScript = path.join(ROOT_DIR, 'ParentPro-Server-Launcher.vbs');
+      exec(`wscript.exe "${launcherScript}"`, { cwd: ROOT_DIR });
+      logServerEvent('INFO', 'Đã khởi chạy cửa sổ phần mềm máy chủ độc lập');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Đã mở giao diện phần mềm trong cửa sổ riêng' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 1.8 Restart Server (via PM2 or exit for restart)
+  if (pathname === '/api/server/restart' && req.method === 'POST') {
+    logServerEvent('WARN', 'Nhận lệnh khởi động lại máy chủ từ Bảng điều khiển');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Máy chủ đang khởi động lại...' }));
+    setTimeout(() => {
+      try {
+        exec('pm2 restart quan-ly-con-server', { cwd: ROOT_DIR }, (err) => {
+          if (err) process.exit(0);
+        });
+      } catch (_) {
+        process.exit(0);
+      }
+    }, 600);
+    return;
+  }
+
+  // 1.9 Live Server Logs (In-Memory Circular Buffer)
+  if (pathname === '/api/server/logs' && req.method === 'GET') {
+    const limit = Number(parsedUrl.searchParams.get('limit')) || 80;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, logs: SERVER_LOGS.slice(-limit) }));
+    return;
+  }
+
+  // 1.10 Public Cloudflare Tunnel URL
+  if (pathname === '/api/server/tunnel' && req.method === 'GET') {
+    let tunnelUrl = '';
+    const txtPath = path.join(ROOT_DIR, 'server-url.txt');
+    if (fs.existsSync(txtPath)) {
+      try { tunnelUrl = fs.readFileSync(txtPath, 'utf8').trim(); } catch (_) {}
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, url: tunnelUrl, active: Boolean(tunnelUrl) }));
+    return;
+  }
+
   // 2. Realtime SSE Stream (Sub-10ms real-time event streaming)
   if (pathname === '/api/realtime/stream') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
     });
+    if (typeof res.flushHeaders === 'function') {
+      try { res.flushHeaders(); } catch (_) {}
+    }
     res.write(`data: ${JSON.stringify({ type: 'connected', time: new Date().toISOString() })}\n\n`);
+    if (typeof res.flush === 'function') {
+      try { res.flush(); } catch (_) {}
+    }
 
     const client = { res, connectedAt: Date.now() };
     sseClients.add(client);
@@ -558,6 +825,7 @@ const server = http.createServer(async (req, res) => {
 
         // Broadcast to Parent apps in real-time
         broadcastRealtime('telemetry', data);
+        logServerEvent('GPS', `Vị trí mới bé ${data.childId}: [${Number(data.latitude || 0).toFixed(4)}, ${Number(data.longitude || 0).toFixed(4)}] • Pin: ${data.battery != null ? data.battery : '--'}%`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, savedAt: data.savedAt }));
@@ -580,10 +848,80 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       const data = await parseJsonBody(req);
       if (data && data.childId && (data.type || data.command)) {
-        data.id = data.id || ('cmd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
-        data.type = data.type || data.command;
+        const cmdType = data.type || data.command;
+        const cmdKey = `${data.childId}:${cmdType}`;
+        const lastCmd = commandRateLimitMap.get(cmdKey);
+        const now = Date.now();
+        if (lastCmd && (now - lastCmd.time < 2000)) {
+          // Throttled duplicate command within 2000ms
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            commandId: lastCmd.commandId,
+            throttled: true,
+            message: 'Lệnh tương tự đang được gửi đi, đã chặn duplicate spam',
+          }));
+          return;
+        }
+
+        data.id = data.id || ('cmd_' + now + '_' + Math.random().toString(36).slice(2, 6));
+        data.type = cmdType;
+        data.command = cmdType;
+        data.timestamp = typeof data.timestamp === 'number' ? data.timestamp : now;
         data.createdAt = data.createdAt || new Date().toISOString();
         data.status = data.status || 'pending';
+
+        commandRateLimitMap.set(cmdKey, { time: now, commandId: data.id });
+
+        // Synchronize child settings state if command modifies lock or screen time
+        if (cmdType === 'lock_now' || cmdType === 'unlock_now' || cmdType === 'extend_time') {
+          try {
+            const settings = readDb('settings');
+            const childSet = settings[data.childId] || {};
+            if (cmdType === 'lock_now') {
+              const lockPayload = data.payload || {};
+              childSet.isLocked = true;
+              childSet.lockChallenge = {
+                isLocked: true,
+                lockType: lockPayload.lockType || 'instant',
+                title: lockPayload.title || 'Thiết bị đang bị khóa từ xa',
+                description: lockPayload.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+                challengeData: lockPayload.challengeData,
+              };
+            } else if (cmdType === 'unlock_now') {
+              childSet.isLocked = false;
+              childSet.lockChallenge = {
+                ...(childSet.lockChallenge || {}),
+                isLocked: false,
+                lockType: 'none',
+                title: '',
+                description: '',
+              };
+              if (childSet.smartRoutines) {
+                childSet.smartRoutines.mealtimeLock = false;
+                childSet.smartRoutines.bedtimeLock = false;
+              }
+              const usedMins = (childSet.screenTime && childSet.screenTime.todayTotalMinutes) || 0;
+              const limitMins = childSet.screenTimeLimitMinutes || 135;
+              if (usedMins >= limitMins) {
+                childSet.screenTimeLimitMinutes = usedMins + 15;
+              }
+            } else if (cmdType === 'extend_time') {
+              const extra = (data.payload && data.payload.minutes) || 15;
+              childSet.screenTimeLimitMinutes = (childSet.screenTimeLimitMinutes || 135) + extra;
+              childSet.isLocked = false;
+              if (childSet.lockChallenge) {
+                childSet.lockChallenge.isLocked = false;
+                childSet.lockChallenge.lockType = 'none';
+              }
+            }
+            settings[data.childId] = childSet;
+            writeDb('settings', settings);
+            broadcastRealtime('settings', { childId: data.childId, settings: childSet });
+          } catch (e) {
+            console.error('[server] Error syncing settings on command:', e.message);
+          }
+        }
 
         const commands = readDb('commands');
         commands.unshift(data);
@@ -592,11 +930,15 @@ const server = http.createServer(async (req, res) => {
 
         // Broadcast command in real-time
         broadcastRealtime('command', data);
+        logServerEvent('CMD', `Lệnh điều khiển ${data.type} -> thiết bị con: ${data.childId}`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, commandId: data.id }));
         return;
       }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing childId or command/type' }));
+      return;
     }
     if (req.method === 'GET') {
       const childId = parsedUrl.searchParams.get('childId');
@@ -650,16 +992,19 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       const msg = await parseJsonBody(req);
       if (msg && msg.text) {
-        msg.id = 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        msg.id = msg.id || ('chat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
         msg.time = msg.time || new Date().toISOString();
         const chats = readDb('chats');
-        chats.push(msg);
-        writeDb('chats', chats);
-
-        broadcastRealtime('chat', msg);
+        const isDuplicate = chats.some(c => c.id === msg.id || (c.childId === msg.childId && c.text === msg.text && Math.abs(new Date(c.time).getTime() - new Date(msg.time).getTime()) < 2000));
+        if (!isDuplicate) {
+          chats.push(msg);
+          writeDb('chats', chats);
+          broadcastRealtime('chat', msg);
+          logServerEvent('CHAT', `Tin nhắn từ ${msg.senderName || msg.sender}: "${String(msg.text || '').slice(0, 45)}"`);
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: msg }));
+        res.end(JSON.stringify({ success: true, message: msg, duplicate: isDuplicate }));
         return;
       }
     }
@@ -682,9 +1027,23 @@ const server = http.createServer(async (req, res) => {
         const settingsPayload = body.settings !== undefined ? body.settings : body;
         const allSettings = readDb('settings');
         const existing = allSettings[childId] || {};
+
+        let mergedScreenTime = undefined;
+        if (existing.screenTime || settingsPayload.screenTime) {
+          mergedScreenTime = {
+            ...(existing.screenTime || {}),
+            ...(settingsPayload.screenTime || {}),
+          };
+          if ((!settingsPayload.screenTime || typeof settingsPayload.screenTime.todayTotalMinutes !== 'number' || settingsPayload.screenTime.todayTotalMinutes <= 0) &&
+              (existing.screenTime && typeof existing.screenTime.todayTotalMinutes === 'number' && existing.screenTime.todayTotalMinutes > 0)) {
+            mergedScreenTime.todayTotalMinutes = existing.screenTime.todayTotalMinutes;
+          }
+        }
+
         allSettings[childId] = {
           ...existing,
           ...settingsPayload,
+          ...(mergedScreenTime ? { screenTime: mergedScreenTime } : {}),
           childId,
           parentId: body.parentId || existing.parentId || '',
           updatedAt: Date.now(),
@@ -766,8 +1125,16 @@ const server = http.createServer(async (req, res) => {
       const body = await parseJsonBody(req);
       const childId = body && body.childId;
       if (childId) {
+        const now = Date.now();
+        const lastSos = sosRateLimitMap.get(childId);
+        if (lastSos && (now - lastSos.time < 5000)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, alert: lastSos.alert, throttled: true }));
+          return;
+        }
+
         const alert = {
-          id: 'sos_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          id: 'sos_' + now + '_' + Math.random().toString(36).slice(2, 6),
           childId,
           childName: body.childName || 'Bé',
           active: body.active !== undefined ? Boolean(body.active) : true,
@@ -775,8 +1142,11 @@ const server = http.createServer(async (req, res) => {
           lng: body.lng,
           address: body.address || '',
           time: body.time || new Date().toISOString(),
-          updatedAt: Date.now(),
+          updatedAt: now,
         };
+
+        sosRateLimitMap.set(childId, { time: now, alert });
+
         const allSos = readDb('sos');
         allSos.unshift(alert);
         if (allSos.length > 200) allSos.pop();
@@ -838,13 +1208,26 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       const body = await parseJsonBody(req);
       if (body && body.childId && body.requestedMinutes) {
+        const now = Date.now();
+        const lastReqTime = timeRequestRateLimitMap.get(body.childId);
+        if (lastReqTime && (now - lastReqTime < 10000)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            throttled: true,
+            error: 'Vui lòng chờ ít nhất 10 giây trước khi gửi yêu cầu xin thêm giờ tiếp theo',
+          }));
+          return;
+        }
+        timeRequestRateLimitMap.set(body.childId, now);
+
         const reqItem = {
-          id: body.id || ('treq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+          id: body.id || ('treq_' + now + '_' + Math.random().toString(36).slice(2, 6)),
           childId: body.childId,
           childName: body.childName || '',
           requestedMinutes: Number(body.requestedMinutes),
           reason: body.reason || '',
-          timestamp: body.timestamp || Date.now(),
+          timestamp: body.timestamp || now,
           status: body.status || 'pending',
         };
         const allRequests = readDb('time_requests');
@@ -901,10 +1284,27 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 5.7 Pairing Sessions API (Connect Parent and Kid without Firebase RTDB)
-  if (pathname === '/api/pairing' || pathname === '/api/pairing/create') {
-    if (req.method === 'POST') {
+  // 5.7 Pairing Sessions API (Connect Parent and Kid without Firebase RTDB)
+  const isPairingRoute = pathname === '/api/pairing' || pathname === '/api/pairing/create' || pathname.startsWith('/api/pairing/');
+  if (isPairingRoute && pathname !== '/api/pairing/confirm') {
+    // Extract code from path param /api/pairing/:code or query param ?code=
+    let targetCode = parsedUrl.searchParams.get('code');
+    if (!targetCode && pathname.startsWith('/api/pairing/') && pathname !== '/api/pairing/create') {
+      const sub = pathname.replace('/api/pairing/', '').split('/')[0];
+      if (sub && sub !== 'create' && sub !== 'confirm') {
+        targetCode = sub;
+      }
+    }
+
+    // Check if this is POST /api/pairing/:code/pair (alias for confirm)
+    if (pathname.endsWith('/pair') && req.method === 'POST') {
+      const body = await parseJsonBody(req);
+      body.code = targetCode || body.code;
+      // Delegate to confirm pairing logic below
+      pathname = '/api/pairing/confirm';
+    } else if (req.method === 'POST') {
       const session = await parseJsonBody(req);
-      const code = session && session.code;
+      const code = session && (session.code || targetCode);
       if (code) {
         const cleanCode = String(code).trim();
         const pairings = readDb('pairings');
@@ -928,11 +1328,9 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Missing pairing code' }));
       return;
-    }
-    if (req.method === 'GET') {
-      const code = parsedUrl.searchParams.get('code');
-      if (code) {
-        const cleanCode = String(code).trim();
+    } else if (req.method === 'GET') {
+      if (targetCode) {
+        const cleanCode = String(targetCode).trim();
         const pairings = readDb('pairings');
         let session = pairings[cleanCode];
 
@@ -962,8 +1360,12 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (session) {
+          const normalizedSession = {
+            ...session,
+            status: (session.status === 'connected' ? 'paired' : session.status)
+          };
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, session }));
+          res.end(JSON.stringify({ success: true, session: normalizedSession }));
           return;
         }
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -973,6 +1375,19 @@ const server = http.createServer(async (req, res) => {
       const pairings = readDb('pairings');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, pairings }));
+      return;
+    } else if (req.method === 'DELETE') {
+      if (targetCode) {
+        const cleanCode = String(targetCode).trim();
+        const pairings = readDb('pairings');
+        delete pairings[cleanCode];
+        writeDb('pairings', pairings);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Deleted pairing ' + cleanCode }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing code' }));
       return;
     }
   }
@@ -1005,7 +1420,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      session.status = 'connected';
+      session.status = 'paired';
       session.connectedAt = Date.now();
       session.childId = body.childId || session.childId || ('kid_' + Date.now());
       if (body.childName) session.childName = body.childName;
@@ -1243,6 +1658,41 @@ const server = http.createServer(async (req, res) => {
           writeDb('children', childrenDb);
           broadcastRealtime('children_updated', { parentId, children: childrenDb[parentId] });
         }
+
+        // Cascade cleanup child-specific databases
+        const settingsDb = readDb('settings');
+        if (settingsDb[childId]) {
+          delete settingsDb[childId];
+          writeDb('settings', settingsDb);
+        }
+        const safeZonesDb = readDb('safe_zones');
+        if (safeZonesDb[childId]) {
+          delete safeZonesDb[childId];
+          writeDb('safe_zones', safeZonesDb);
+        }
+        const liveDb = readDb('live_tracking');
+        if (liveDb[childId]) {
+          delete liveDb[childId];
+          writeDb('live_tracking', liveDb);
+        }
+        const starsDb = readDb('stars');
+        if (starsDb[childId]) {
+          delete starsDb[childId];
+          writeDb('stars', starsDb);
+        }
+        const pairingsDb = readDb('pairings');
+        let pairingChanged = false;
+        for (const [code, p] of Object.entries(pairingsDb)) {
+          if (p && (p.childId === childId || p.kidId === childId)) {
+            delete pairingsDb[code];
+            pairingChanged = true;
+          }
+        }
+        if (pairingChanged) {
+          writeDb('pairings', pairingsDb);
+        }
+
+        logServerEvent('INFO', `Đã xóa hồ sơ con [${childId}] và giải phóng toàn bộ dữ liệu liên quan`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, deleted: childId }));
         return;
@@ -1314,10 +1764,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 8. Server Management Portal & Full Dashboard
-  if (pathname === '/portal' || pathname === '/hub' || pathname === '/dashboard' || pathname === '/admin') {
+  if (pathname === '/portal' || pathname === '/hub' || pathname === '/dashboard' || pathname === '/admin' || pathname === '/server' || pathname === '/server-admin') {
     const portalFile = path.join(ROOT_DIR, 'public', 'portal.html');
     if (fs.existsSync(portalFile)) {
       sendFile(res, portalFile, 'text/html; charset=utf-8');
+      return;
+    }
+  }
+
+  // Favicon & App Icon
+  if (pathname === '/favicon.ico' || pathname === '/app-icon.ico') {
+    const iconFile = path.join(ROOT_DIR, 'public', 'app-icon.ico');
+    if (fs.existsSync(iconFile)) {
+      sendFile(res, iconFile, 'image/x-icon');
       return;
     }
   }

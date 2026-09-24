@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   ChevronLeft,
   Calendar,
@@ -14,7 +14,7 @@ import {
   Sparkles,
   Tag
 } from "lucide-react";
-import { useAppState } from "@shared/store";
+import { useAppState, getLocalDateString } from "@shared/store";
 import { ChildAlarm, ChildTimer, ChildScheduleEvent } from "@shared/types";
 
 interface ScheduleManagerScreenProps {
@@ -83,7 +83,7 @@ export const ScheduleManagerScreen: React.FC<ScheduleManagerScreenProps> = ({ on
   // Schedule form states
   const [showEventForm, setShowEventForm] = useState(false);
   const [evtTitle, setEvtTitle] = useState("");
-  const [evtDate, setEvtDate] = useState(new Date().toISOString().slice(0, 10));
+  const [evtDate, setEvtDate] = useState(getLocalDateString());
   const [evtTime, setEvtTime] = useState("08:00");
   const [evtNote, setEvtNote] = useState("");
   const [evtCategory, setEvtCategory] = useState<"study" | "activity" | "medical" | "family" | "other">(
@@ -155,7 +155,7 @@ export const ScheduleManagerScreen: React.FC<ScheduleManagerScreenProps> = ({ on
     showToast("Đã thêm lịch sự kiện mới cho con!");
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateString();
   const sortedEvents = [...events].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
 
   return (

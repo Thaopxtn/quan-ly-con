@@ -20,7 +20,6 @@ import {
 } from 'lucide-react';
 import { useAppState, getActiveParentId } from '@shared/store';
 import { InteractiveMap } from '@shared/components/InteractiveMap';
-import { MOCK_ROUTES_BY_DAY, INITIAL_ROUTE } from '@shared/mockData';
 import { RoutePoint } from '@shared/types';
 import { subscribeChildRouteHistoryFromCloud } from '@shared/firebase/cloudSyncService';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
@@ -76,8 +75,8 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
   // Get active route points based on selected day (Real cloud points prioritized for today)
   const activeRoutePoints: RoutePoint[] =
     selectedDay === 'today'
-      ? (cloudRoutePoints.length > 0 ? cloudRoutePoints : (safeRouteHistory.length > 0 ? safeRouteHistory : INITIAL_ROUTE))
-      : (MOCK_ROUTES_BY_DAY[selectedDay] || INITIAL_ROUTE);
+      ? (cloudRoutePoints.length > 0 ? cloudRoutePoints : safeRouteHistory)
+      : [];
 
   // Playback timer
   useEffect(() => {
@@ -254,17 +253,32 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
         />
       </div>
 
-      {/* Interactive Playback Scrubber Card */}
-      <div className="mx-3 bg-white rounded-2xl p-3 border border-slate-100 shadow-xs space-y-2">
-        <div className="flex items-center justify-between text-xs font-bold">
-          <span className="text-slate-700 flex items-center gap-1.5">
-            <Activity size={14} className="text-blue-600" />
-            <span>Tua lại hành trình</span>
-          </span>
-          <span className="text-[11px] font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
-            {activeRoutePoints[selectedPointIndex]?.time || '00:00'} • Điểm {selectedPointIndex + 1}/{activeRoutePoints.length}
-          </span>
+      {/* Empty State or Interactive Playback Scrubber Card */}
+      {activeRoutePoints.length === 0 ? (
+        <div className="mx-3 mt-2 bg-white rounded-3xl p-6 text-center space-y-2 border border-slate-200/80 shadow-xs">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+            <MapPin size={24} />
+          </div>
+          <h4 className="text-sm font-bold text-slate-800">
+            Chưa có lộ trình {selectedDay === 'today' ? 'hôm nay' : selectedDay === 'yesterday' ? 'hôm qua' : '2 ngày trước'}
+          </h4>
+          <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
+            Hệ thống sẽ tự động ghi lại các chặng dừng chân và quãng đường di chuyển khi bé mang theo điện thoại ra ngoài.
+          </p>
         </div>
+      ) : (
+        <>
+          {/* Interactive Playback Scrubber Card */}
+          <div className="mx-3 bg-white rounded-2xl p-3 border border-slate-100 shadow-xs space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold">
+              <span className="text-slate-700 flex items-center gap-1.5">
+                <Activity size={14} className="text-blue-600" />
+                <span>Tua lại hành trình</span>
+              </span>
+              <span className="text-[11px] font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
+                {activeRoutePoints[selectedPointIndex]?.time || '00:00'} • Điểm {selectedPointIndex + 1}/{activeRoutePoints.length}
+              </span>
+            </div>
 
         {/* Scrubber Range Slider */}
         <div className="flex items-center space-x-2">
@@ -424,6 +438,8 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

@@ -53,7 +53,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const { state, addChild, addOrUpdateChildDevice } = useAppState();
+  const { state, addChild, addOrUpdateChildDevice, switchChild } = useAppState();
   const currentParent = getCurrentParentAccount();
 
   // Tabs:
@@ -211,6 +211,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
           deviceModel: `${deviceName} (${fullDevice.model})`,
           deviceId: fullDevice.deviceId,
         });
+        switchChild(selectedChildId);
         if (onSuccess) onSuccess(selectedChildId, selectedChildObj?.name || finalChildName);
       } else {
         addChild({
@@ -231,6 +232,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
           deviceModel: `${deviceName} (${fullDevice.model})`,
           deviceId: fullDevice.deviceId,
         });
+        switchChild(session.childId);
         if (onSuccess) onSuccess(session.childId, finalChildName);
       }
 
@@ -245,7 +247,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
     };
 
     const unsub = subscribePairingSession(generatedSession.code, (session) => {
-      if (session && session.status === 'paired') {
+      if (session && (session.status === 'paired' || session.status === 'connected')) {
         finalizePinSuccess(session);
       }
     });

@@ -45,10 +45,27 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   } = useAppState();
 
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [gaugeCooldown, setGaugeCooldown] = useState<Record<string, number>>({});
 
   const triggerFeedback = (text: string) => {
     setActionFeedback(text);
     setTimeout(() => setActionFeedback(null), 2500);
+  };
+
+  const triggerCooldown = (key: string) => {
+    setGaugeCooldown((prev) => ({ ...prev, [key]: 3 }));
+    const timer = setInterval(() => {
+      setGaugeCooldown((prev) => {
+        const cur = prev[key] || 0;
+        if (cur <= 1) {
+          clearInterval(timer);
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+        return { ...prev, [key]: cur - 1 };
+      });
+    }, 1000);
   };
 
   // Calculations
@@ -102,9 +119,11 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
     statusBg = 'bg-amber-50 text-amber-700 border-amber-200';
   }
 
-  // Fast action handlers
+  // Fast action handlers with Anti-Spam protection
   const handleToggleLock = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (gaugeCooldown['lock']) return;
+    triggerCooldown('lock');
     haptics.medium();
     if (isLocked) {
       unlockChildDeviceNow(childId);
@@ -117,6 +136,8 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
 
   const handleBonus15Mins = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (gaugeCooldown['bonus']) return;
+    triggerCooldown('bonus');
     haptics.success();
     const newLimit = limitMinutes + 15;
     setCustomScreenTimeLimit(childId, newLimit);
@@ -132,6 +153,8 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
 
   const handleLoudSignal = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (gaugeCooldown['buzz']) return;
+    triggerCooldown('buzz');
     haptics.warning();
     buzzKidPhone(childId);
     triggerFeedback(`Đang phát tín hiệu chuông lớn trên máy ${childName} 🔔!`);
@@ -261,14 +284,19 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
           {/* Button 1: Khóa máy ngay / Mở khóa */}
           <button
             type="button"
+            disabled={Boolean(gaugeCooldown['lock'])}
             onClick={handleToggleLock}
             className={`py-3 px-3 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center gap-2 border ${
-              isLocked
+              gaugeCooldown['lock']
+                ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed'
+                : isLocked
                 ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white border-rose-600 shadow-rose-500/25'
                 : 'bg-slate-900 hover:bg-slate-800 text-white border-slate-900 shadow-slate-900/20'
             }`}
           >
-            {isLocked ? (
+            {gaugeCooldown['lock'] ? (
+              <span>Chờ {gaugeCooldown['lock']}s...</span>
+            ) : isLocked ? (
               <>
                 <Unlock size={17} strokeWidth={2.5} />
                 <span>Mở Khóa Máy</span>
@@ -284,11 +312,16 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
           {/* Button 2: Thưởng thêm 15 phút (+15m) */}
           <button
             type="button"
+            disabled={Boolean(gaugeCooldown['bonus'])}
             onClick={handleBonus15Mins}
-            className="py-3 px-3 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-amber-600 shadow-amber-500/25 hover:from-amber-600 hover:to-orange-600"
+            className={`py-3 px-3 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center gap-2 border ${
+              gaugeCooldown['bonus']
+                ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed'
+                : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white border-amber-600 shadow-amber-500/25 hover:from-amber-600 hover:to-orange-600'
+            }`}
           >
             <PlusCircle size={17} strokeWidth={2.5} />
-            <span>+15 Phút Thưởng</span>
+            <span>{gaugeCooldown['bonus'] ? `Chờ ${gaugeCooldown['bonus']}s` : '+15 Phút Thưởng'}</span>
           </button>
         </div>
 
@@ -311,11 +344,16 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
           {/* Button 4: Đổ chuông tìm máy */}
           <button
             type="button"
+            disabled={Boolean(gaugeCooldown['buzz'])}
             onClick={handleLoudSignal}
-            className="py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border bg-white hover:bg-sky-50 border-slate-200 hover:border-sky-300 text-slate-600 hover:text-sky-700 flex items-center justify-center gap-1.5"
+            className={`py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border flex items-center justify-center gap-1.5 ${
+              gaugeCooldown['buzz']
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : 'bg-white hover:bg-sky-50 border-slate-200 hover:border-sky-300 text-slate-600 hover:text-sky-700'
+            }`}
           >
-            <Volume2 size={14} className="text-sky-500" />
-            <span>Chuông Tìm Máy</span>
+            <Volume2 size={14} className={gaugeCooldown['buzz'] ? 'text-slate-400' : 'text-sky-500'} />
+            <span>{gaugeCooldown['buzz'] ? `Chờ ${gaugeCooldown['buzz']}s` : 'Chuông Tìm Máy'}</span>
           </button>
         </div>
       </div>

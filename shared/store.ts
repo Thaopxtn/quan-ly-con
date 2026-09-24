@@ -44,6 +44,14 @@ import {
   ChildPcTelemetry,
 } from './types';
 
+export function getLocalDateString(dateInput?: Date | number | string): string {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export const DEFAULT_TRACKING_CONFIG: TrackingCollectionConfig = {
   isMasterTrackingEnabled: true,
   enableGpsTracking: true,
@@ -93,7 +101,6 @@ import {
   sendRemoteCommandAck,
   requestLatestDataFromAllChildren,
   subscribeCommandAck,
-  subscribeRemoteCommandsOnKid,
   clearRemoteCommand,
   RemoteCommandType,
   CommandAckData,
@@ -121,6 +128,7 @@ import { getCurrentParentAccount, getFirebaseInstance } from './firebase/firebas
 import { getKidDevicePairedInfo } from './firebase/pairingService';
 import { isFirebaseConfigured } from './firebase/firebaseConfig';
 import { Capacitor } from '@capacitor/core';
+import { serverApiClient } from './services/serverApiClient';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { showSystemNotification, playNotificationSound, NotificationSoundType } from './services/systemNotificationService';
 
@@ -288,6 +296,27 @@ export function isSilentRemoteCommand(command?: string, title?: string): boolean
   if (SILENT_COMMANDS.has(command)) return true;
   if (title && (title.includes('Đồng bộ') || title.includes('đồng bộ'))) return true;
   return false;
+}
+
+// 🛡️ ANTI-SPAM & RATE LIMITING STATE
+export const COMMAND_COOLDOWN_MS = 3000;
+export const lastSentCommandMap = new Map<string, number>(); // key: `${childId}:${command}`
+export const TIME_REQUEST_COOLDOWN_MS = 15000;
+export const lastTimeRequestMap = new Map<string, number>(); // key: childId
+
+/**
+ * Checks if a remote command on a specific child device is currently on cooldown
+ */
+export function isCommandOnCooldown(command: string, targetChildId?: string): { onCooldown: boolean; remainingSec: number } {
+  const childId = targetChildId || globalState?.selectedChildId || 'default';
+  const key = `${childId}:${command}`;
+  const lastTime = lastSentCommandMap.get(key) || 0;
+  const elapsed = Date.now() - lastTime;
+  if (elapsed < COMMAND_COOLDOWN_MS) {
+    const remainingSec = Math.ceil((COMMAND_COOLDOWN_MS - elapsed) / 1000);
+    return { onCooldown: true, remainingSec };
+  }
+  return { onCooldown: false, remainingSec: 0 };
 }
 
 export const DEFAULT_HARDWARE_SCHEDULES: HardwareScheduleProfile[] = [
@@ -855,6 +884,9 @@ function getInitialRealState(): AppState {
           parsed.child ||
           emptyChildPlaceholder;
 
+        const kidPaired = isKidAppMode() ? getKidDevicePairedInfo() : null;
+        const effectiveKidId = kidPaired?.childId;
+
         return {
           ...defaultRealState,
           ...parsed,
@@ -863,7 +895,7 @@ function getInitialRealState(): AppState {
           activeReminder: null,
           children: realChildren,
           child: activeChild,
-          selectedChildId: realChildren.length > 0 ? (parsed.selectedChildId || realChildren[0].id) : defaultRealState.selectedChildId,
+          selectedChildId: effectiveKidId || (realChildren.length > 0 ? (parsed.selectedChildId || realChildren[0].id) : defaultRealState.selectedChildId),
           family: (parsed.family && parsed.family.length > 0) ? parsed.family : defaultRealState.family,
           alerts: parsed.alerts || [],
           timeRequests: parsed.timeRequests || [],
@@ -871,6 +903,16 @@ function getInitialRealState(): AppState {
       } catch (e) {
         console.error('Failed to parse real saved state:', e);
       }
+    }
+  }
+
+  if (isKidAppMode()) {
+    const kidPaired = getKidDevicePairedInfo();
+    if (kidPaired?.childId) {
+      return {
+        ...defaultRealState,
+        selectedChildId: kidPaired.childId,
+      };
     }
   }
 
@@ -886,7 +928,8 @@ function getInitialState(): AppState {
 
 let globalState: AppState = getInitialState();
 const listeners = new Set<(state: AppState) => void>();
-let isApplyingCloudUpdate = false;
+let _cloudUpdateVersion = 0;
+let _lastSyncedVersion = 0;
 
 // Debounced asynchronous localStorage persistence to prevent blocking the UI thread
 let persistDebounceTimer: any = null;
@@ -940,37 +983,87 @@ function scheduleNotifyListeners(immediate = false) {
 }
 
 function applyCloudStateUpdate(updater: (prev: AppState) => AppState, immediate = false) {
-  isApplyingCloudUpdate = true;
+  _cloudUpdateVersion++;
   try {
     const nextState = updater(globalState);
+    if (nextState.children && nextState.childSettings) {
+      nextState.children = nextState.children.map((c) => {
+        const cs = nextState.childSettings[c.id];
+        if (!cs) return c;
+        const isL = cs.lockChallenge?.isLocked !== undefined ? Boolean(cs.lockChallenge.isLocked) : Boolean(cs.isLocked);
+        return {
+          ...c,
+          isLocked: isL,
+          lockType: cs.lockChallenge?.lockType || (isL ? 'instant' : 'none'),
+          lockTitle: cs.lockChallenge?.title || (isL ? c.lockTitle : ''),
+        };
+      });
+      if (nextState.child && nextState.childSettings[nextState.child.id]) {
+        const cs = nextState.childSettings[nextState.child.id];
+        const isL = cs.lockChallenge?.isLocked !== undefined ? Boolean(cs.lockChallenge.isLocked) : Boolean(cs.isLocked);
+        nextState.child = {
+          ...nextState.child,
+          isLocked: isL,
+          lockType: cs.lockChallenge?.lockType || (isL ? 'instant' : 'none'),
+          lockTitle: cs.lockChallenge?.title || (isL ? nextState.child.lockTitle : ''),
+        };
+      }
+    }
     globalState = nextState;
     schedulePersistState();
     scheduleNotifyListeners(immediate);
   } finally {
-    isApplyingCloudUpdate = false;
+    // Removed isApplyingCloudUpdate = false;
   }
 }
 
 function saveAndNotify(newState: AppState, targetChildId?: string) {
-  const curId = targetChildId || newState.selectedChildId || (newState.children[0]?.id) || 'child_default';
+  const kidPaired = isKidAppMode() ? getKidDevicePairedInfo() : null;
+  const effectiveKidChildId = kidPaired?.childId;
+  const curId = targetChildId || (isKidAppMode() && effectiveKidChildId ? effectiveKidChildId : newState.selectedChildId) || (newState.children[0]?.id) || 'child_default';
   const curSettings = newState.childSettings?.[curId] || createDefaultChildSettings(curId);
   const curStars = curSettings.kidStars !== undefined ? curSettings.kidStars : (newState.kidStars ?? 0);
   const curTasks = curSettings.kidTasks ?? newState.kidTasks ?? [];
   const curStarHistory = curSettings.starHistory ?? newState.starHistory ?? [];
   const curRedemptions = curSettings.redemptions ?? newState.redemptions ?? [];
-  const isCurrentChild = !targetChildId || targetChildId === newState.selectedChildId;
+  const activeSelectedId = (isKidAppMode() && effectiveKidChildId ? effectiveKidChildId : newState.selectedChildId);
+  const isCurrentChild = !targetChildId || targetChildId === activeSelectedId;
+
+  // Safe screenTime merge: NEVER allow todayTotalMinutes to reset to 0 or undefined if kid device has tracked minutes!
+  const prevTodayMinutes = curSettings.screenTime?.todayTotalMinutes || 0;
+  const newTodayMinutes = newState.screenTime?.todayTotalMinutes;
+  
+  const todayDate = getLocalDateString();
+  const prevResetDate = curSettings.lastResetDate || '';
+  
+  let effectiveTodayMinutes;
+  let newResetDate = prevResetDate;
+  
+  if (todayDate !== prevResetDate) {
+    effectiveTodayMinutes = typeof newTodayMinutes === 'number' ? newTodayMinutes : 0;
+    newResetDate = todayDate;
+  } else {
+    effectiveTodayMinutes = Math.max(prevTodayMinutes, typeof newTodayMinutes === 'number' ? newTodayMinutes : 0);
+  }
+
+  const mergedScreenTime = {
+    ...(curSettings.screenTime || {}),
+    ...(isCurrentChild && newState.screenTime ? newState.screenTime : {}),
+    todayTotalMinutes: effectiveTodayMinutes,
+  };
 
   const updatedChildSettings = {
     ...(newState.childSettings || {}),
     [curId]: {
       ...curSettings,
+      lastResetDate: newResetDate,
       screenTimeLimitMinutes: curSettings.screenTimeLimitMinutes ?? 135,
-      apps: curSettings.apps || (isCurrentChild ? newState.apps : createDefaultChildSettings(curId).apps),
-      screenTime: curSettings.screenTime || (isCurrentChild ? newState.screenTime : createDefaultChildSettings(curId).screenTime),
-      hardwareControls: curSettings.hardwareControls || (isCurrentChild ? newState.hardwareControls : createDefaultChildSettings(curId).hardwareControls),
-      kioskMode: curSettings.kioskMode || (isCurrentChild ? newState.kioskMode : createDefaultChildSettings(curId).kioskMode),
-      lockChallenge: curSettings.lockChallenge || (isCurrentChild ? newState.lockChallenge : createDefaultChildSettings(curId).lockChallenge),
-      smartRoutines: curSettings.smartRoutines || (isCurrentChild ? newState.smartRoutines : createDefaultChildSettings(curId).smartRoutines),
+      apps: isCurrentChild && newState.apps !== undefined ? newState.apps : (curSettings.apps || createDefaultChildSettings(curId).apps),
+      screenTime: mergedScreenTime,
+      hardwareControls: isCurrentChild && newState.hardwareControls !== undefined ? newState.hardwareControls : (curSettings.hardwareControls || createDefaultChildSettings(curId).hardwareControls),
+      kioskMode: isCurrentChild && newState.kioskMode !== undefined ? newState.kioskMode : (curSettings.kioskMode || createDefaultChildSettings(curId).kioskMode),
+      lockChallenge: isCurrentChild && newState.lockChallenge !== undefined ? newState.lockChallenge : (curSettings.lockChallenge || createDefaultChildSettings(curId).lockChallenge),
+      smartRoutines: isCurrentChild && newState.smartRoutines !== undefined ? newState.smartRoutines : (curSettings.smartRoutines || createDefaultChildSettings(curId).smartRoutines),
       kidTasks: curTasks,
       kidStars: curStars,
       starHistory: curStarHistory,
@@ -979,11 +1072,34 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
       activeReminder: isCurrentChild ? (newState.activeReminder ?? null) : (curSettings.activeReminder ?? null),
       lastVoiceGuide: isCurrentChild ? (newState.lastVoiceGuide ?? '') : (curSettings.lastVoiceGuide ?? ''),
       broadcastMessage: isCurrentChild ? (newState.broadcastMessage ?? null) : (curSettings.broadcastMessage ?? null),
-      isLocked: curSettings.lockChallenge?.isLocked ?? (isCurrentChild ? (newState.lockChallenge?.isLocked ?? false) : false),
+      isLocked: (isCurrentChild && newState.lockChallenge !== undefined ? newState.lockChallenge : (curSettings.lockChallenge || createDefaultChildSettings(curId).lockChallenge))?.isLocked ?? false,
       safeZones: curSettings.safeZones ?? newState.safeZones,
     }
   };
   newState.childSettings = updatedChildSettings;
+  if (newState.children && newState.children.length > 0) {
+    newState.children = newState.children.map((c) => {
+      const cSettings = updatedChildSettings[c.id];
+      if (!cSettings) return c;
+      const cLock = cSettings.lockChallenge?.isLocked ?? false;
+      return {
+        ...c,
+        isLocked: cLock,
+        lockType: cSettings.lockChallenge?.lockType || (cLock ? 'instant' : 'none'),
+        lockTitle: cSettings.lockChallenge?.title || '',
+      };
+    });
+    if (newState.child && updatedChildSettings[newState.child.id]) {
+      const cSettings = updatedChildSettings[newState.child.id];
+      const cLock = cSettings.lockChallenge?.isLocked ?? false;
+      newState.child = {
+        ...newState.child,
+        isLocked: cLock,
+        lockType: cSettings.lockChallenge?.lockType || (cLock ? 'instant' : 'none'),
+        lockTitle: cSettings.lockChallenge?.title || '',
+      };
+    }
+  }
   if (isCurrentChild) {
     newState.kidStars = curStars;
     newState.kidTasks = curTasks;
@@ -996,12 +1112,18 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
     try {
       // PHÂN LUỒNG RÕ RÀNG: Chỉ ứng dụng Phụ huynh mới được đồng bộ cấu hình cài đặt (Settings, Giới hạn giờ) lên Cloud.
       // Ứng dụng Con CHỈ gửi số liệu thời gian đã dùng (Telemetry), KHÔNG ĐƯỢC ghi đè cài đặt của cha mẹ lên Cloud!
-      if (!isApplyingCloudUpdate && !isKidAppMode()) {
+      let shouldSkipSync = false;
+      if (_cloudUpdateVersion > _lastSyncedVersion) {
+        shouldSkipSync = true;
+        _lastSyncedVersion = _cloudUpdateVersion;
+      }
+      if (!shouldSkipSync && !isKidAppMode()) {
         const activeParentId = getActiveParentId();
         const stripUsedTime = (settings: ChildSpecificSettings) => {
           const clone = { ...settings };
           if (clone.screenTime) {
-            clone.screenTime = { ...clone.screenTime, todayTotalMinutes: undefined as any };
+            const { todayTotalMinutes, ...restScreenTime } = clone.screenTime || {};
+            clone.screenTime = restScreenTime as typeof clone.screenTime;
           }
           return clone;
         };
@@ -1244,6 +1366,10 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                   isScreenOn: telemetry.isScreenOn ?? baseDev?.isScreenOn ?? c.isScreenOn,
                   screenState: telemetry.screenState ?? baseDev?.screenState ?? c.screenState,
                   appStatus: telemetry.appStatus ?? baseDev?.appStatus ?? c.appStatus,
+                  isLocked: telemetry.isLocked !== undefined ? telemetry.isLocked : baseDev?.isLocked,
+                  lockType: telemetry.lockType !== undefined ? telemetry.lockType : baseDev?.lockType,
+                  lockTitle: telemetry.lockTitle !== undefined ? telemetry.lockTitle : baseDev?.lockTitle,
+                  lockedAt: telemetry.lockedAt !== undefined ? telemetry.lockedAt : baseDev?.lockedAt,
                   lastActive: new Date().toISOString(),
                   status: 'online',
                   telemetry: {
@@ -1260,6 +1386,10 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                     syncMode: telemetry.syncMode ?? c.syncMode,
                     activeOpenedApp: telemetry.activeOpenedApp,
                     screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes,
+                    isLocked: telemetry.isLocked,
+                    lockType: telemetry.lockType,
+                    lockTitle: telemetry.lockTitle,
+                    lockedAt: telemetry.lockedAt,
                     sensors: telemetry.sensors,
                     network: telemetry.network,
                     lastActive: new Date().toISOString(),
@@ -1291,6 +1421,10 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                   syncMode: telemetry.syncMode ?? c.syncMode,
                   activeOpenedApp: telemetry.activeOpenedApp ?? c.activeOpenedApp,
                   screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes ?? c.screenTimeUsedMinutes,
+                  isLocked: telemetry.isLocked !== undefined ? telemetry.isLocked : c.isLocked,
+                  lockType: telemetry.lockType !== undefined ? telemetry.lockType : c.lockType,
+                  lockTitle: telemetry.lockTitle !== undefined ? telemetry.lockTitle : c.lockTitle,
+                  lockedAt: telemetry.lockedAt !== undefined ? telemetry.lockedAt : c.lockedAt,
                 } : {}),
                 lastUpdated: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
               };
@@ -1306,12 +1440,29 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
             ...curSettings,
             ...(telemetry.sensors ? { sensorValues: { ...curSettings.sensorValues, ...telemetry.sensors } } : {}),
             ...(telemetry.screenTimeUsedMinutes !== undefined ? { screenTime: { ...curSettings.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes } } : {}),
+            ...(telemetry.isLocked !== undefined ? {
+              isLocked: telemetry.isLocked,
+              lockType: telemetry.lockType,
+              lockTitle: telemetry.lockTitle,
+              lockedAt: telemetry.lockedAt,
+            } : {}),
           };
+
+          let nextLockChallenge = prev.lockChallenge;
+          if (isCur && telemetry.isLocked !== undefined) {
+            nextLockChallenge = {
+              ...prev.lockChallenge,
+              isLocked: telemetry.isLocked,
+              ...(telemetry.lockType ? { lockType: telemetry.lockType } : {}),
+              ...(telemetry.lockTitle ? { title: telemetry.lockTitle } : {}),
+            };
+          }
 
           return {
             ...prev,
             children: updatedChildren,
             child: isCur ? updatedChild : prev.child,
+            lockChallenge: nextLockChallenge,
             activeOpenedApp: isCur && telemetry.activeOpenedApp
               ? { id: 'app_active', name: telemetry.activeOpenedApp }
               : prev.activeOpenedApp,
@@ -1610,7 +1761,46 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
       if (cloudSettings && Object.keys(cloudSettings).length > 0) {
         applyCloudStateUpdate((prev) => {
           const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
-          const mergedSettings = { ...curSettings, ...cloudSettings };
+          
+          // PRESERVE LOCAL SCREEN TIME USAGE MINUTES:
+          // The kid device is the authoritative source for accumulated todayTotalMinutes.
+          // Never allow cloud settings updates to overwrite local minutes with 0 or undefined.
+          const localUsedMinutes = Math.max(
+            curSettings.screenTime?.todayTotalMinutes || 0,
+            prev.screenTime?.todayTotalMinutes || 0
+          );
+          const localHourlyUsage = curSettings.screenTime?.hourlyUsage || prev.screenTime?.hourlyUsage;
+
+          const mergedDailyLimit = cloudSettings.screenTimeLimitMinutes !== undefined
+            ? cloudSettings.screenTimeLimitMinutes
+            : (cloudSettings.screenTime?.dailyLimitMinutes || curSettings.screenTime?.dailyLimitMinutes || curSettings.screenTimeLimitMinutes || 135);
+
+          const incomingUsed = (cloudSettings.screenTime && typeof cloudSettings.screenTime.todayTotalMinutes === 'number' && cloudSettings.screenTime.todayTotalMinutes > 0)
+            ? cloudSettings.screenTime.todayTotalMinutes
+            : 0;
+          const finalUsedMinutes = Math.max(localUsedMinutes, incomingUsed);
+
+          const mergedScreenTime: ScreenTimeData = {
+            dailyLimitMinutes: mergedDailyLimit,
+            todayTotalMinutes: finalUsedMinutes,
+            hourlyUsage: (cloudSettings.screenTime?.hourlyUsage && cloudSettings.screenTime.hourlyUsage.length > 0)
+              ? cloudSettings.screenTime.hourlyUsage
+              : (localHourlyUsage || []),
+            appUsage: (cloudSettings.screenTime?.appUsage && cloudSettings.screenTime.appUsage.length > 0)
+              ? cloudSettings.screenTime.appUsage
+              : (curSettings.screenTime?.appUsage || []),
+          };
+
+          const mergedSettings = {
+            ...curSettings,
+            ...cloudSettings,
+            screenTimeLimitMinutes: mergedDailyLimit,
+            screenTime: mergedScreenTime,
+            isLocked: cloudSettings.isLocked !== undefined
+              ? Boolean(cloudSettings.isLocked)
+              : (cloudSettings.lockChallenge ? Boolean(cloudSettings.lockChallenge.isLocked) : curSettings.isLocked),
+          };
+
           let cleanBroadcast = mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage;
           if (cleanBroadcast) {
             const now = Date.now();
@@ -1623,6 +1813,9 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
           }
           return {
             ...prev,
+            isLocked: mergedSettings.isLocked !== undefined
+              ? Boolean(mergedSettings.isLocked)
+              : (mergedSettings.lockChallenge ? Boolean(mergedSettings.lockChallenge.isLocked) : prev.isLocked),
             childSettings: {
               ...prev.childSettings,
               [effectiveChildId]: {
@@ -1643,9 +1836,7 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             safeZones: mergedSettings.safeZones || prev.safeZones,
             activeReminder: mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder,
             lastVoiceGuide: mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide,
-            screenTime: mergedSettings.screenTimeLimitMinutes !== undefined
-              ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
-              : prev.screenTime,
+            screenTime: mergedScreenTime,
           };
         });
       }
@@ -1721,6 +1912,17 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
       }
     });
     activeKidUnsubs.push(unsubPcTelemetry);
+
+    // Subscribe Safe Zones from Parent on Kid Device so geofencing has live rules
+    const unsubSafeZones = subscribeSafeZonesFromCloud(parentId, (zones) => {
+      if (zones && zones.length > 0) {
+        applyCloudStateUpdate((prev) => ({
+          ...prev,
+          safeZones: zones,
+        }));
+      }
+    });
+    activeKidUnsubs.push(unsubSafeZones);
 
     return;
   }
@@ -1810,20 +2012,38 @@ export async function syncAllChildrenFromCloud(explicitParentId?: string): Promi
     if (cloudChildren && cloudChildren.length > 0) {
       applyCloudStateUpdate((prev) => {
         const cloudIds = new Set(cloudChildren.map((c) => c.id));
-        const preservedLocal = prev.children.filter((c) => !cloudIds.has(c.id));
+        const hasRealCloudChildren = cloudChildren.some(
+          (c) => c.id && !['child_1', 'child_2', 'child_3'].includes(c.id)
+        );
+        const preservedLocal = prev.children.filter((c) => {
+          if (cloudIds.has(c.id)) return false;
+          if (hasRealCloudChildren && ['child_1', 'child_2', 'child_3'].includes(c.id)) return false;
+          if (!isSimulatorMode() && ['child_1', 'child_2', 'child_3'].includes(c.id)) return false;
+          return true;
+        });
         const mergedChildren = [
+          ...cloudChildren
+            .filter((cc) => isSimulatorMode() || !['child_1', 'child_2', 'child_3'].includes(cc.id))
+            .map((cc) => {
+              const existing = prev.children.find((c) => c.id === cc.id);
+              return {
+                ...(existing || {}),
+                ...cc,
+              };
+            }),
           ...preservedLocal,
-          ...cloudChildren.map((cc) => {
-            const existing = prev.children.find((c) => c.id === cc.id);
-            return {
-              ...(existing || {}),
-              ...cc,
-            };
-          }),
         ];
 
-        const curIdValid = mergedChildren.some((c) => c.id === prev.selectedChildId);
-        const nextSelectedChildId = curIdValid ? prev.selectedChildId : (mergedChildren[0]?.id || '');
+        let nextSelectedChildId = prev.selectedChildId;
+        const curIdValid = mergedChildren.some((c) => c.id === nextSelectedChildId);
+        const isCurrentDemo = ['child_1', 'child_2', 'child_3'].includes(nextSelectedChildId);
+
+        // Auto-switch to real paired child if currently on demo mock child
+        if (!curIdValid || (isCurrentDemo && hasRealCloudChildren)) {
+          const realChild = mergedChildren.find((c) => !['child_1', 'child_2', 'child_3'].includes(c.id));
+          nextSelectedChildId = realChild ? realChild.id : (mergedChildren[0]?.id || '');
+        }
+
         const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
 
         return {
@@ -2286,6 +2506,22 @@ export const useAppState = () => {
 
     const isSilent = isSilentRemoteCommand(command, title);
 
+    // 🛡️ Anti-Spam Guard: Block repeated rapid clicks on the same command for this child
+    if (!isSilent) {
+      const cooldownKey = `${childId}:${command}`;
+      const lastSent = lastSentCommandMap.get(cooldownKey) || 0;
+      if (now - lastSent < COMMAND_COOLDOWN_MS) {
+        const waitSec = Math.ceil((COMMAND_COOLDOWN_MS - (now - lastSent)) / 1000);
+        showSystemNotification(`⏳ Đang xử lý lệnh`, {
+          body: `Lệnh "${title}" đang được gửi đi. Vui lòng chờ ${waitSec} giây!`,
+          soundType: 'default',
+          tag: `spam_${command}`,
+        });
+        return '';
+      }
+      lastSentCommandMap.set(cooldownKey, now);
+    }
+
     if (!isSilent) {
       // 1. Mark as pending immediately in state for interactive commands
       const pendingStatus: CommandAckStatus = {
@@ -2730,7 +2966,44 @@ export const useAppState = () => {
       lockType,
     };
 
-    saveAndNotify({ ...state, lockChallenge: fullState });
+    const updatedChildSettings = { ...state.childSettings };
+    const curChildId = state.selectedChildId || getActiveChildId();
+    if (curChildId && updatedChildSettings[curChildId]) {
+      updatedChildSettings[curChildId] = {
+        ...updatedChildSettings[curChildId],
+        lockChallenge: fullState,
+        isLocked: lockType !== 'none',
+        smartRoutines: {
+          ...updatedChildSettings[curChildId].smartRoutines,
+          ...(lockType === 'mealtime' ? { mealtimeLock: true } : {}),
+          ...(lockType === 'bedtime' ? { bedtimeLock: true } : {}),
+        },
+      };
+    } else {
+      Object.keys(updatedChildSettings).forEach((cid) => {
+        updatedChildSettings[cid] = {
+          ...updatedChildSettings[cid],
+          lockChallenge: fullState,
+          isLocked: lockType !== 'none',
+          smartRoutines: {
+            ...updatedChildSettings[cid].smartRoutines,
+            ...(lockType === 'mealtime' ? { mealtimeLock: true } : {}),
+            ...(lockType === 'bedtime' ? { bedtimeLock: true } : {}),
+          },
+        };
+      });
+    }
+
+    saveAndNotify({
+      ...state,
+      lockChallenge: fullState,
+      smartRoutines: {
+        ...state.smartRoutines,
+        ...(lockType === 'mealtime' ? { mealtimeLock: true } : {}),
+        ...(lockType === 'bedtime' ? { bedtimeLock: true } : {}),
+      },
+      childSettings: updatedChildSettings,
+    }, curChildId);
     eventBus.publish('LOCK_CHALLENGE_UPDATED', fullState, 'parent');
     const parentId = getActiveParentId();
     const targetChildId = state.selectedChildId;
@@ -2746,18 +3019,56 @@ export const useAppState = () => {
   };
 
   const unlockDevice = () => {
-    const updated: LockChallengeState = {
+    const updatedLock: LockChallengeState = {
       ...state.lockChallenge,
       isLocked: false,
       lockType: 'none',
+      title: '',
+      description: '',
     };
-    saveAndNotify({ ...state, lockChallenge: updated });
-    eventBus.publish('LOCK_CHALLENGE_UPDATED', updated, 'parent');
+    const updatedRoutines: SmartRoutines = {
+      ...state.smartRoutines,
+      mealtimeLock: false,
+      bedtimeLock: false,
+    };
+    const updatedChildSettings = { ...state.childSettings };
+    Object.keys(updatedChildSettings).forEach((cid) => {
+      updatedChildSettings[cid] = {
+        ...updatedChildSettings[cid],
+        lockChallenge: updatedLock,
+        smartRoutines: {
+          ...updatedChildSettings[cid].smartRoutines,
+          mealtimeLock: false,
+          bedtimeLock: false,
+        },
+        isLocked: false,
+        broadcastMessage: null,
+      };
+    });
+    saveAndNotify({
+      ...state,
+      lockChallenge: updatedLock,
+      smartRoutines: updatedRoutines,
+      broadcastMessage: null,
+      childSettings: updatedChildSettings,
+    });
+    eventBus.publish('LOCK_CHALLENGE_UPDATED', updatedLock, 'parent');
+    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
     const parentId = getActiveParentId();
     const targetChildId = state.selectedChildId;
     const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
     if (parentId && targetChildId && !isKidAppMode()) {
       sendRemoteCommandToKid(parentId, targetChildId, 'unlock_now', undefined, targetChild?.name).catch(() => {});
+      syncChildSettingsToCloud(parentId, targetChildId, {
+        isLocked: false,
+        lockChallenge: updatedLock,
+        smartRoutines: {
+          ...(updatedChildSettings[targetChildId]?.smartRoutines || {}),
+          mealtimeLock: false,
+          bedtimeLock: false,
+        },
+        broadcastMessage: null,
+      }, targetChild?.name).catch(() => {});
     }
   };
 
@@ -3173,6 +3484,19 @@ export const useAppState = () => {
     const parentId = getActiveParentId();
     const kidPaired = getKidDevicePairedInfo();
     const effectiveChildId = kidPaired?.childId || state.selectedChildId;
+    const now = Date.now();
+    const lastReqTime = lastTimeRequestMap.get(effectiveChildId) || 0;
+    if (now - lastReqTime < TIME_REQUEST_COOLDOWN_MS) {
+      const waitSec = Math.ceil((TIME_REQUEST_COOLDOWN_MS - (now - lastReqTime)) / 1000);
+      showSystemNotification(`⏳ Đang chờ bố mẹ phản hồi`, {
+        body: `Con vừa gửi yêu cầu rồi, hãy đợi bố mẹ trả lời trong ${waitSec} giây nhé!`,
+        soundType: 'default',
+        tag: 'spam_time_req',
+      });
+      return;
+    }
+    lastTimeRequestMap.set(effectiveChildId, now);
+
     const targetChild = state.children.find((c) => c.id === effectiveChildId) || state.child;
     const childName = kidPaired?.childName || targetChild?.name || 'Bé';
     const req = {
@@ -3232,8 +3556,13 @@ export const useAppState = () => {
       title: 'Thiết bị đang bị khóa từ xa',
       description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
     };
+    const updatedChildren = (state.children || []).map((c) =>
+      c.id === targetId ? { ...c, isLocked: true, lockType: 'instant', lockTitle: updatedLock.title } : c
+    );
     saveAndNotify({
       ...state,
+      children: updatedChildren,
+      child: state.child?.id === targetId ? { ...state.child, isLocked: true, lockType: 'instant', lockTitle: updatedLock.title } : state.child,
       lockChallenge: updatedLock,
       childSettings: {
         ...state.childSettings,
@@ -3253,25 +3582,61 @@ export const useAppState = () => {
   const unlockChildDeviceNow = (childId?: string) => {
     const targetId = childId || state.selectedChildId;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    const curUsedMins = currentSettings.screenTime?.todayTotalMinutes || 0;
+    const curLimitMins = currentSettings.screenTimeLimitMinutes || 135;
+    const effectiveLimit = curUsedMins >= curLimitMins ? (curUsedMins + 15) : curLimitMins;
+
     const updatedLock: LockChallengeState = {
       ...currentSettings.lockChallenge,
       isLocked: false,
       lockType: 'none',
+      title: '',
+      description: '',
     };
+    const updatedRoutines: SmartRoutines = {
+      ...currentSettings.smartRoutines,
+      mealtimeLock: false,
+      bedtimeLock: false,
+    };
+    const updatedChildren = (state.children || []).map((c) =>
+      c.id === targetId ? { ...c, isLocked: false, lockType: 'none', lockTitle: '' } : c
+    );
     saveAndNotify({
       ...state,
+      children: updatedChildren,
+      child: state.child?.id === targetId ? { ...state.child, isLocked: false, lockType: 'none', lockTitle: '' } : state.child,
       lockChallenge: updatedLock,
+      smartRoutines: {
+        ...state.smartRoutines,
+        mealtimeLock: false,
+        bedtimeLock: false,
+      },
+      broadcastMessage: null,
       childSettings: {
         ...state.childSettings,
         [targetId]: {
           ...currentSettings,
+          screenTimeLimitMinutes: effectiveLimit,
           lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
           isLocked: false,
+          broadcastMessage: null,
         },
       },
     });
     if (!isKidAppMode()) {
       dispatchRemoteCommand('unlock_now', undefined, targetId, 'Mở khóa thiết bị 🔓');
+      const parentId = getActiveParentId();
+      if (parentId) {
+        const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+        syncChildSettingsToCloud(parentId, targetId, {
+          screenTimeLimitMinutes: effectiveLimit,
+          isLocked: false,
+          lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
+          broadcastMessage: null,
+        }, targetChild?.name).catch(() => {});
+      }
     }
   };
 
@@ -3284,17 +3649,37 @@ export const useAppState = () => {
       ...currentSettings.lockChallenge,
       isLocked: false,
       lockType: 'none',
+      title: '',
+      description: '',
     };
+    const updatedRoutines: SmartRoutines = {
+      ...currentSettings.smartRoutines,
+      mealtimeLock: false,
+      bedtimeLock: false,
+    };
+    const updatedChildren = (state.children || []).map((c) =>
+      c.id === targetId ? { ...c, isLocked: false, lockType: 'none', lockTitle: '' } : c
+    );
     saveAndNotify({
       ...state,
+      children: updatedChildren,
+      child: state.child?.id === targetId ? { ...state.child, isLocked: false, lockType: 'none', lockTitle: '' } : state.child,
       lockChallenge: updatedLock,
+      smartRoutines: {
+        ...state.smartRoutines,
+        mealtimeLock: false,
+        bedtimeLock: false,
+      },
+      broadcastMessage: null,
       childSettings: {
         ...state.childSettings,
         [targetId]: {
           ...currentSettings,
           screenTimeLimitMinutes: newLimit,
           lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
           isLocked: false,
+          broadcastMessage: null,
         },
       },
     });
@@ -3303,6 +3688,27 @@ export const useAppState = () => {
         dispatchRemoteCommand('unlock_now', { minutes: -1 }, targetId, 'Mở khóa dùng tự do 🔓');
       } else {
         dispatchRemoteCommand('extend_time', { minutes }, targetId, `Cộng thêm +${minutes} phút ⏱️`);
+      }
+      const parentId = getActiveParentId();
+      if (parentId) {
+        const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+        syncChildSettingsToCloud(parentId, targetId, {
+          screenTimeLimitMinutes: newLimit,
+          isLocked: false,
+          lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
+          broadcastMessage: null,
+        }, targetChild?.name).catch(() => {});
+      }
+    } else {
+      // Kid device local extension: sync new limit to Cloud & Server so parent state matches
+      const parentId = getActiveParentId();
+      if (parentId && targetId) {
+        const targetChild = state.children.find((c) => c.id === targetId) || state.child;
+        syncChildSettingsToCloud(parentId, targetId, {
+          screenTimeLimitMinutes: newLimit,
+          isLocked: false,
+        }, targetChild?.name).catch(() => {});
       }
     }
   };
@@ -3950,6 +4356,7 @@ export const useAppState = () => {
   };
 
   const deleteChild = (childId: string) => {
+    const childObj = state.children.find((c) => c.id === childId);
     const updatedChildren = state.children.filter((c) => c.id !== childId);
     const nextSelectedId = updatedChildren.length > 0 ? updatedChildren[0].id : '';
     const nextChild =
@@ -3959,9 +4366,13 @@ export const useAppState = () => {
         ? INITIAL_CHILDREN[0]
         : getInitialRealState().child;
 
+    const nextChildSettings = { ...state.childSettings };
+    delete nextChildSettings[childId];
+
     const nextState: AppState = {
       ...state,
       children: updatedChildren,
+      childSettings: nextChildSettings,
       selectedChildId: nextSelectedId,
       child: nextChild,
     };
@@ -3969,7 +4380,65 @@ export const useAppState = () => {
 
     const activeParentId = getActiveParentId();
     if (activeParentId) {
-      deleteChildFromCloud(activeParentId, childId).catch(() => {});
+      deleteChildFromCloud(activeParentId, childId, childObj?.name).catch(() => {});
+    }
+    serverApiClient.deleteChild(activeParentId || 'family_primary', childId).catch(() => {});
+  };
+
+  const unlinkChildDevice = (childId: string, deviceId: string) => {
+    const targetChild = state.children.find((c) => c.id === childId);
+    if (!targetChild || !targetChild.devices) return;
+
+    const updatedDevices = targetChild.devices.filter((d) => d.deviceId !== deviceId);
+    const nextActiveDevId = targetChild.activeDeviceId === deviceId
+      ? (updatedDevices.length > 0 ? updatedDevices[0].deviceId : undefined)
+      : targetChild.activeDeviceId;
+
+    const updatedChild: ChildProfile = {
+      ...targetChild,
+      devices: updatedDevices,
+      activeDeviceId: nextActiveDevId,
+    };
+
+    const updatedChildren = state.children.map((c) => (c.id === childId ? updatedChild : c));
+    const isSelected = state.selectedChildId === childId;
+
+    const nextState: AppState = {
+      ...state,
+      children: updatedChildren,
+      child: isSelected ? updatedChild : state.child,
+    };
+    saveAndNotify(nextState);
+
+    const activeParentId = getActiveParentId();
+    if (activeParentId) {
+      saveChildProfileToCloud(activeParentId, updatedChild).catch(() => {});
+    }
+  };
+
+  const updateChildProfile = (childId: string, updates: Partial<ChildProfile>) => {
+    const targetChild = state.children.find((c) => c.id === childId);
+    if (!targetChild) return;
+
+    const updatedChild: ChildProfile = {
+      ...targetChild,
+      ...updates,
+      id: childId,
+    };
+
+    const updatedChildren = state.children.map((c) => (c.id === childId ? updatedChild : c));
+    const isSelected = state.selectedChildId === childId;
+
+    const nextState: AppState = {
+      ...state,
+      children: updatedChildren,
+      child: isSelected ? updatedChild : state.child,
+    };
+    saveAndNotify(nextState);
+
+    const activeParentId = getActiveParentId();
+    if (activeParentId) {
+      saveChildProfileToCloud(activeParentId, updatedChild).catch(() => {});
     }
   };
 
@@ -4114,6 +4583,7 @@ export const useAppState = () => {
         ...updatedChildSettings[cid],
         smartRoutines: { ...updatedChildSettings[cid].smartRoutines, mealtimeLock: true },
         lockChallenge: lock,
+        isLocked: true,
       };
     });
 
@@ -4127,6 +4597,28 @@ export const useAppState = () => {
     eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'parent');
     eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
     eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'mealtimeLock', enabled: true }, 'parent');
+
+    const parentId = getActiveParentId();
+    if (parentId && !isKidAppMode()) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          sendRemoteCommandToKid(parentId, c.id, 'lock_now', {
+            lockType: 'mealtime',
+            title: lock.title,
+            description: lock.description,
+          }, c.name).catch(() => {});
+          syncChildSettingsToCloud(parentId, c.id, {
+            isLocked: true,
+            lockChallenge: lock,
+            smartRoutines: {
+              ...(updatedChildSettings[c.id]?.smartRoutines || {}),
+              mealtimeLock: true,
+            },
+          }, c.name).catch(() => {});
+        }
+      });
+    }
   };
 
   const lockAllChildrenForBedtime = () => {
@@ -4144,6 +4636,7 @@ export const useAppState = () => {
         ...updatedChildSettings[cid],
         smartRoutines: { ...updatedChildSettings[cid].smartRoutines, bedtimeLock: true },
         lockChallenge: lock,
+        isLocked: true,
       };
     });
 
@@ -4157,6 +4650,28 @@ export const useAppState = () => {
     eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'parent');
     eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
     eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'bedtimeLock', enabled: true }, 'parent');
+
+    const parentId = getActiveParentId();
+    if (parentId && !isKidAppMode()) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          sendRemoteCommandToKid(parentId, c.id, 'lock_now', {
+            lockType: 'bedtime',
+            title: lock.title,
+            description: lock.description,
+          }, c.name).catch(() => {});
+          syncChildSettingsToCloud(parentId, c.id, {
+            isLocked: true,
+            lockChallenge: lock,
+            smartRoutines: {
+              ...(updatedChildSettings[c.id]?.smartRoutines || {}),
+              bedtimeLock: true,
+            },
+          }, c.name).catch(() => {});
+        }
+      });
+    }
   };
 
   const unlockAllChildren = () => {
@@ -4167,28 +4682,64 @@ export const useAppState = () => {
       title: '',
       description: '',
     };
+    const updatedRoutines = {
+      ...state.smartRoutines,
+      mealtimeLock: false,
+      bedtimeLock: false,
+    };
 
     Object.keys(updatedChildSettings).forEach((cid) => {
+      const childSet = updatedChildSettings[cid];
+      const usedMins = childSet.screenTime?.todayTotalMinutes || 0;
+      const limitMins = childSet.screenTimeLimitMinutes || 135;
+      const effectiveLimit = usedMins >= limitMins ? (usedMins + 15) : limitMins;
+
       updatedChildSettings[cid] = {
-        ...updatedChildSettings[cid],
+        ...childSet,
+        screenTimeLimitMinutes: effectiveLimit,
         smartRoutines: {
-          ...updatedChildSettings[cid].smartRoutines,
+          ...childSet.smartRoutines,
           mealtimeLock: false,
           bedtimeLock: false,
         },
         lockChallenge: lock,
+        isLocked: false,
+        broadcastMessage: null,
       };
     });
 
     const nextState: AppState = {
       ...state,
-      smartRoutines: { ...state.smartRoutines, mealtimeLock: false, bedtimeLock: false },
+      smartRoutines: updatedRoutines,
       lockChallenge: lock,
+      broadcastMessage: null,
       childSettings: updatedChildSettings,
     };
     saveAndNotify(nextState);
     eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'parent');
+    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
     eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'unlockAll' }, 'parent');
+
+    const parentId = getActiveParentId();
+    if (parentId && !isKidAppMode()) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          sendRemoteCommandToKid(parentId, c.id, 'unlock_now', undefined, c.name).catch(() => {});
+          syncChildSettingsToCloud(parentId, c.id, {
+            screenTimeLimitMinutes: updatedChildSettings[c.id]?.screenTimeLimitMinutes,
+            isLocked: false,
+            lockChallenge: lock,
+            smartRoutines: {
+              ...(updatedChildSettings[c.id]?.smartRoutines || {}),
+              mealtimeLock: false,
+              bedtimeLock: false,
+            },
+            broadcastMessage: null,
+          }, c.name).catch(() => {});
+        }
+      });
+    }
   };
 
   const toggleStudyModeAll = (enable?: boolean) => {
@@ -4933,6 +5484,8 @@ export const useAppState = () => {
     switchChild,
     addChild,
     deleteChild,
+    unlinkChildDevice,
+    updateChildProfile,
     updateChildAvatar,
     giftStarsToChild,
     assignTaskToChild,
@@ -5003,6 +5556,7 @@ export const useAppState = () => {
     buzzKidPhone,
     extendChildTimeNow,
     dispatchRemoteCommand,
+    isCommandOnCooldown,
     clearLastCommandAck,
     syncWithCloudForChild,
     syncAllChildrenFromCloud,

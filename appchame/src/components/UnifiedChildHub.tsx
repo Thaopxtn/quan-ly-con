@@ -43,6 +43,7 @@ import { subscribeCloudChatMessages } from '../../../shared/firebase/cloudSyncSe
 import { Kids360ScreenTimeGauge } from './Kids360ScreenTimeGauge';
 import { Kids360DayTimeline } from './Kids360DayTimeline';
 import { ScheduleConfigModal } from './ScheduleConfigModal';
+import { ManageChildrenModal } from './ManageChildrenModal';
 
 const REWARD_PRESET_ICONS = [
   '🎁', '🎮', '🍦', '📚', '🍕', '🎡', '🧸', '🎟️', '🚲', '🎧', '🎨', '⚽', '👗', '🛹', '🎸', '📱', '🏊', '🍔', '🎬', '🏸', '🚀', '🏎️'
@@ -111,6 +112,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [showScheduleConfigModal, setShowScheduleConfigModal] = useState(false);
   const [showPairModal, setShowPairModal] = useState(false);
+  const [showManageModal, setShowManageModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
   const [unreadParentChatCount, setUnreadParentChatCount] = useState<number>(0);
@@ -343,8 +345,8 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
         </div>
       )}
 
-      {/* 1. Sleek Child Switcher Pills (If multiple kids) */}
-      {children.length > 1 && (
+      {/* 1. Sleek Child Switcher Pills */}
+      {children.length > 0 && (
         <div className="flex items-center space-x-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar select-none">
           {children.map((c) => {
             const isCur = c.id === selectedChildId;
@@ -373,6 +375,15 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => setShowManageModal(true)}
+            className="px-2.5 py-1.5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 hover:text-blue-600 text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+            title="Quản lý danh sách con và xóa bé"
+          >
+            <SlidersHorizontal size={13} />
+            <span>Quản lý</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowPairModal(true)}
@@ -463,47 +474,66 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
           </div>
 
           {/* CENTER CHILD (Spotlight Avatar Only) */}
-          {activeChild && (
-            <div className="flex flex-col items-center">
-              <div className="relative">
-                {/* Active Status Pill */}
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[9.5px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 z-10 whitespace-nowrap">
-                  <Check size={10} />
-                  <span>ĐANG CHỌN</span>
-                </div>
-
-                {/* Avatar with Elegant Ring - Clickable for Avatar Picker */}
-                <div
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowAvatarModal(true);
-                  }}
-                  className="relative p-1 rounded-full ring-4 ring-blue-500/20 bg-white shadow-soft transition-all duration-300 cursor-pointer group"
-                  title="Bấm để đổi avatar cho con"
-                >
-                  <img
-                    src={activeChild.avatar}
-                    alt={activeChild.name}
-                    className="w-20 h-20 rounded-full object-cover border-2 border-white group-hover:scale-105 transition duration-200"
-                  />
-                  {/* Camera overlay hover badge */}
-                  <div className="absolute inset-1 rounded-full bg-slate-900/40 opacity-0 group-hover:opacity-100 transition duration-200 flex flex-col items-center justify-center text-white">
-                    <Camera size={18} className="text-white drop-shadow" />
-                    <span className="text-[9px] font-bold">Đổi ảnh</span>
+          {activeChild && (() => {
+            const isActiveChildLocked = Boolean(
+              activeChild.isLocked ||
+              state.childSettings?.[activeChild.id]?.isLocked ||
+              (activeChild.id === selectedChildId && state.lockChallenge?.isLocked)
+            );
+            return (
+              <div className="flex flex-col items-center">
+                <div className="relative">
+                  {/* Active Status Pill */}
+                  <div className={`absolute -top-3 left-1/2 -translate-x-1/2 text-white text-[9.5px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 z-10 whitespace-nowrap ${
+                    isActiveChildLocked ? 'bg-rose-600' : 'bg-blue-600'
+                  }`}>
+                    {isActiveChildLocked ? <span>🔒 ĐANG KHÓA</span> : <><Check size={10} /><span>ĐANG CHỌN</span></>}
                   </div>
-                  <span
-                    className={`absolute bottom-0 right-1 w-4 h-4 rounded-full border-2 border-white shadow-xs ${
-                      activeChild.status === 'online'
-                        ? 'bg-emerald-500 ring-2 ring-emerald-200'
-                        : activeChild.status === 'studying'
-                        ? 'bg-indigo-500 ring-2 ring-indigo-200'
-                        : 'bg-amber-500'
+
+                  {/* Avatar with Elegant Ring - Clickable for Avatar Picker */}
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowAvatarModal(true);
+                    }}
+                    className={`relative p-1 rounded-full bg-white shadow-soft transition-all duration-300 cursor-pointer group ${
+                      isActiveChildLocked ? 'ring-4 ring-rose-500/40' : 'ring-4 ring-blue-500/20'
                     }`}
-                  />
+                    title="Bấm để đổi avatar cho con"
+                  >
+                    <img
+                      src={activeChild.avatar}
+                      alt={activeChild.name}
+                      className="w-20 h-20 rounded-full object-cover border-2 border-white group-hover:scale-105 transition duration-200"
+                    />
+                    {/* Camera overlay hover badge */}
+                    <div className="absolute inset-1 rounded-full bg-slate-900/40 opacity-0 group-hover:opacity-100 transition duration-200 flex flex-col items-center justify-center text-white">
+                      <Camera size={18} className="text-white drop-shadow" />
+                      <span className="text-[9px] font-bold">Đổi ảnh</span>
+                    </div>
+                    {isActiveChildLocked ? (
+                      <span
+                        className="absolute bottom-0 right-1 w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[10px] border-2 border-white shadow-xs animate-bounce"
+                        title="Điện thoại đang bị khóa"
+                      >
+                        🔒
+                      </span>
+                    ) : (
+                      <span
+                        className={`absolute bottom-0 right-1 w-4 h-4 rounded-full border-2 border-white shadow-xs ${
+                          activeChild.status === 'online'
+                            ? 'bg-emerald-500 ring-2 ring-emerald-200'
+                            : activeChild.status === 'studying'
+                            ? 'bg-indigo-500 ring-2 ring-indigo-200'
+                            : 'bg-amber-500'
+                        }`}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Right Arrow & Next Child */}
           <div className="flex items-center space-x-2">
@@ -542,7 +572,13 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
         </div>
 
         {/* Centered Child Name, Badges & Age (School and Grade are hidden) */}
-        {activeChild && (
+        {activeChild && (() => {
+          const isActiveChildLocked = Boolean(
+            activeChild.isLocked ||
+            state.childSettings?.[activeChild.id]?.isLocked ||
+            (activeChild.id === selectedChildId && state.lockChallenge?.isLocked)
+          );
+          return (
           <div className="mt-3 text-center space-y-1">
             <div className="flex items-center justify-center space-x-1.5 flex-wrap gap-y-1">
               <h4 className="text-base font-bold text-slate-900 tracking-tight">
@@ -557,6 +593,14 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
               }`}>
                 {activeChild.status === 'online' ? 'Online' : activeChild.status === 'studying' ? 'Đang học bài' : 'Nghỉ ngơi'}
               </span>
+
+              {/* Real-time Locked Badge */}
+              {isActiveChildLocked && (
+                <span className="px-2 py-0.5 text-[10px] font-black rounded-full border bg-rose-100 text-rose-800 border-rose-300 flex items-center gap-1 shadow-2xs animate-pulse">
+                  <span>🔒</span>
+                  <span>Đang khóa máy ({state.childSettings?.[activeChild.id]?.lockTitle || activeChild.lockTitle || (activeChild.id === selectedChildId ? state.lockChallenge?.title : '') || 'Thực tế'})</span>
+                </span>
+              )}
 
               {/* Smart Adaptive Sync Status Badge */}
               {activeChild.isScreenOn === false || activeChild.screenState === 'screen_off' ? (
@@ -765,8 +809,24 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                 </button>
               </div>
             )}
+
+            {/* Quick Manage Child Profile / Delete Link */}
+            <div className="pt-2 border-t border-slate-100/80 mt-2 flex items-center justify-center gap-3 text-xs">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowManageModal(true);
+                }}
+                className="text-[11px] text-slate-600 hover:text-blue-600 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+              >
+                <Users size={12} className="text-blue-600" />
+                <span>Quản lý hồ sơ & Xóa bé ({children.length} bé)</span>
+              </button>
+            </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* 3. DẤU CHẤM Ở DƯỚI ĐỂ BẤM CHỌN (Minimalist Dots Pagination) */}
         <div className="mt-3 flex items-center justify-center space-x-1.5">
@@ -1676,6 +1736,10 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
           childId={activeChild?.id || 'child_1'}
           childName={activeChild?.name || 'Bé'}
           onClose={() => setShowPairModal(false)}
+          onSuccess={(cid) => {
+            if (cid) switchChild(cid);
+            setShowPairModal(false);
+          }}
         />
       )}
 
@@ -1771,6 +1835,14 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Manage Children (Edit, Unlink Devices, Delete Child) */}
+      {showManageModal && (
+        <ManageChildrenModal
+          onClose={() => setShowManageModal(false)}
+          onChildSwitched={(cid) => switchChild(cid)}
+        />
       )}
     </div>
   );

@@ -232,11 +232,24 @@ export async function createChildPairingCode(
   });
 
   // Save to Local PC Server (Primary)
+  let savedToServer = false;
   try {
     await serverApiClient.createPairing(sanitized);
+    savedToServer = true;
     console.log(`[Pairing] ✅ Mã ghép đôi ${code} đã tạo trên Máy Chủ cho ${session.childName}`);
   } catch (e: any) {
-    console.warn("Server pairing write error:", e?.message);
+    console.warn("Server pairing write error, retrying with fresh cloud URL...", e?.message);
+    try {
+      const refreshedUrl = await serverApiClient.resolveServerUrlFromCloud(true);
+      if (refreshedUrl) {
+        sanitized.serverUrl = refreshedUrl;
+        await serverApiClient.createPairing(sanitized);
+        savedToServer = true;
+        console.log(`[Pairing] ✅ Mã ghép đôi ${code} đã tạo trên Máy Chủ thành công sau khi làm mới URL!`);
+      }
+    } catch (retryErr: any) {
+      console.warn("Server pairing retry failed:", retryErr?.message);
+    }
   }
 
   // Non-blocking Firestore write (optional backup)
@@ -503,6 +516,13 @@ export async function submitChildPairingCode(
 
   if (!session) {
     recordFailedAttempt();
+    const serverHealth = await serverApiClient.checkHealth();
+    if (!serverHealth.ok) {
+      return {
+        success: false,
+        error: "Không thể kết nối đến Máy Chủ (máy tính). Vui lòng đảm bảo máy tính đã bật hoặc hai thiết bị đang kết nối cùng mạng Wi-Fi/Internet."
+      };
+    }
     return { success: false, error: "Mã ghép đôi không chính xác hoặc chưa được tạo từ ứng dụng Cha Mẹ." };
   }
 
@@ -633,7 +653,7 @@ export function subscribePairingSession(
   const serverPoll = setInterval(async () => {
     try {
       const s = await serverApiClient.getPairing(cleanCode);
-      if (s && s.status === "paired") {
+      if (s && (s.status === "paired" || s.status === "connected")) {
         onUpdate(s);
       }
     } catch (_) {}
@@ -675,7 +695,7 @@ export function subscribePairingSession(
       if (raw) {
         const sessions = JSON.parse(raw);
         const s = sessions[cleanCode];
-        if (s && s.status === "paired") {
+        if (s && (s.status === "paired" || s.status === "connected")) {
           onUpdate(s);
         }
       }

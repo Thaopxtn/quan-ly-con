@@ -50,7 +50,7 @@ import {
   Activity,
   MapPin,
 } from 'lucide-react';
-import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId } from '@shared/store';
+import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId, getLocalDateString } from '@shared/store';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
 import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
@@ -73,6 +73,7 @@ import {
   sendNativeMediaKey,
   getNativeUsageStats,
   getNativeHealthData,
+  getNativeBatteryInfo,
   type RealInstalledApp,
 } from './services/nativePermissionsService';
 import { showSystemNotification, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
@@ -274,6 +275,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const isLiveTrackingActiveRef = React.useRef<boolean>(false);
   const liveTrackingExpiresAtRef = React.useRef<number>(0);
   const lastLowBatteryAlertRef = React.useRef<number>(0);
+  const lastTickRef = React.useRef<number>(Date.now());
+  const sensorValuesRef = React.useRef<{accelX?: number, accelY?: number, accelZ?: number}>({});
+  const bypassedRoutinesRef = React.useRef<{ mealtime?: boolean; bedtime?: boolean }>({});
   const [isSosButtonCooldown, setIsSosButtonCooldown] = useState(false);
 
   const handleKidTriggerSOS = (source: 'header' | 'button') => {
@@ -871,7 +875,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const timers = targetSettings.timers || [];
   const scheduleEvents = targetSettings.scheduleEvents || [];
   const sensors = targetSettings.sensorValues;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateString();
 
   // Challenge solver states
   const [mathInput, setMathInput] = useState('');
@@ -1001,15 +1005,6 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     }
   }, [activeParentId, targetChildId, child.name]);
 
-  // Synchronize enforcement rules to Android native Accessibility Service whenever apps/rules/kiosk/lock change
-  useEffect(() => {
-    updateNativeEnforcementRules({
-      isLocked: Boolean(lockChallenge?.isLocked),
-      kioskEnabled: Boolean(kioskMode?.isEnabled),
-      kioskPackage: kioskMode?.pinnedAppId || '',
-      blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
-    }).catch(() => {});
-  }, [apps, studyModeOnly, kioskMode?.isEnabled, kioskMode?.pinnedAppId, lockChallenge?.isLocked]);
 
   // Remote Control Commands Execution (Decoupled from local state changes to prevent re-render loops)
   useEffect(() => {
@@ -1059,10 +1054,11 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           wakeUpDevice().catch(() => {});
           (async () => {
             try {
-              const [hwStatus, usageStats, healthData] = await Promise.all([
+              const [hwStatus, usageStats, healthData, nativeBattery] = await Promise.all([
                 getNativeHardwareStatus().catch(() => ({ volume: 65, brightness: 70 })),
                 getNativeUsageStats().catch(() => ({ isGranted: false, totalMinutesToday: 0, appsUsage: [] })),
-                getNativeHealthData().catch(() => ({ sensorAvailable: true, dailySteps: 3420, isActivityRecognitionGranted: true })),
+                getNativeHealthData().catch(() => ({ sensorAvailable: false, dailySteps: 0, isActivityRecognitionGranted: false })),
+                getNativeBatteryInfo().catch(() => ({ level: -1, isCharging: false })),
               ]);
 
               const todayMins = usageStats.totalMinutesToday || screenTimeRef.current?.todayTotalMinutes || 0;
@@ -1080,9 +1076,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 stepCount: healthData.dailySteps || targetSettingsRef.current.sensorValues?.stepCount || 0,
               };
 
-              const curLat = lastTelemetryRef.current?.lat || curChild.lat || 21.0285;
-              const curLng = lastTelemetryRef.current?.lng || curChild.lng || 105.8542;
-              const curBattery = lastTelemetryRef.current?.battery || curChild.battery || 85;
+              const curLat = typeof lastTelemetryRef.current?.lat === 'number' && Number.isFinite(lastTelemetryRef.current.lat)
+                ? lastTelemetryRef.current.lat
+                : (typeof curChild.lat === 'number' && Number.isFinite(curChild.lat) ? curChild.lat : 0);
+              const curLng = typeof lastTelemetryRef.current?.lng === 'number' && Number.isFinite(lastTelemetryRef.current.lng)
+                ? lastTelemetryRef.current.lng
+                : (typeof curChild.lng === 'number' && Number.isFinite(curChild.lng) ? curChild.lng : 0);
+              const curBattery = nativeBattery && nativeBattery.level >= 0
+                ? nativeBattery.level
+                : (typeof lastTelemetryRef.current?.battery === 'number' ? lastTelemetryRef.current.battery : (curChild.battery ?? 100));
               const curSpeed = lastTelemetryRef.current?.speed || 0;
 
               // 1. Upload fresh comprehensive telemetry
@@ -1103,6 +1105,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   screenTimeUsedMinutes: todayMins,
                   activeOpenedApp: typeof activeOpenedAppRef.current === 'object' && activeOpenedAppRef.current ? activeOpenedAppRef.current.name : (typeof activeOpenedAppRef.current === 'string' ? activeOpenedAppRef.current : ''),
                   installedAppsCount: realInstalledAppsRef.current.length || curApps.length,
+                  isLocked: Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked),
+                  lockType: lockChallengeRef.current?.lockType || targetSettingsRef.current?.lockType || (lockChallengeRef.current?.isLocked ? 'instant' : undefined),
+                  lockTitle: lockChallengeRef.current?.title || targetSettingsRef.current?.lockTitle || (lockChallengeRef.current?.isLocked ? 'Thiết bị đang bị khóa' : undefined),
+                  lockedAt: lockChallengeRef.current?.lockedAt || undefined,
                 },
                 true,
                 curChild.name
@@ -1176,6 +1182,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 isScreenOn: lastTelemetryRef.current.isScreenOn,
                 screenState: lastTelemetryRef.current.isScreenOn ? 'active' : 'screen_off',
                 appStatus: lastTelemetryRef.current.isAppInForeground ? 'active_in_app' : 'in_background',
+                isLocked: Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked),
+                lockType: lockChallengeRef.current?.lockType || targetSettingsRef.current?.lockType || (lockChallengeRef.current?.isLocked ? 'instant' : undefined),
+                lockTitle: lockChallengeRef.current?.title || targetSettingsRef.current?.lockTitle || (lockChallengeRef.current?.isLocked ? 'Thiết bị đang bị khóa' : undefined),
+                lockedAt: lockChallengeRef.current?.lockedAt || undefined,
               },
               true,
               curChild.name
@@ -1190,12 +1200,36 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         }
         case 'lock_now':
           wakeUpDevice().catch(() => {});
-          setLockChallenge(
-            cmd.payload?.lockType || 'instant',
-            cmd.payload?.title || 'Thiết bị đang bị khóa từ xa',
-            cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
-            cmd.payload?.challengeData
-          );
+          {
+            const curLockType = cmd.payload?.lockType || 'instant';
+            const curLockTitle = cmd.payload?.title || 'Thiết bị đang bị khóa từ xa';
+            const curLockDesc = cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!';
+            setLockChallenge(
+              curLockType,
+              curLockTitle,
+              curLockDesc,
+              cmd.payload?.challengeData
+            );
+            if (lockChallengeRef.current) {
+              lockChallengeRef.current = {
+                ...lockChallengeRef.current,
+                isLocked: true,
+                lockType: curLockType,
+                title: curLockTitle,
+                description: curLockDesc,
+                lockedAt: Date.now(),
+              };
+            }
+            if (targetSettingsRef.current) {
+              targetSettingsRef.current = {
+                ...targetSettingsRef.current,
+                isLocked: true,
+                lockType: curLockType,
+                lockTitle: curLockTitle,
+                lockedAt: Date.now(),
+              };
+            }
+          }
           updateNativeEnforcementRules({
             isLocked: true,
             kioskEnabled: false,
@@ -1208,10 +1242,41 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             tag: 'cmd_lock_now',
           });
           showToast('🔒 BỐ MẸ ĐÃ TẠM KHÓA MÁY TỪ XA!');
+          uploadCurrentTelemetrySnapshot(true).catch(() => {});
           break;
         case 'unlock_now':
           wakeUpDevice().catch(() => {});
           unlockDevice();
+          if (lockChallengeRef.current) {
+            lockChallengeRef.current = {
+              ...lockChallengeRef.current,
+              isLocked: false,
+              lockType: 'none',
+              title: '',
+              description: '',
+              lockedAt: undefined,
+            };
+          }
+          if (targetSettingsRef.current) {
+            targetSettingsRef.current = {
+              ...targetSettingsRef.current,
+              isLocked: false,
+              lockType: 'none',
+              lockTitle: '',
+              lockedAt: undefined,
+            };
+          }
+          bypassedRoutinesRef.current = { mealtime: true, bedtime: true };
+          if (broadcastMessage) {
+            const bKey = broadcastMessage.id || `${broadcastMessage.title}_${broadcastMessage.message}_${broadcastMessage.timestamp}`;
+            markBroadcastDismissed(bKey);
+          }
+          // If child was locked because they reached or exceeded daily limit, extend by 15 mins so they can use the phone
+          const curUsedMins = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+          const curLimitMins = targetSettingsRef.current.screenTimeLimitMinutes || 135;
+          if (curUsedMins >= curLimitMins) {
+            extendChildTimeNow(15, targetChildId);
+          }
           updateNativeEnforcementRules({
             isLocked: false,
             kioskEnabled: Boolean(curKioskMode.isEnabled),
@@ -1224,6 +1289,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             tag: 'cmd_unlock_now',
           });
           showToast('🔓 BỐ MẸ ĐÃ MỞ KHÓA THIẾT BỊ CHO CON!');
+          uploadCurrentTelemetrySnapshot(true).catch(() => {});
           break;
         case 'extend_time':
           const extra = cmd.payload?.minutes || 15;
@@ -1570,22 +1636,28 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     isScreenOn: boolean;
     isAppInForeground: boolean;
   }>({
-    lat: child.lat,
-    lng: child.lng,
+    lat: child.lat || 0,
+    lng: child.lng || 0,
     speed: child.speed || 0,
-    battery: child.battery || 85,
+    battery: typeof child.battery === 'number' ? child.battery : 100,
     lastSent: 0,
     isScreenOn: true,
     isAppInForeground: typeof document !== 'undefined' ? !document.hidden : true,
   });
 
-  // Keep ref updated when state coordinates change
+  // Keep ref updated when state coordinates change or native battery resolves
   useEffect(() => {
+    getNativeBatteryInfo().then((bat) => {
+      if (bat && typeof bat.level === 'number' && bat.level >= 0) {
+        lastTelemetryRef.current.battery = bat.level;
+      }
+    }).catch(() => {});
+
     if (child.lat && child.lng) {
       lastTelemetryRef.current.lat = child.lat;
       lastTelemetryRef.current.lng = child.lng;
     }
-    if (child.battery) {
+    if (typeof child.battery === 'number') {
       lastTelemetryRef.current.battery = child.battery;
     }
     if (child.speed !== undefined) {
@@ -1597,17 +1669,56 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
   // 1. Active Screen Time Ticker & Auto-Lock (Ticks every 60 seconds)
   useEffect(() => {
+    // Initial check for native usage stats on mount
+    getNativeUsageStats().then((stats) => {
+      if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
+        const curMinutes = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+        if (stats.totalMinutesToday > curMinutes) {
+          incrementScreenTimeUsed(targetChildId, stats.totalMinutesToday - curMinutes);
+        }
+      }
+    }).catch(() => {});
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        const missedMinutes = Math.floor((Date.now() - lastTickRef.current) / 60000);
+        if (missedMinutes > 0) {
+          incrementScreenTimeUsed(targetChildId, missedMinutes);
+        }
+        lastTickRef.current = Date.now();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
     const ticker = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
+      lastTickRef.current = Date.now();
+      // Sync native usage stats first if granted
+      getNativeUsageStats().then((stats) => {
+        if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
+          const curMinutes = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+          if (stats.totalMinutesToday > curMinutes) {
+            incrementScreenTimeUsed(targetChildId, stats.totalMinutesToday - curMinutes);
+            return;
+          }
+        }
+      }).catch(() => {});
+
+      let timeIncremented = false;
+      if (typeof document !== 'undefined' && document.hidden) {
+        // Don't increment time, but still check limit
+      } else {
+        incrementScreenTimeUsed(targetChildId, 1);
+        timeIncremented = true;
+      }
 
       const totalLimit = targetSettings.screenTimeLimitMinutes || 135;
-      const currentUsed = (targetSettings.screenTime?.todayTotalMinutes || 0) + 1;
-
-      incrementScreenTimeUsed(targetChildId, 1);
+      const currentUsed = (targetSettings.screenTime?.todayTotalMinutes || 0) + (timeIncremented ? 1 : 0);
 
       if (currentUsed >= totalLimit && !lockChallenge.isLocked) {
         setLockChallenge(
-          'countdown',
+          'instant',
           'Đã hết thời gian dùng máy hôm nay!',
           `Bé đã dùng đủ ${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p giới hạn được bố mẹ đặt.`
         );
@@ -1616,7 +1727,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       }
     }, 60000);
 
-    return () => clearInterval(ticker);
+    return () => {
+      clearInterval(ticker);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, [targetSettings.screenTimeLimitMinutes, targetSettings.screenTime?.todayTotalMinutes, lockChallenge.isLocked, targetChildId, incrementScreenTimeUsed, setLockChallenge]);
 
   // 2. Smart Routines Clock Watcher (Mealtime & Bedtime Schedule)
@@ -1644,8 +1760,19 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     const checkRoutines = () => {
       const { mealtimeLock, mealtimeStart, mealtimeEnd, bedtimeLock, bedtimeStart, bedtimeEnd } = smartRoutines;
 
-      const inMealtime = Boolean(mealtimeLock && isCurrentTimeInRange(mealtimeStart || '11:30', mealtimeEnd || '12:30'));
-      const inBedtime = Boolean(bedtimeLock && isCurrentTimeInRange(bedtimeStart || '21:30', bedtimeEnd || '06:30'));
+      const inMealtimeRaw = isCurrentTimeInRange(mealtimeStart || '11:30', mealtimeEnd || '12:30');
+      const inBedtimeRaw = isCurrentTimeInRange(bedtimeStart || '21:30', bedtimeEnd || '06:30');
+
+      // Reset bypass once the routine time window has ended
+      if (!inMealtimeRaw) {
+        bypassedRoutinesRef.current.mealtime = false;
+      }
+      if (!inBedtimeRaw) {
+        bypassedRoutinesRef.current.bedtime = false;
+      }
+
+      const inMealtime = Boolean(mealtimeLock && inMealtimeRaw && !bypassedRoutinesRef.current.mealtime);
+      const inBedtime = Boolean(bedtimeLock && inBedtimeRaw && !bypassedRoutinesRef.current.bedtime);
 
       if (inMealtime && (!lockChallenge.isLocked || lockChallenge.lockType !== 'mealtime')) {
         setLockChallenge('mealtime', 'Đến giờ ăn cơm rồi!', 'Bé hãy cất điện thoại và cùng gia đình dùng bữa ngon miệng nhé.');
@@ -1653,9 +1780,26 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       } else if (inBedtime && (!lockChallenge.isLocked || lockChallenge.lockType !== 'bedtime')) {
         setLockChallenge('bedtime', 'Đã đến giờ đi ngủ!', 'Hãy cất máy và ngủ một giấc thật ngon để ngày mai tràn đầy năng lượng nhé.');
         speakVietnamese('Đã đến giờ đi ngủ rồi! Bé hãy tắt máy và đi ngủ sớm nhé.');
-      } else if (!inMealtime && !inBedtime && lockChallenge.isLocked && (lockChallenge.lockType === 'mealtime' || lockChallenge.lockType === 'bedtime')) {
-        unlockDevice();
-        showToast('🔓 Đã hết giờ hạn chế sinh hoạt. Thiết bị đã được mở khóa!');
+      } else if (lockChallenge.isLocked) {
+        // Unlock when time window ends OR when parent turned off the routine lock
+        const shouldUnlockMealtime = lockChallenge.lockType === 'mealtime' && !inMealtime;
+        const shouldUnlockBedtime = lockChallenge.lockType === 'bedtime' && !inBedtime;
+
+        if (shouldUnlockMealtime || shouldUnlockBedtime) {
+          const totalLimit = targetSettingsRef.current.screenTimeLimitMinutes || 135;
+          const currentUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+          
+          if (currentUsed >= totalLimit) {
+            setLockChallenge(
+              'instant',
+              'Đã hết thời gian dùng máy hôm nay!',
+              `Bé đã dùng đủ ${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p giới hạn được bố mẹ đặt.`
+            );
+          } else {
+            unlockDevice();
+            showToast('🔓 Đã hết giờ hạn chế sinh hoạt. Thiết bị đã được mở khóa!');
+          }
+        }
       }
     };
 
@@ -1688,7 +1832,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const screenOn = lastTelemetryRef.current.isScreenOn;
       const inForeground = lastTelemetryRef.current.isAppInForeground;
       const curSpeed = lastTelemetryRef.current.speed;
-      const curBattery = lastTelemetryRef.current.battery;
+      let curBattery = lastTelemetryRef.current.battery;
+      try {
+        const natBat = await getNativeBatteryInfo();
+        if (natBat && typeof natBat.level === 'number' && natBat.level >= 0) {
+          curBattery = natBat.level;
+          lastTelemetryRef.current.battery = natBat.level;
+        }
+      } catch (e) {}
       const curLat = lastTelemetryRef.current.lat;
       const curLng = lastTelemetryRef.current.lng;
 
@@ -1700,7 +1851,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const isNetworkOn = isMasterOn && curTrackingConfig.enableNetworkMonitoring !== false;
 
       // If master tracking is disabled and this is an automated tick, do not upload (sleep mode)
-      if (!isMasterOn && reason !== 'tracking_reenabled' && reason !== 'manual_flush' && reason !== 'screen_off') {
+      const whitelistReasons = ['tracking_reenabled', 'manual_flush', 'screen_off', 'sos', 'geofence_exit', 'geofence_enter', 'critical_low_battery'];
+      if (!isMasterOn && (!reason || !whitelistReasons.includes(reason))) {
         return;
       }
 
@@ -1741,17 +1893,26 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         );
       }
 
-      const sensorsData = curTargetSettings.sensorValues || {
+      const baseSensorsData = curTargetSettings.sensorValues || {
         noiseLevel: 35,
         ambientLight: 280,
         isExcessiveNoise: false,
         profanityDetected: false,
+      };
+      const sensorsData = {
+        ...baseSensorsData,
+        ...sensorValuesRef.current
       };
 
       const networkInfo = {
         online: typeof navigator !== 'undefined' ? navigator.onLine : true,
         connectionType: (navigator as any)?.connection?.effectiveType || 'wifi/cellular',
       };
+
+      const isDeviceLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked);
+      const effectiveLockType = lockChallengeRef.current?.lockType || targetSettingsRef.current?.lockType || (isDeviceLocked ? 'instant' : undefined);
+      const effectiveLockTitle = lockChallengeRef.current?.title || targetSettingsRef.current?.lockTitle || (isDeviceLocked ? 'Thiết bị đang bị khóa' : undefined);
+      const effectiveLockedAt = lockChallengeRef.current?.lockedAt || (isDeviceLocked ? Date.now() : undefined);
 
       try {
         await uploadChildTelemetryToCloud(
@@ -1776,6 +1937,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             screenTimeUsedMinutes: isAppUsageOn ? (curScreenTime?.todayTotalMinutes || 0) : undefined,
             activeOpenedApp: isAppUsageOn && isScreenStateOn ? (typeof curActiveApp === 'object' && curActiveApp ? curActiveApp.name : (typeof curActiveApp === 'string' ? curActiveApp : '')) : '',
             installedAppsCount: isAppUsageOn ? (curRealApps.length || curApps.length) : undefined,
+            isLocked: isDeviceLocked,
+            lockType: effectiveLockType,
+            lockTitle: effectiveLockTitle,
+            lockedAt: effectiveLockedAt,
           },
           true,
           curChild.name
@@ -2018,15 +2183,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     });
                     showToast(`⚠️ BÉ ĐÃ RA KHỎI VÙNG AN TOÀN: ${zone.name.toUpperCase()}!`);
                     haptics.warning();
-                    // Khẩn cấp: gửi thông báo khẩn ngay lập tức lên mây cho bố mẹ
+                    // Cảnh báo an toàn: gửi thông báo và telemetry ngay lập tức lên mây cho bố mẹ (không bấm còi SOS khẩn cấp)
                     if (zone.notifyOnExit !== false) {
-                      triggerCloudSOS(activeParentId, targetChildId, {
+                      sendCloudChatMessage(activeParentId, targetChildId, {
+                        sender: 'kid',
+                        senderName: child.name,
+                        text: `⚠️ Cảnh báo vị trí: Bé vừa rời khỏi vùng an toàn "${zone.name}".`,
                         time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-                        lat: latitude,
-                        lng: longitude,
-                        address: `Cảnh báo an toàn: Bé vừa rời khỏi vùng an toàn "${zone.name}"`,
-                        childName: child.name,
-                      }, child.name).catch(() => {});
+                      }).catch(() => {});
                       uploadCurrentTelemetrySnapshot('geofence_exit').catch(() => {});
                     }
                   }
@@ -2086,18 +2250,28 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         } catch (e) {}
       }
 
-      // Native Battery monitoring (chỉ cập nhật nội bộ, chỉ gửi khi pin yếu khẩn cấp < 15%)
+      // Battery monitoring (ưu tiên Android Capacitor native plugin, fallback navigator.getBattery)
+      const handleBatteryUpdate = (level: number) => {
+        lastTelemetryRef.current.battery = level;
+        const now = Date.now();
+        if (level <= 15 && now - lastLowBatteryAlertRef.current > 30 * 60 * 1000) {
+          lastLowBatteryAlertRef.current = now;
+          uploadCurrentTelemetrySnapshot('critical_low_battery').catch(() => {});
+        }
+      };
+
+      getNativeBatteryInfo().then((natBat) => {
+        if (natBat && typeof natBat.level === 'number' && natBat.level >= 0) {
+          handleBatteryUpdate(natBat.level);
+        }
+      }).catch(() => {});
+
       if (typeof navigator !== 'undefined' && (navigator as any).getBattery && activeParentId) {
         (navigator as any).getBattery().then((battery: any) => {
           const updateBattery = () => {
-            const level = Math.round(battery.level * 100);
-            lastTelemetryRef.current.battery = level;
-            const now = Date.now();
-            if (level <= 15 && now - lastLowBatteryAlertRef.current > 30 * 60 * 1000) {
-              lastLowBatteryAlertRef.current = now;
-              uploadCurrentTelemetrySnapshot('critical_low_battery').catch(() => {});
-            }
+            handleBatteryUpdate(Math.round(battery.level * 100));
           };
+          updateBattery();
           battery.addEventListener('levelchange', updateBattery);
         }).catch(() => {});
       }
@@ -2133,11 +2307,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       if (e.accelerationIncludingGravity) {
         lastMotionUpdate = now;
         const { x, y, z } = e.accelerationIncludingGravity;
-        updateSensorValues(targetChildId, {
+        sensorValuesRef.current = {
+          ...sensorValuesRef.current,
           accelX: parseFloat((x || 0).toFixed(2)),
           accelY: parseFloat((y || 0).toFixed(2)),
           accelZ: parseFloat((z || 9.8).toFixed(2)),
-        });
+        };
       }
     };
 
@@ -3564,7 +3739,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
       {/* 8. INTERACTIVE LOCK CHALLENGE MODAL (Math, Quiz, Steps, Countdown, Mealtime, Bedtime) */}
       {(lockChallenge.isLocked || targetSettings.isLocked) && (
-        <div className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-md text-white p-6 flex flex-col justify-between animate-in fade-in duration-200">
+        <div className="absolute inset-0 z-[100] bg-slate-950/95 backdrop-blur-md text-white p-6 flex flex-col justify-between animate-in fade-in duration-200">
           {/* Header */}
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-rose-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -3786,8 +3961,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       )}
 
       {/* Floating Toast Notification */}
+      {/* Toast Notification */}
       {toastMessage && (
-        <div className="absolute top-16 left-4 right-4 z-50 bg-slate-900/95 text-white text-xs font-bold px-3.5 py-2.5 rounded-2xl shadow-xl flex items-center justify-between border border-slate-700 backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+        <div className="absolute top-16 left-4 right-4 z-[110] bg-slate-900/95 text-white text-xs font-bold px-3.5 py-2.5 rounded-2xl shadow-xl flex items-center justify-between border border-slate-700 backdrop-blur-md animate-in fade-in slide-in-from-top-2">
           <span>{toastMessage}</span>
           <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white ml-2">
             <X size={14} />
@@ -3797,7 +3973,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
       {/* Smart Locked App Modal */}
       {selectedBlockedApp && (
-        <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-in fade-in">
+        <div className="absolute inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-in fade-in">
           <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 border border-slate-100">
             <div className="flex items-center justify-between">
               <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
@@ -3868,7 +4044,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
       {/* 9. UNIFIED KID SETTINGS & SYSTEM CONTROLS MODAL */}
       {showKidControlPanel && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
           <div className="w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl p-5 space-y-4 border border-slate-100 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2.5">
@@ -4232,7 +4408,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
       {/* Sensor Info Modal */}
       {showSensorInfoModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white rounded-3xl p-5 shadow-2xl space-y-3.5 border border-slate-100 text-left">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <h3 className="text-xs font-black text-slate-900 flex items-center gap-1.5">

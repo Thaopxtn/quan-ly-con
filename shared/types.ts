@@ -14,6 +14,10 @@ export interface DeviceTelemetryData {
   syncMode?: 'realtime' | 'balanced' | 'power_saving';
   activeOpenedApp?: string;
   screenTimeUsedMinutes?: number;
+  isLocked?: boolean;
+  lockType?: string;
+  lockTitle?: string;
+  lockedAt?: number;
   network?: any;
   sensors?: any;
   lastActive?: string;
@@ -58,6 +62,10 @@ export interface ChildDeviceInfo {
   isScreenOn?: boolean;
   screenState?: 'active' | 'screen_off' | 'background';
   appStatus?: 'active_in_app' | 'in_background' | 'screen_off';
+  isLocked?: boolean;
+  lockType?: string;
+  lockTitle?: string;
+  lockedAt?: number;
   telemetry?: DeviceTelemetryData;
   settings?: DeviceSpecificSettings;
   pcTelemetry?: ChildPcTelemetry;
@@ -136,6 +144,10 @@ export interface ChildProfile {
   syncMode?: 'realtime' | 'balanced' | 'power_saving';
   activeOpenedApp?: string;
   screenTimeUsedMinutes?: number;
+  isLocked?: boolean;
+  lockType?: string;
+  lockTitle?: string;
+  lockedAt?: number;
 }
 
 export interface SafeZone {
@@ -611,6 +623,9 @@ export interface ChildSpecificSettings {
   scheduleEvents?: ChildScheduleEvent[];
   broadcastMessage?: BroadcastMessage | null;
   isLocked?: boolean;
+  lockType?: string;
+  lockTitle?: string;
+  lockedAt?: number;
   emergencyContact?: EmergencyContactConfig;
   activeSharedLink?: SharedLessonLink | null;
   safeZones?: SafeZone[];

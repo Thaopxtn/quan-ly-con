@@ -8,9 +8,11 @@ import {
   Smartphone,
   Sparkles,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   getNativeDeviceInfo,
+  getNativeBatteryInfo,
   DeviceHardwareInfo,
 } from './services/nativePermissionsService';
 import { clearRateLimit, submitChildPairingCode } from '@shared/firebase/pairingService';
@@ -46,6 +48,28 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     return 'Android Device';
   };
 
+  // Server connection status state
+  const [serverStatus, setServerStatus] = useState<{
+    connected: boolean;
+    url?: string;
+    checking: boolean;
+  }>({ connected: false, checking: true });
+
+  const refreshServerConnection = async () => {
+    setServerStatus((prev) => ({ ...prev, checking: true }));
+    try {
+      await serverApiClient.resolveServerUrlFromCloud(true);
+      const health = await serverApiClient.checkHealth();
+      setServerStatus({
+        connected: health.ok,
+        url: serverApiClient.getServerUrl(),
+        checking: false,
+      });
+    } catch (_) {
+      setServerStatus({ connected: false, checking: false });
+    }
+  };
+
   // Auto fetch real Android hardware info & resolve 4G server URL in background
   useEffect(() => {
     resetSafeConfetti();
@@ -59,8 +83,8 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
       setDeviceName(info.deviceName || `${info.manufacturer} ${info.model}`.trim() || 'Điện thoại của con');
     });
 
-    // Auto-fetch latest 4G URL from GitHub in background
-    serverApiClient.resolveServerUrlFromCloud(true).catch(() => {});
+    // Auto-fetch latest 4G URL & test health
+    refreshServerConnection();
   }, []);
 
   const handleDigitChange = (index: number, val: string) => {
@@ -118,9 +142,13 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
     setPinError(null);
 
     try {
-      const hwInfo = deviceInfo || (await getNativeDeviceInfo());
+      const [hwInfo, batInfo] = await Promise.all([
+        deviceInfo ? Promise.resolve(deviceInfo) : getNativeDeviceInfo(),
+        getNativeBatteryInfo().catch(() => ({ level: -1, isCharging: false })),
+      ]);
       const activeDevName = (deviceName.trim() || `${hwInfo.manufacturer || ''} ${hwInfo.model}`.trim() || 'Điện thoại của con');
       const activeDevId = hwInfo.hardwareId || ('dev_' + Date.now());
+      const realBattery = (batInfo && typeof batInfo.level === 'number' && batInfo.level >= 0) ? batInfo.level : 100;
 
       const res = await submitChildPairingCode(code, {
         deviceId: activeDevId,
@@ -134,7 +162,7 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
         imei: hwInfo.imei,
         phoneNumber: hwInfo.phoneNumber,
         osVersion: hwInfo.osVersion || 'Android',
-        battery: 100,
+        battery: realBattery,
       });
 
       if (res.success && res.session) {
@@ -204,6 +232,29 @@ export const KidActivationScreen: React.FC<KidActivationScreenProps> = ({
                 Sẵn sàng
               </span>
             </div>
+          </div>
+
+          {/* Server Connection Status Pill */}
+          <div className="flex items-center justify-between px-3.5 py-2 bg-white/80 border border-slate-200/90 rounded-2xl shadow-2xs text-[11px]">
+            <div className="flex items-center space-x-2">
+              <span className={`w-2 h-2 rounded-full ${serverStatus.checking ? 'bg-amber-400 animate-ping' : serverStatus.connected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+              <span className="font-semibold text-slate-700">
+                {serverStatus.checking
+                  ? 'Đang kết nối máy chủ...'
+                  : serverStatus.connected
+                  ? `Máy chủ: Đã kết nối (${serverStatus.url?.includes('192.168') ? 'Wi-Fi' : '4G'})`
+                  : 'Chưa kết nối máy chủ PC'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={refreshServerConnection}
+              disabled={serverStatus.checking}
+              className="text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1 active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw size={11} className={serverStatus.checking ? 'animate-spin' : ''} />
+              <span>{serverStatus.checking ? 'Đang thử...' : 'Làm mới'}</span>
+            </button>
           </div>
 
           {/* PRIMARY HERO CARD: ENTER 6-DIGIT CODE FROM PARENT APP */}

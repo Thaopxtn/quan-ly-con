@@ -13,11 +13,13 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
-export const DEFAULT_4G_SERVER_URL = 'https://everything-solution-tin-chosen.trycloudflare.com';
+export const DEFAULT_4G_SERVER_URL = 'https://bryant-mandate-conviction-panel.trycloudflare.com';
 const JSDELIVR_SERVER_URL = 'https://cdn.jsdelivr.net/gh/Thaopxtn/quan-ly-con@main/server-url.txt';
 const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
+const GITHUB_RAW_SERVER_JSON = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.json';
 const GITHUB_API_SERVER_URL = 'https://api.github.com/repos/Thaopxtn/quan-ly-con/contents/server-url.txt';
 const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
+const FALLBACK_LAN_IPS = ['http://192.168.1.4:3000'];
 
 export class ServerApiClient {
   private static instance: ServerApiClient;
@@ -37,6 +39,10 @@ export class ServerApiClient {
     if (typeof window !== 'undefined') {
       // Pre-load sessionToken
       this.getSessionToken();
+      // Auto-fetch signed token if needed
+      if (!this.sessionToken || !this.sessionToken.includes('.')) {
+        this.ensureParentToken().catch(() => {});
+      }
       // Auto-start SSE subscription in browser / webview
       this.initRealtimeStream();
       // Auto-resolve latest server URL from GitHub if needed
@@ -114,22 +120,44 @@ export class ServerApiClient {
   }
 
   /**
+   * Đảm bảo luôn có token xác thực hợp lệ cho máy cha mẹ từ máy chủ
+   */
+  public async ensureParentToken(): Promise<string> {
+    const curToken = this.getSessionToken();
+    if (curToken && curToken.includes('.')) {
+      return curToken;
+    }
+    if (typeof window === 'undefined') return '';
+    try {
+      const res = await fetch(`${this.serverUrl}/api/auth/token`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.token) {
+          this.setSessionToken(data.token);
+          return data.token;
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  /**
    * Lấy sessionToken có chữ ký số đang hoạt động
    */
   public getSessionToken(): string {
-    if (this.sessionToken) return this.sessionToken;
+    if (this.sessionToken && this.sessionToken.includes('.')) return this.sessionToken;
 
     if (typeof window !== 'undefined') {
       // 0. Server injected token vào HTML (Web Parent Portal)
       const injected = (window as any).__PARENT_SESSION_TOKEN__ || (window as any).__SERVER_SESSION_TOKEN__;
-      if (injected && typeof injected === 'string' && injected.trim()) {
+      if (injected && typeof injected === 'string' && injected.trim() && injected.includes('.')) {
         this.sessionToken = injected.trim();
         return this.sessionToken;
       }
 
-      // 1. Explicitly saved session token
+      // 1. Explicitly saved session token (phải có chữ ký số '.')
       const saved = localStorage.getItem('parentpro_session_token');
-      if (saved && saved.trim()) {
+      if (saved && saved.trim() && saved.includes('.')) {
         this.sessionToken = saved.trim();
         return this.sessionToken;
       }
@@ -139,22 +167,23 @@ export class ServerApiClient {
         const kidInfoStr = localStorage.getItem('kid_device_paired_info');
         if (kidInfoStr) {
           const parsed = JSON.parse(kidInfoStr);
-          if (parsed && parsed.sessionToken) {
+          if (parsed && parsed.sessionToken && String(parsed.sessionToken).includes('.')) {
             this.sessionToken = String(parsed.sessionToken).trim();
             return this.sessionToken;
           }
         }
       } catch (_) {}
 
-      // 3. Parent pairing sessions token (Máy Cha Mẹ)
+      // 3. Parent pairing sessions token (Máy Cha Mẹ) - CHỈ dùng nếu có chữ ký số HMAC (chứa '.')
       try {
         const parentSessionsStr = localStorage.getItem('parent_pro_pairing_sessions');
         if (parentSessionsStr) {
           const sessions = JSON.parse(parentSessionsStr);
-          const firstKey = Object.keys(sessions)[0];
-          if (firstKey && sessions[firstKey]?.sessionToken) {
-            this.sessionToken = String(sessions[firstKey].sessionToken).trim();
-            return this.sessionToken;
+          for (const s of Object.values(sessions) as any[]) {
+            if (s && s.sessionToken && typeof s.sessionToken === 'string' && s.sessionToken.includes('.')) {
+              this.sessionToken = s.sessionToken.trim();
+              return this.sessionToken;
+            }
           }
         }
       } catch (_) {}
@@ -196,7 +225,6 @@ export class ServerApiClient {
           const timer = setTimeout(() => ctrl.abort(), 3500);
           const res = await fetch(endpoint, {
             signal: ctrl.signal,
-            headers: { 'Cache-Control': 'no-cache' },
           });
           clearTimeout(timer);
           if (res.ok) {
@@ -216,7 +244,6 @@ export class ServerApiClient {
           const timer = setTimeout(() => ctrl.abort(), 3500);
           const res = await fetch(GITHUB_API_SERVER_URL, {
             signal: ctrl.signal,
-            headers: { 'Cache-Control': 'no-cache' },
           });
           clearTimeout(timer);
           if (res.ok) {
@@ -232,11 +259,56 @@ export class ServerApiClient {
         return null;
       };
 
+      // Fetch JSON metadata (contains both 4G tunnel URL and local Wi-Fi IPs)
+      const fetchJsonCandidate = async (): Promise<{ url?: string; localIps?: string[] } | null> => {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 3500);
+          const res = await fetch(`${GITHUB_RAW_SERVER_JSON}?_t=${now}`, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (res.ok) {
+            return await res.json();
+          }
+        } catch (_) {}
+        return null;
+      };
+
       // Query all candidate discovery endpoints concurrently
       const candidatePromises: Promise<string | null>[] = endpoints.map(ep => fetchCandidate(ep));
       candidatePromises.push(fetchGitHubApi());
 
-      const results = await Promise.allSettled(candidatePromises);
+      // 0. Quick check LAN Wi-Fi IP (if phone is on the same home Wi-Fi)
+      const lanIps = [...FALLBACK_LAN_IPS];
+      const lanChecks = lanIps.map(async (ip) => {
+        const h = await this.checkHealth(ip);
+        return h.ok ? ip : null;
+      });
+      const quickLanResult = await Promise.race([
+        Promise.any(lanChecks).catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 1200))
+      ]);
+      if (quickLanResult) {
+        console.log(`[ServerApiClient] 🏠 Nhận diện kết nối mạng nội bộ Wi-Fi LAN: ${quickLanResult}`);
+        this.setServerUrl(quickLanResult);
+        this.lastCloudResolvedTime = Date.now();
+        return quickLanResult;
+      }
+
+      const [results, jsonData] = await Promise.all([
+        Promise.allSettled(candidatePromises),
+        fetchJsonCandidate()
+      ]);
+
+      if (jsonData && jsonData.url) {
+        const health = await this.checkHealth(jsonData.url);
+        if (health.ok) {
+          console.log(`[ServerApiClient] 🌐 Nhận diện máy chủ 4G từ server-url.json: ${jsonData.url}`);
+          this.setServerUrl(jsonData.url);
+          this.lastCloudResolvedTime = Date.now();
+          return jsonData.url;
+        }
+      }
+
       for (const res of results) {
         if (res.status === 'fulfilled' && res.value) {
           const candidateUrl = res.value;
@@ -271,9 +343,8 @@ export class ServerApiClient {
     try {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 4000);
-      const res = await fetch(`${target}/api/health`, {
+      const res = await fetch(`${target}/api/health?_t=${Date.now()}`, {
         signal: ctrl.signal,
-        headers: { 'Cache-Control': 'no-cache' },
       });
       clearTimeout(timeout);
       if (res.ok) {
@@ -441,7 +512,6 @@ export class ServerApiClient {
       const url = `${this.serverUrl}${path}`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
       };
 
       // Đính kèm sessionToken có chữ ký số bảo mật mật mã học
@@ -460,8 +530,8 @@ export class ServerApiClient {
       }
       const res = await fetch(url, options);
 
-      // Auto-heal 401 Unauthorized: Cố gắng lấy token xác thực hợp lệ cho Cha Mẹ nếu chưa có
-      if (res.status === 401 && retryCount === 0 && typeof window !== 'undefined') {
+      // Auto-heal 401 Unauthorized hoặc 403 Forbidden: Cố gắng lấy token xác thực hợp lệ cho Cha Mẹ nếu chưa có
+      if ((res.status === 401 || res.status === 403) && retryCount === 0 && typeof window !== 'undefined') {
         try {
           const authRes = await fetch(`${this.serverUrl}/api/auth/token`);
           if (authRes.ok) {
@@ -718,3 +788,8 @@ export class ServerApiClient {
 }
 
 export const serverApiClient = ServerApiClient.getInstance();
+
+if (typeof window !== 'undefined') {
+  (window as any).serverApiClient = serverApiClient;
+}
+

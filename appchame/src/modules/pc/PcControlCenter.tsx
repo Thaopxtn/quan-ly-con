@@ -71,20 +71,7 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
     blacklistedWebsites: (rawConfig.blacklistedWebsites && rawConfig.blacklistedWebsites.length > 0) ? rawConfig.blacklistedWebsites : (DEFAULT_PC_CONFIG.blacklistedWebsites || []),
   };
 
-  const telemetry: ChildPcTelemetry | undefined = currentSettings?.pcTelemetry || {
-    deviceId: 'pc_' + activeChildId,
-    pcName: `Máy tính của ${activeChild?.name || 'bé'}`,
-    osVersion: 'Windows 11 Home 64-bit',
-    status: 'online',
-    lastSeen: Date.now(),
-    activeWindow: 'Google Chrome - Ôn tập Toán vio.edu.vn',
-    activeProcess: 'chrome.exe',
-    screenTimeTodayMinutes: 45,
-    isLocked: pcConfig.isLocked,
-    isStudyMode: pcConfig.isStudyMode,
-    cpuUsage: 18,
-    ramUsage: 42,
-  };
+  const telemetry: ChildPcTelemetry | undefined = currentSettings?.pcTelemetry;
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [lockModalOpen, setLockModalOpen] = useState(false);
@@ -278,9 +265,19 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[11px] font-bold">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>PC Trực tuyến</span>
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 border rounded-full text-[11px] font-bold ${
+            telemetry
+              ? (telemetry.status === 'online' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-600 border-slate-200')
+              : 'bg-amber-50 text-amber-700 border-amber-200'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${
+              telemetry
+                ? (telemetry.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400')
+                : 'bg-amber-400'
+            }`} />
+            <span>
+              {telemetry ? (telemetry.status === 'online' ? 'PC Trực tuyến' : 'PC Ngoại tuyến') : 'Chưa kết nối PC'}
+            </span>
           </div>
         </div>
 
@@ -376,11 +373,11 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
                   <div className="flex items-center gap-2">
                     <Monitor size={20} className={pcConfig.isLocked || pcConfig.isStudyMode ? 'text-white' : 'text-blue-600'} />
                     <h2 className="text-sm font-black tracking-tight">
-                      {telemetry?.pcName || `PC Bàn Học - ${activeChild?.name}`}
+                      {telemetry?.pcName || `PC Bàn Học - ${activeChild?.name || 'Bé'}`}
                     </h2>
                   </div>
                   <p className={`text-xs ${pcConfig.isLocked || pcConfig.isStudyMode ? 'text-white/80' : 'text-slate-500'}`}>
-                    {telemetry?.osVersion || 'Windows 11'} • Đang kết nối Realtime
+                    {telemetry?.osVersion || 'Windows'} • {telemetry?.status === 'online' ? 'Đang kết nối Realtime' : telemetry ? 'Ngoại tuyến' : 'Chưa có client kết nối'}
                   </p>
                 </div>
 
@@ -389,9 +386,11 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
                     ? 'bg-white text-rose-600'
                     : pcConfig.isStudyMode
                     ? 'bg-amber-300 text-indigo-950'
-                    : 'bg-emerald-100 text-emerald-800'
+                    : telemetry?.status === 'online'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-slate-100 text-slate-600'
                 }`}>
-                  {pcConfig.isLocked ? '🔒 Đang Khóa' : pcConfig.isStudyMode ? '📚 Góc Học Tập' : '🟢 Bình Thường'}
+                  {pcConfig.isLocked ? '🔒 Đang Khóa' : pcConfig.isStudyMode ? '📚 Góc Học Tập' : telemetry?.status === 'online' ? '🟢 Trực Tuyến' : '⚪ Ngoại Tuyến'}
                 </div>
               </div>
 
@@ -407,7 +406,7 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
                 <div className="min-w-0 flex-1">
                   <div className="text-[10px] uppercase font-bold opacity-75">Cửa sổ đang mở trên máy con</div>
                   <div className="text-xs font-bold truncate">
-                    {telemetry?.activeWindow || 'Roblox - Blox Fruits'}
+                    {telemetry?.activeWindow || 'Chưa có ứng dụng đang mở'}
                   </div>
                 </div>
               </div>
@@ -432,6 +431,29 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
                 </div>
               </div>
             </div>
+
+            {!telemetry && (
+              <div className="p-4 rounded-3xl bg-amber-50/90 border border-amber-200 flex items-start justify-between gap-3 text-amber-950 shadow-xs">
+                <div className="flex gap-3">
+                  <div className="w-9 h-9 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                    <Monitor size={18} />
+                  </div>
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-black">Chưa kết nối máy tính của {activeChild?.name || 'bé'}</h4>
+                    <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
+                      Hãy mở ứng dụng PC Client trên máy con và nhập mã PIN để bắt đầu giám sát thời gian thực.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pairing')}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shrink-0 transition active:scale-95 cursor-pointer shadow-xs"
+                >
+                  Kết nối ngay
+                </button>
+              </div>
+            )}
 
             {/* QUICK ACTIONS 1-CHẠM GRID */}
             <div className="space-y-2">
@@ -557,21 +579,23 @@ export const PcControlCenter: React.FC<PcControlCenterProps> = ({ onBack }) => {
                   <Cpu size={16} className="text-blue-600" />
                   <span>Thông số máy tính thời gian thực</span>
                 </span>
-                <span className="text-emerald-600 text-[11px]">Đang đồng bộ</span>
+                <span className={telemetry?.status === 'online' ? "text-emerald-600 text-[11px]" : "text-slate-400 text-[11px]"}>
+                  {telemetry?.status === 'online' ? "Đang đồng bộ" : "Chưa có tín hiệu"}
+                </span>
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
                   <div className="text-[10px] text-slate-500 font-medium">Tải CPU</div>
-                  <div className="text-sm font-black text-slate-800">{telemetry?.cpuUsage || 15}%</div>
+                  <div className="text-sm font-black text-slate-800">{telemetry?.cpuUsage != null ? `${telemetry.cpuUsage}%` : '--'}</div>
                 </div>
                 <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
                   <div className="text-[10px] text-slate-500 font-medium">Bộ nhớ RAM</div>
-                  <div className="text-sm font-black text-slate-800">{telemetry?.ramUsage || 40}%</div>
+                  <div className="text-sm font-black text-slate-800">{telemetry?.ramUsage != null ? `${telemetry.ramUsage}%` : '--'}</div>
                 </div>
                 <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
                   <div className="text-[10px] text-slate-500 font-medium">Tiến trình chạy</div>
-                  <div className="text-xs font-black text-blue-600 truncate">{telemetry?.activeProcess || 'chrome.exe'}</div>
+                  <div className="text-xs font-black text-blue-600 truncate">{telemetry?.activeProcess || 'Không có'}</div>
                 </div>
               </div>
             </div>

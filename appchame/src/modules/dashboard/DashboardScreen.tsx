@@ -20,7 +20,10 @@ import {
   MessageCircle,
   KeyRound,
   Monitor,
-  Smartphone
+  Smartphone,
+  Lock,
+  Unlock,
+  Loader2
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
@@ -36,13 +39,71 @@ interface DashboardScreenProps {
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) => {
-  const { state, markChatAlertsAsRead } = useAppState();
+  const { state, markChatAlertsAsRead, switchChild, unlockChildDeviceNow, extendChildTimeNow } = useAppState();
   const { child, alerts, children, selectedChildId } = state;
   const currentChild = children?.find((c) => c.id === selectedChildId) || children?.[0] || child;
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
   const [showPairModal, setShowPairModal] = useState(false);
+
+  // Anti-spam quick action states
+  const [quickActionLoading, setQuickActionLoading] = useState<string | null>(null);
+  const [quickActionCooldown, setQuickActionCooldown] = useState<number>(0);
+
+  const isTargetChildLocked = Boolean(
+    currentChild?.isLocked ||
+    state.childSettings?.[currentChild?.id]?.isLocked ||
+    (currentChild?.id === selectedChildId && state.lockChallenge?.isLocked)
+  );
+
+  const lockReasonTitle =
+    currentChild?.lockTitle ||
+    state.childSettings?.[currentChild?.id]?.lockTitle ||
+    (currentChild?.id === selectedChildId ? state.lockChallenge?.title : '') ||
+    'Thiết bị đang bị khóa từ xa';
+
+  const lockReasonType =
+    currentChild?.lockType ||
+    state.childSettings?.[currentChild?.id]?.lockType ||
+    (currentChild?.id === selectedChildId ? state.lockChallenge?.lockType : '') ||
+    'instant';
+
+  const handleQuickUnlock = () => {
+    if (quickActionCooldown > 0) return;
+    haptics.medium();
+    setQuickActionLoading('unlock');
+    setQuickActionCooldown(3);
+    unlockChildDeviceNow(currentChild?.id);
+    const interval = setInterval(() => {
+      setQuickActionCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setQuickActionLoading(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleQuickExtend = () => {
+    if (quickActionCooldown > 0) return;
+    haptics.success();
+    setQuickActionLoading('extend');
+    setQuickActionCooldown(3);
+    extendChildTimeNow(15, currentChild?.id);
+    const interval = setInterval(() => {
+      setQuickActionCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setQuickActionLoading(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
   const currentParent = getCurrentParentAccount();
   const parentName = currentParent?.displayName || 'Phụ huynh';
@@ -149,6 +210,90 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
           </button>
         </div>
       </div>
+
+      {/* 🚨 REAL-TIME LOCK WARNING BANNER (Phản ánh thực tế khi điện thoại con đang bị khóa) */}
+      {isTargetChildLocked && (
+        <div className="p-3.5 rounded-3xl bg-gradient-to-r from-rose-600 via-red-600 to-amber-600 text-white shadow-lg border-2 border-rose-300/40 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-start justify-between gap-2.5">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-white shrink-0 mt-0.5 animate-pulse ring-2 ring-white/30">
+                <Lock size={20} className="text-white" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-full bg-white text-rose-700 text-[10px] font-black uppercase tracking-wider shadow-xs">
+                    🔒 ĐANG KHÓA MÁY THỰC TẾ
+                  </span>
+                  <span className="text-[10px] font-bold text-rose-100">
+                    • {currentChild?.name || 'Bé'}
+                  </span>
+                </div>
+                <h4 className="text-xs font-bold text-white mt-1 leading-snug line-clamp-2">
+                  {lockReasonTitle}
+                </h4>
+                <p className="text-[10.5px] text-rose-100/90 mt-0.5">
+                  {lockReasonType === 'mealtime'
+                    ? 'Đang khóa theo lịch giờ cơm gia đình 🍽️'
+                    : lockReasonType === 'bedtime'
+                    ? 'Đang khóa theo lịch giờ đi ngủ 🌙'
+                    : lockReasonType === 'screentime'
+                    ? 'Đã dùng hết thời gian màn hình trong ngày ⏱️'
+                    : 'Thiết bị của con hiện đang ở trạng thái khóa.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Action Buttons with Anti-Spam Cooldown */}
+          <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-white/20">
+            <button
+              type="button"
+              disabled={quickActionCooldown > 0}
+              onClick={handleQuickUnlock}
+              className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer ${
+                quickActionCooldown > 0
+                  ? 'bg-white/40 text-slate-700 cursor-not-allowed'
+                  : 'bg-white text-rose-700 hover:bg-rose-50 active:scale-95'
+              }`}
+            >
+              {quickActionLoading === 'unlock' ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-rose-600" />
+                  <span>Chờ {quickActionCooldown}s...</span>
+                </>
+              ) : (
+                <>
+                  <Unlock size={14} />
+                  <span>Mở khóa ngay</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              disabled={quickActionCooldown > 0}
+              onClick={handleQuickExtend}
+              className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer ${
+                quickActionCooldown > 0
+                  ? 'bg-white/40 text-slate-700 cursor-not-allowed'
+                  : 'bg-amber-400 hover:bg-amber-300 text-slate-950 active:scale-95'
+              }`}
+            >
+              {quickActionLoading === 'extend' ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-slate-900" />
+                  <span>Chờ {quickActionCooldown}s...</span>
+                </>
+              ) : (
+                <>
+                  <Clock size={14} />
+                  <span>Gia hạn +15p</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Unified Modern Family & Multi-Child Hub */}
       <UnifiedChildHub onNavigate={onNavigate} />
@@ -351,6 +496,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
         <PairChildDeviceModal
           onClose={() => setShowPairModal(false)}
           onSuccess={(cid, cname) => {
+            if (cid) switchChild(cid);
             setShowPairModal(false);
           }}
         />

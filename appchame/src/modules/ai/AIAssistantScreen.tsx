@@ -1,18 +1,28 @@
 import React, { useState } from 'react';
 import { ChevronLeft, Bot, Send, Sparkles, Lightbulb, Shield, BarChart3 } from 'lucide-react';
 import { AIMessage } from '@shared/types';
+import { useAppState } from '@shared/store';
 
 interface AIAssistantScreenProps {
   onBack: () => void;
 }
 
 export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) => {
+  const { state } = useAppState();
+  const currentChild = state.children?.find((c) => c.id === state.selectedChildId) || state.child;
+  const childName = currentChild?.name || 'con';
+  const childSettings = state.childSettings?.[currentChild?.id];
+  const usedMins = childSettings?.screenTime?.todayTotalMinutes ?? state.screenTime?.todayTotalMinutes ?? 0;
+  const limitMins = childSettings?.screenTimeLimitMinutes ?? 135;
+  const apps = childSettings?.apps || state.apps || [];
+  const routines = childSettings?.smartRoutines || state.smartRoutines;
+
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       id: 'm_1',
       sender: 'ai',
-      text: 'Xin chào! Tôi là trợ lý AI của ParentPro. Tôi có thể giúp bạn phân tích thói quen của Bé An, tư vấn thời khóa biểu học tập hoặc mẹo trò chuyện cùng con.',
-      timestamp: '10:00',
+      text: `Xin chào! Tôi là trợ lý AI thông minh của ParentPro. Tôi có thể giúp bạn phân tích thói quen sử dụng máy của ${childName}, gợi ý thời khóa biểu học tập hoặc giải đáp các thắc mắc an toàn của con.`,
+      timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
   const [inputText, setInputText] = useState('');
@@ -39,17 +49,25 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
     setInputText('');
     setIsTyping(true);
 
-    // AI smart simulated response based on question
+    // AI smart response synthesized from actual real state
     setTimeout(() => {
       let aiReply = '';
-      if (text.includes('lịch học') || text.includes('thời khóa biểu')) {
-        aiReply = 'Dựa trên kết quả Toán học 92% và Khoa học 76% của Bé An, tôi đề xuất lịch học tối nay: 19:30 - 20:15 ôn Khoa học & Tiếng Anh, sau đó nghỉ giải lao 15 phút vận động nhẹ, 20:30 đọc sách 20 phút trước khi ngủ.';
-      } else if (text.includes('bảo vệ') || text.includes('mạng')) {
-        aiReply = 'Tôi nhận thấy Bé An dùng YouTube 1h20p hôm nay. Bạn nên hướng dẫn con nguyên tắc 3 Không trên mạng: Không chia sẻ mật khẩu/địa chỉ nhà, Không bấm link lạ trúng thưởng, Không kết bạn với người lạ chưa gặp ngoài đời.';
-      } else if (text.includes('thói quen') || text.includes('thiết bị')) {
-        aiReply = 'Biểu đồ tuần cho thấy Bé An sử dụng thiết bị cao nhất vào khung giờ 11:30 - 12:30 trưa. Thời gian này con thường xem video giải trí. Nhìn chung tuần này mức sử dụng giảm 35% so với tuần trước, đây là dấu hiệu rất tích cực!';
+      const lower = text.toLowerCase();
+      if (lower.includes('lịch học') || lower.includes('thời khóa biểu')) {
+        const bedStart = routines?.bedtimeStart || '21:30';
+        aiReply = `Dựa trên lịch sinh hoạt hiện tại của ${childName}, con có giờ đi ngủ bắt đầu lúc ${bedStart}. Tôi đề xuất: 19:30 - 20:30 tập trung học bài & làm bài tập trực tuyến, 20:30 nghỉ ngơi vận động nhẹ hoặc đọc sách cùng gia đình, sau 21:00 cất thiết bị để chuẩn bị đi ngủ đúng giờ.`;
+      } else if (lower.includes('bảo vệ') || lower.includes('mạng') || lower.includes('an toàn')) {
+        const blockedCount = apps.filter(a => a.status === 'blocked').length;
+        aiReply = `Hệ thống hiện đang quản lý ${apps.length} ứng dụng trên máy ${childName} (trong đó đã chặn ${blockedCount} ứng dụng không phù hợp). Để bảo vệ con tốt nhất, hãy nhắc con nguyên tắc: 1. Không chia sẻ mật khẩu/vị trí nhà cho người lạ, 2. Báo ngay cho cha mẹ khi gặp nội dung lạ hoặc bắt nạt trên mạng.`;
+      } else if (lower.includes('thói quen') || lower.includes('thiết bị') || lower.includes('thời gian')) {
+        const usedHours = Math.floor(usedMins / 60);
+        const usedRemainMins = usedMins % 60;
+        const limitHours = Math.floor(limitMins / 60);
+        const limitRemainMins = limitMins % 60;
+        const remainingMins = Math.max(0, limitMins - usedMins);
+        aiReply = `Hôm nay ${childName} đã sử dụng ${usedHours > 0 ? `${usedHours}h ` : ''}${usedRemainMins}p trên tổng hạn mức ${limitHours > 0 ? `${limitHours}h ` : ''}${limitRemainMins}p mà bạn đã đặt (còn lại ${remainingMins} phút). ${usedMins >= limitMins ? 'Thiết bị hiện đã chạm giới hạn an toàn trong ngày.' : 'Thời lượng sử dụng đang được kiểm soát rất tốt!'}`;
       } else {
-        aiReply = `Cảm ơn bạn đã hỏi. Tôi ghi nhận thắc mắc "${text}" và luôn sẵn sàng hỗ trợ đồng hành cùng gia đình để nuôi dạy Bé An phát triển toàn diện cả thể chất lẫn tinh thần!`;
+        aiReply = `Cảm ơn bạn đã hỏi. Tôi ghi nhận thắc mắc "${text}" và luôn sẵn sàng phân tích dữ liệu thực tế trên máy con để hỗ trợ bạn đồng hành cùng ${childName} một cách an toàn và khoa học nhất!`;
       }
 
       setMessages((prev) => [
@@ -62,7 +80,7 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
         },
       ]);
       setIsTyping(false);
-    }, 1000);
+    }, 700);
   };
 
   return (

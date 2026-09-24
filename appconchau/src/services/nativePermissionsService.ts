@@ -84,6 +84,7 @@ export interface KidPermissionsPluginInterface {
   controlMedia(options: { action: 'play' | 'pause' | 'play_pause' | 'next' | 'prev' | 'stop' }): Promise<{ success: boolean; action?: string }>;
   getUsageStats(): Promise<{ isGranted: boolean; totalMinutesToday: number; appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }> }>;
   getHealthData(): Promise<{ sensorAvailable: boolean; dailySteps: number; isActivityRecognitionGranted: boolean }>;
+  getBatteryInfo(): Promise<{ level: number; isCharging: boolean }>;
   requestAllAppPermissions(): Promise<{ requested: boolean }>;
   addListener(
     eventName: 'screenStateChange',
@@ -220,36 +221,45 @@ function getSimulatorDeviceInfo(): DeviceHardwareInfo {
       } catch (_) {}
     }
     const rand = Math.floor(1000000 + Math.random() * 9000000);
-    const mockImei = '86753009' + rand;
-    const mockMac = '68:DB:F5:' + [rand % 90 + 10, (rand * 3) % 90 + 10, (rand * 7) % 90 + 10].join(':');
-    const mockInfo: DeviceHardwareInfo = {
-      phoneNumber: '0988.123.456',
-      imei: mockImei,
-      mac: mockMac,
-      serial: 'SM-A125F-' + rand.toString(36).toUpperCase(),
-      androidId: 'aid_' + rand.toString(36),
-      hardwareId: mockImei,
-      hardwareIdType: 'imei',
-      manufacturer: 'Samsung',
-      model: 'Galaxy A12 (SM-A125F)',
-      deviceName: 'Samsung Galaxy A12',
-      osVersion: 'Android 11 (API 30)',
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    let os = 'Web Browser';
+    let model = 'Trình duyệt Web';
+    let manufacturer = 'Web';
+    if (/Windows/i.test(ua)) { os = 'Windows'; model = 'PC Windows'; manufacturer = 'Microsoft'; }
+    else if (/Android/i.test(ua)) { os = 'Android Web'; model = 'Thiết bị Android (Web)'; manufacturer = 'Android'; }
+    else if (/iPhone|iPad/i.test(ua)) { os = 'iOS Web'; model = /iPad/i.test(ua) ? 'iPad (Web)' : 'iPhone (Web)'; manufacturer = 'Apple'; }
+    else if (/Macintosh/i.test(ua)) { os = 'macOS'; model = 'Mac (Web)'; manufacturer = 'Apple'; }
+    else if (/Linux/i.test(ua)) { os = 'Linux'; model = 'Thiết bị Linux (Web)'; manufacturer = 'Linux'; }
+
+    const hardwareId = 'web_' + rand.toString(36);
+    const info: DeviceHardwareInfo = {
+      phoneNumber: '',
+      imei: '',
+      mac: '',
+      serial: 'WEB-' + rand.toString(36).toUpperCase(),
+      androidId: hardwareId,
+      hardwareId,
+      hardwareIdType: 'android_id',
+      manufacturer,
+      model,
+      deviceName: `${model}`,
+      osVersion: os,
     };
-    localStorage.setItem('kid_device_hardware_info', JSON.stringify(mockInfo));
-    return mockInfo;
+    localStorage.setItem('kid_device_hardware_info', JSON.stringify(info));
+    return info;
   }
   return {
-    phoneNumber: '0988.123.456',
-    imei: '867530091234567',
-    mac: '68:DB:F5:12:34:56',
-    serial: 'SM-A125F-VN',
-    androidId: 'aid_default',
-    hardwareId: '867530091234567',
-    hardwareIdType: 'imei',
-    manufacturer: 'Samsung',
-    model: 'Galaxy A12',
-    deviceName: 'Samsung Galaxy A12',
-    osVersion: 'Android 11',
+    phoneNumber: '',
+    imei: '',
+    mac: '',
+    serial: '',
+    androidId: 'web_default',
+    hardwareId: 'web_default',
+    hardwareIdType: 'android_id',
+    manufacturer: 'Web',
+    model: 'Web Client',
+    deviceName: 'Web Client',
+    osVersion: 'Web',
   };
 }
 
@@ -430,19 +440,45 @@ export async function getNativeHealthData(): Promise<{
       console.warn('getNativeHealthData error:', err);
     }
   }
-  return { sensorAvailable: true, dailySteps: 3420, isActivityRecognitionGranted: true };
+  return { sensorAvailable: false, dailySteps: 0, isActivityRecognitionGranted: false };
 }
 
 export async function requestAllNativeAppPermissions(): Promise<boolean> {
   if (Capacitor.isNativePlatform()) {
     try {
       const res = await KidPermissionsPlugin.requestAllAppPermissions();
-      return !!res?.requested;
+      if (res?.requested) return true;
     } catch (err) {
       console.warn('requestAllNativeAppPermissions error:', err);
       return false;
     }
   }
   return true;
+}
+
+export async function getNativeBatteryInfo(): Promise<{ level: number; isCharging: boolean }> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getBatteryInfo();
+      if (res && typeof res.level === 'number' && res.level >= 0) return res;
+    } catch (err) {
+      console.warn('getNativeBatteryInfo error:', err);
+    }
+  }
+
+  // Web/Browser fallback: read physical battery from standard Battery Status API
+  if (typeof navigator !== 'undefined' && typeof (navigator as any).getBattery === 'function') {
+    try {
+      const b = await (navigator as any).getBattery();
+      if (b && typeof b.level === 'number') {
+        return {
+          level: Math.round(b.level * 100),
+          isCharging: Boolean(b.charging),
+        };
+      }
+    } catch (_) {}
+  }
+
+  return { level: 100, isCharging: false };
 }
 

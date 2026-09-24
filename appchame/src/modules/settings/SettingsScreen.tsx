@@ -30,12 +30,14 @@ import {
   Mic,
   Clock,
   Power,
-  Leaf
+  Leaf,
+  Users
 } from 'lucide-react';
 import { useAppState, getActiveParentId, DEFAULT_TRACKING_CONFIG } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
 import { PrivacyPolicyModal } from '@shared/components/PrivacyPolicyModal';
 import { makePhoneCall } from '@shared/utils/phoneCall';
+import { ManageChildrenModal } from '../../components/ManageChildrenModal';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -64,6 +66,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, onLogout
   // Modal states
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showManageChildrenModal, setShowManageChildrenModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
@@ -190,6 +193,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, onLogout
               </div>
             </div>
             <ChevronRight size={16} className="text-slate-400" />
+          </div>
+
+          {/* Quản lý danh sách con cái & Xóa bé */}
+          <div
+            onClick={() => setShowManageChildrenModal(true)}
+            className="p-3 flex items-center justify-between hover:bg-slate-50/80 rounded-xl cursor-pointer transition"
+          >
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                <Users size={16} />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">Quản lý danh sách con cái</span>
+                <span className="text-[10px] text-slate-400">
+                  {children.length} hồ sơ con • Đổi tên, gỡ thiết bị hoặc xóa bé
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                {children.length} bé
+              </span>
+              <ChevronRight size={16} className="text-slate-400" />
+            </div>
           </div>
 
           {/* Bảo mật & quyền riêng tư */}
@@ -1106,6 +1133,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, onLogout
         isViewOnly={true}
         onClose={() => setShowPrivacyModal(false)}
       />
+
+      {/* Manage Children Modal */}
+      {showManageChildrenModal && (
+        <ManageChildrenModal
+          onClose={() => setShowManageChildrenModal(false)}
+        />
+      )}
     </div>
   );
 };

@@ -26,6 +26,7 @@ import { getConnectedParents, ConnectedParent } from '@shared/firebase/sharingSe
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
 import { getActiveParentId } from '@shared/store';
 import { ShareChildModal } from '../../components/ShareChildModal';
+import { ManageChildrenModal } from '../../components/ManageChildrenModal';
 import { FamilyMember, ConnectedDevice } from '@shared/types';
 
 interface FamilyDevicesScreenProps {
@@ -78,6 +79,7 @@ export const FamilyDevicesScreen: React.FC<FamilyDevicesScreenProps> = ({ onBack
 
   // Share modal state
   const [shareTarget, setShareTarget] = useState<{ childId: string; childName: string; childAvatar?: string } | null>(null);
+  const [showManageModal, setShowManageModal] = useState(false);
 
   // Connected parents per child
   const [connectedParentsMap, setConnectedParentsMap] = useState<Record<string, ConnectedParent[]>>({});
@@ -131,7 +133,17 @@ export const FamilyDevicesScreen: React.FC<FamilyDevicesScreenProps> = ({ onBack
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-slate-800">Tài khoản kết nối theo bé</h3>
-              <span className="text-[11px] text-slate-500">{children.length} bé</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowManageModal(true)}
+                  className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Users size={12} />
+                  <span>Quản lý & Xóa bé</span>
+                </button>
+                <span className="text-[11px] text-slate-300">•</span>
+                <span className="text-[11px] text-slate-500">{children.length} bé</span>
+              </div>
             </div>
 
             {children.map((child) => {
@@ -153,13 +165,22 @@ export const FamilyDevicesScreen: React.FC<FamilyDevicesScreenProps> = ({ onBack
                         <p className="text-[10px] text-slate-500">{child.age} tuổi · {connected.length + 1} tài khoản</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => setShareTarget({ childId: child.id, childName: child.name, childAvatar: child.avatar })}
-                      className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[11px] font-bold rounded-full border border-indigo-200 transition cursor-pointer active:scale-95"
-                    >
-                      <Share2 size={12} />
-                      Chia sẻ
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setShareTarget({ childId: child.id, childName: child.name, childAvatar: child.avatar })}
+                        className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[11px] font-bold rounded-full border border-indigo-200 transition cursor-pointer active:scale-95"
+                      >
+                        <Share2 size={12} />
+                        Chia sẻ
+                      </button>
+                      <button
+                        onClick={() => setShowManageModal(true)}
+                        className="p-1 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-full border border-slate-200 hover:border-rose-200 transition cursor-pointer"
+                        title={`Quản lý và xóa hồ sơ bé ${child.name}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Owner (you) */}
@@ -516,6 +537,13 @@ export const FamilyDevicesScreen: React.FC<FamilyDevicesScreenProps> = ({ onBack
               });
             }
           }}
+        />
+      )}
+
+      {/* Manage Children Modal */}
+      {showManageModal && (
+        <ManageChildrenModal
+          onClose={() => setShowManageModal(false)}
         />
       )}
     </div>

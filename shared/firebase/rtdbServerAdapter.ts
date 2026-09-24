@@ -46,10 +46,13 @@ export function rtdbPush(ref: ServerRtdbRef, value?: any): ServerRtdbRef & Promi
  */
 function extractChildId(path: string): string {
   const parts = path.split("/");
-  // Format: pairings/sync/{parentId}_{childId}/...
+  // Format: pairings/sync/{parentId}___{childId}/... or legacy {parentId}_{childId}
   const syncIdx = parts.indexOf("sync");
   if (syncIdx >= 0 && parts[syncIdx + 1]) {
     const syncKey = parts[syncIdx + 1];
+    if (syncKey.includes("___")) {
+      return syncKey.split("___")[1] || "";
+    }
     const keyParts = syncKey.split("_");
     if (keyParts.length >= 2) {
       return keyParts.slice(1).join("_");
@@ -80,7 +83,11 @@ function extractParentId(path: string): string {
   }
   const syncIdx = parts.indexOf("sync");
   if (syncIdx >= 0 && parts[syncIdx + 1]) {
-    const keyParts = parts[syncIdx + 1].split("_");
+    const syncKey = parts[syncIdx + 1];
+    if (syncKey.includes("___")) {
+      return syncKey.split("___")[0] || "family_primary";
+    }
+    const keyParts = syncKey.split("_");
     return keyParts[0] || "family_primary";
   }
   const famIdx = parts.indexOf("families");
@@ -95,6 +102,12 @@ function extractParentId(path: string): string {
  */
 async function routeWriteToServer(path: string, data: any): Promise<void> {
   const p = path.toLowerCase();
+
+  // Ignore legacy authenticated mirror writes under users/ to prevent duplicate requests
+  if (p.startsWith("users/")) {
+    return;
+  }
+
   const childId = extractChildId(path) || data?.childId || "";
   const parentId = extractParentId(path) || data?.parentId || "family_primary";
 
@@ -115,8 +128,8 @@ async function routeWriteToServer(path: string, data: any): Promise<void> {
     }
   }
 
-  // 3. Telemetry
-  if (p.includes("/telemetry") || p.includes("/devices/")) {
+  // 3. Telemetry (Only the main telemetry endpoint, not /devices/ mirror)
+  if (p.endsWith("/telemetry")) {
     await serverApiClient.uploadTelemetry({ ...data, childId, parentId });
     return;
   }
@@ -267,12 +280,17 @@ export async function rtdbGet(ref: ServerRtdbRef): Promise<{ exists: () => boole
         val = Object.keys(obj).length > 0 ? obj : null;
       }
     }
-    // 5. Pairing session
-    else if (p.startsWith("pairings/")) {
+    // 5. Pairing session (only 6-digit PIN, not pairings/sync/...)
+    else if (p.startsWith("pairings/") && !p.includes("/sync/")) {
       const code = ref.path.split("/")[1];
-      if (code) {
+      if (code && /^\d{6}$/.test(code)) {
         val = await serverApiClient.getPairing(code);
       }
+    }
+    // 5.1 Remote Commands active
+    else if ((p.includes("/commands/active") || p.includes("/pc_commands/active")) && childId) {
+      const commands = await serverApiClient.getCommands(childId);
+      val = commands && commands.length > 0 ? commands[0] : null;
     }
     // 6. Safe zones
     else if (p.includes("/safezones")) {
@@ -376,5 +394,20 @@ export function rtdbOnValue(
     }
   });
 
-  return unsub;
+  // Fast polling fallback for commands & settings (ensures 100% reliable execution even if SSE stream is buffered by Cloudflare tunnel/mobile carrier)
+  let pollTimer: any = null;
+  if (p.includes("/commands/active") || p.includes("/pc_commands/active") || p.includes("/settings")) {
+    pollTimer = setInterval(() => {
+      rtdbGet(ref).then((snap) => {
+        if (snap.exists()) {
+          callback(snap);
+        }
+      }).catch(() => {});
+    }, 2000);
+  }
+
+  return () => {
+    if (pollTimer) clearInterval(pollTimer);
+    unsub();
+  };
 }

@@ -38,6 +38,9 @@ export const HardwareControlActivity: React.FC<HardwareControlActivityProps> = (
   } = useAppState();
 
   const { hardwareControls } = state;
+  const activeChild = state.children?.find((c) => c.id === state.selectedChildId) || state.child;
+  const childName = activeChild?.name || 'con';
+  const isOnline = activeChild?.status === 'online';
 
   // Custom quick timer local state
   const [customMinutes, setCustomMinutes] = useState(30);
@@ -77,12 +80,12 @@ export const HardwareControlActivity: React.FC<HardwareControlActivityProps> = (
                 </span>
               )}
             </h1>
-            <p className="text-[11px] text-slate-500 font-medium">Thiết bị Bé An • Cấu hình từ xa & An toàn</p>
+            <p className="text-[11px] text-slate-500 font-medium">Thiết bị {childName} • Cấu hình từ xa & An toàn</p>
           </div>
         </div>
-        <div className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-semibold">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>Trực tuyến</span>
+        <div className={`flex items-center space-x-1 px-2.5 py-1 ${isOnline ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'} rounded-full text-xs font-semibold`}>
+          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+          <span>{isOnline ? 'Trực tuyến' : 'Ngoại tuyến'}</span>
         </div>
       </div>
 
@@ -100,7 +103,7 @@ export const HardwareControlActivity: React.FC<HardwareControlActivityProps> = (
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Sparkles size={18} className="text-yellow-200 fill-current" />
-                <h4 className="text-xs font-black uppercase tracking-wider">Yêu Cầu Từ Bé An</h4>
+                <h4 className="text-xs font-black uppercase tracking-wider">Yêu Cầu Từ {childName}</h4>
               </div>
               <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">
                 {hardwareControls.childRequestTime || 'Vừa xong'}

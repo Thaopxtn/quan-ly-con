@@ -128,7 +128,7 @@ export function normalizeChildSlug(name?: string): string {
 export function getPartitionedSyncKey(parentId?: string, childId?: string): string {
   const cleanParent = (parentId || 'fam_default').trim().replace(/[\/\.\#\$\[\]]/g, '_');
   const cleanChild = (childId || 'child_default').trim().replace(/[\/\.\#\$\[\]]/g, '_');
-  return `${cleanParent}_${cleanChild}`;
+  return `${cleanParent}___${cleanChild}`;
 }
 
 export function getPartitionedParentKey(parentId?: string): string {
@@ -174,7 +174,7 @@ export async function syncChildSettingsToCloud(
   let syncError: any = null;
 
   try {
-    // RTDB sync to strictly partitioned channel
+    // Authoritative sync to strictly partitioned channel (routes to local server via rtdbServerAdapter)
     if (rtdb) {
       rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/settings`), payload).catch((e) => {
         debugLogService.log({
@@ -629,6 +629,10 @@ export async function uploadChildTelemetryToCloud(
     deviceId?: string;
     deviceName?: string;
     model?: string;
+    isLocked?: boolean;
+    lockType?: string;
+    lockTitle?: string;
+    lockedAt?: number;
   },
   autoQueue: boolean = true,
   childName?: string
@@ -701,6 +705,10 @@ export async function uploadChildTelemetryToCloud(
           screenState: telemetry.screenState,
           activeOpenedApp: telemetry.activeOpenedApp,
           screenTimeUsedMinutes: telemetry.screenTimeUsedMinutes,
+          isLocked: telemetry.isLocked,
+          lockType: telemetry.lockType,
+          lockTitle: telemetry.lockTitle,
+          lockedAt: telemetry.lockedAt,
           lastActive: new Date().toISOString(),
           updatedAt: now,
         });
@@ -792,7 +800,7 @@ export function subscribeChildTelemetryFromCloud(
   const handleTelemetryUpdate = (rawVal: any) => {
     if (!rawVal) return;
     const now = Date.now();
-    const fp = `${rawVal.lat}_${rawVal.lng}_${rawVal.battery}_${rawVal.screenTimeUsedMinutes}_${rawVal.activeOpenedApp}_${rawVal.speed}_${rawVal.isScreenOn}`;
+    const fp = `${rawVal.lat}_${rawVal.lng}_${rawVal.battery}_${rawVal.screenTimeUsedMinutes}_${rawVal.activeOpenedApp}_${rawVal.speed}_${rawVal.isScreenOn}_${rawVal.isLocked}`;
     if (fp === lastFingerprint && now - lastTime < 1500) {
       return; // Ignore duplicate telemetry within 1.5 seconds
     }
@@ -1088,7 +1096,7 @@ export async function sendRemoteCommandToKid(
   customCmdId?: string
 ): Promise<string> {
   const { rtdb } = getFirebaseInstance();
-  if (!isFirebaseConfigured() || !childId) return "";
+  if (!childId) return "";
 
   const now = Date.now();
   const cmdId = customCmdId || `cmd_${now}_${Math.random().toString(36).substring(2, 7)}`;
@@ -1117,7 +1125,7 @@ export async function sendRemoteCommandToKid(
   const syncKey = getPartitionedSyncKey(parentId, childId);
 
   if (rtdb) {
-    // Partitioned authoritative sync channel
+    // Partitioned authoritative sync channel (routes to local server via rtdbServerAdapter)
     rtdbSet(rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/active`), cmdData).catch((e) => {
       debugLogService.log({
         direction: 'parent->cloud',
@@ -1130,20 +1138,20 @@ export async function sendRemoteCommandToKid(
         error: e,
       });
     });
+  } else {
+    // Direct sync to local PC server if rtdb not configured
+    try {
+      serverApiClient.sendCommand({
+        id: cmdId,
+        type: command,
+        childId,
+        parentId,
+        childName: childName || '',
+        payload: payload || null,
+        timestamp: now,
+      }).catch(() => {});
+    } catch (_) {}
   }
-
-  // Dual sync to local PC server if available (authenticated with cryptographic token)
-  try {
-    serverApiClient.sendCommand({
-      id: cmdId,
-      type: command,
-      childId,
-      parentId,
-      childName: childName || '',
-      payload: payload || null,
-      timestamp: now,
-    }).catch(() => {});
-  } catch (_) {}
 
   return cmdId;
 }
@@ -1181,7 +1189,7 @@ export async function sendRemoteCommandAck(
   ack: CommandAckData
 ): Promise<void> {
   const { rtdb } = getFirebaseInstance();
-  if (!isFirebaseConfigured() || !childId) return;
+  if (!childId) return;
 
   const now = Date.now();
   const syncKey = getPartitionedSyncKey(parentId, childId);
@@ -1325,16 +1333,17 @@ export function subscribeRemoteCommandsOnKid(
     if (!data || !data.command || data.command === "none") return;
     const now = Date.now();
 
-    // 1. Robust Timestamp Extraction (handles numbers, ISO strings, epoch ms)
+    // 1. Robust Timestamp Extraction (handles numbers, ISO strings, epoch ms, createdAt fallback)
     let cmdTimestamp = 0;
-    if (typeof data.timestamp === 'number') {
-      cmdTimestamp = data.timestamp;
-    } else if (typeof data.timestamp === 'string') {
-      const parsed = Date.parse(data.timestamp);
+    const rawTime = data.timestamp !== undefined ? data.timestamp : (data as any).createdAt;
+    if (typeof rawTime === 'number') {
+      cmdTimestamp = rawTime;
+    } else if (typeof rawTime === 'string') {
+      const parsed = Date.parse(rawTime);
       if (!isNaN(parsed)) {
         cmdTimestamp = parsed;
       } else {
-        const num = Number(data.timestamp);
+        const num = Number(rawTime);
         if (!isNaN(num) && num > 0) cmdTimestamp = num;
       }
     }
@@ -1769,6 +1778,16 @@ export async function fetchChildrenListFromCloud(
   const { db, rtdb, auth } = getFirebaseInstance();
   const childrenMap = new Map<string, any>();
 
+  // 0. Direct fetch from Local Server / 4G PC Server
+  try {
+    const localChildren = await serverApiClient.getChildrenList(parentId);
+    if (Array.isArray(localChildren)) {
+      localChildren.forEach((c: any) => {
+        if (c && c.id) childrenMap.set(c.id, c);
+      });
+    }
+  } catch (_) {}
+
   // 1. Fetch from RTDB users/{parentId}/children - only if authenticated
   if (rtdb && isFirebaseConfigured() && parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
     try {
@@ -2062,19 +2081,22 @@ export async function deleteChildFromCloud(
   childId: string,
   childName?: string
 ): Promise<void> {
-  const { db, rtdb, auth } = getFirebaseInstance();
+  const { db, rtdb } = getFirebaseInstance();
   if (!isFirebaseConfigured() || !childId) return;
 
   const slug = normalizeChildSlug(childName);
 
   if (rtdb) {
     rtdbRemove(rtdbRef(rtdb, `pairings/active_children/${childId}`)).catch(() => {});
+    rtdbRemove(rtdbRef(rtdb, `pairings/${childId}`)).catch(() => {});
     if (slug) {
       rtdbRemove(rtdbRef(rtdb, `pairings/active_children_by_name/${slug}`)).catch(() => {});
     }
-    if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
+    if (parentId) {
       rtdbRemove(rtdbRef(rtdb, `users/${parentId}/children/${childId}`)).catch(() => {});
+      rtdbRemove(rtdbRef(rtdb, `users/${parentId}/settings/${childId}`)).catch(() => {});
     }
+    rtdbRemove(rtdbRef(rtdb, `children/${childId}`)).catch(() => {});
   }
 
   if (db && parentId && parentId !== "family_primary") {

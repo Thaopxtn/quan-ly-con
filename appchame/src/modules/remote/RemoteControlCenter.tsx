@@ -99,6 +99,23 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
   const [filterCategory, setFilterCategory] = useState<"all" | "control" | "monitor" | "schedule">("all");
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showShareLinkModal, setShowShareLinkModal] = useState<boolean>(false);
+  const [btnCooldowns, setBtnCooldowns] = useState<Record<string, number>>({});
+
+  const triggerBtnCooldown = (actionKey: string) => {
+    setBtnCooldowns(prev => ({ ...prev, [actionKey]: 3 }));
+    const timer = setInterval(() => {
+      setBtnCooldowns(prev => {
+        const cur = prev[actionKey] || 0;
+        if (cur <= 1) {
+          clearInterval(timer);
+          const next = { ...prev };
+          delete next[actionKey];
+          return next;
+        }
+        return { ...prev, [actionKey]: cur - 1 };
+      });
+    }, 1000);
+  };
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -364,7 +381,7 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  {child?.grade} • iPhone 13 • Đồng bộ Real-time
+                  {child?.grade || 'Con'} • {child?.model || child?.deviceName || 'Thiết bị con'} • Đồng bộ Real-time
                 </p>
               </div>
             </div>
@@ -372,7 +389,7 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
             <div className="flex items-center space-x-2 text-xs font-semibold text-slate-300">
               <span className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-xl">
                 <Battery size={13} className="text-emerald-400" />
-                {child?.battery || 78}%
+                {typeof child?.battery === 'number' ? child.battery : 0}%
               </span>
               <span className="flex items-center gap-1 bg-white/10 px-2 py-1 rounded-xl">
                 <Wifi size={13} className="text-blue-400" />
@@ -520,7 +537,10 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
         {/* Quick Instant Actions Strip */}
         <div className="grid grid-cols-4 gap-1.5">
           <button
+            disabled={Boolean(btnCooldowns['lock'])}
             onClick={() => {
+              if (btnCooldowns['lock']) return;
+              triggerBtnCooldown('lock');
               if (lockChallenge.isLocked) {
                 unlockChildDeviceNow(child?.id);
                 showToast(`Đã gửi lệnh mở khóa máy ${child?.name || 'con'}!`);
@@ -530,35 +550,51 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
               }
             }}
             className={`p-2 rounded-2xl font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-xs border cursor-pointer ${
-              lockChallenge.isLocked
+              btnCooldowns['lock']
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : lockChallenge.isLocked
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                 : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
             }`}
           >
             <Lock size={16} />
-            <span>{lockChallenge.isLocked ? 'Mở khóa' : 'Khóa máy'}</span>
+            <span>{btnCooldowns['lock'] ? `Chờ ${btnCooldowns['lock']}s` : lockChallenge.isLocked ? 'Mở khóa' : 'Khóa máy'}</span>
           </button>
 
           <button
+            disabled={Boolean(btnCooldowns['buzz'])}
             onClick={() => {
+              if (btnCooldowns['buzz']) return;
+              triggerBtnCooldown('buzz');
               buzzKidPhone(child?.id);
               showToast(`Đang phát tín hiệu còi hú trên máy ${child?.name || 'con'}! 🚨`);
             }}
-            className="p-2 rounded-2xl bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-xs cursor-pointer"
+            className={`p-2 rounded-2xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-xs cursor-pointer ${
+              btnCooldowns['buzz']
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+            }`}
           >
-            <Volume2 size={16} className="animate-bounce text-amber-600" />
-            <span>Hú còi</span>
+            <Volume2 size={16} className={btnCooldowns['buzz'] ? '' : 'animate-bounce text-amber-600'} />
+            <span>{btnCooldowns['buzz'] ? `Chờ ${btnCooldowns['buzz']}s` : 'Hú còi'}</span>
           </button>
 
           <button
+            disabled={Boolean(btnCooldowns['extend'])}
             onClick={() => {
+              if (btnCooldowns['extend']) return;
+              triggerBtnCooldown('extend');
               extendChildTimeNow(30, child?.id);
               showToast(`Đã gia hạn thêm +30 phút cho ${child?.name || 'con'}! ⏱️`);
             }}
-            className="p-2 rounded-2xl bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-xs cursor-pointer"
+            className={`p-2 rounded-2xl border font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-xs cursor-pointer ${
+              btnCooldowns['extend']
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+            }`}
           >
             <Clock size={16} className="text-blue-600" />
-            <span>+30 phút</span>
+            <span>{btnCooldowns['extend'] ? `Chờ ${btnCooldowns['extend']}s` : '+30 phút'}</span>
           </button>
 
           <button
