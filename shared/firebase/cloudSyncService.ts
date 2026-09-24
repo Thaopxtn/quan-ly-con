@@ -1240,15 +1240,27 @@ export function subscribeCommandAck(
         rtdbRef(rtdb, `pairings/sync/${syncKey}/commands/lastAck`),
         (snap) => {
           if (snap.exists()) {
-            const val = snap.val() as CommandAckData;
-            if (val && val.id && val.status) {
-              const ackKey = `${val.id}_${val.status}_${val.executedAt || val.receivedAt || 0}`;
-              if (ackKey !== lastHandledAckKey) {
-                lastHandledAckKey = ackKey;
-                // Only process fresh acks (within last 5 minutes, tolerant to clock drift)
-                const ackAge = Date.now() - (val.executedAt || val.receivedAt || Date.now());
-                if (Math.abs(ackAge) < 300000) {
-                  onAck(val);
+            const rawVal = snap.val() as any;
+            if (rawVal) {
+              const cmdId = rawVal.id || rawVal.commandId;
+              const status = rawVal.status;
+              if (cmdId && status) {
+                const val: CommandAckData = {
+                  ...rawVal,
+                  id: cmdId,
+                  commandId: cmdId,
+                };
+                const ackExecTime = typeof val.executedAt === 'number'
+                  ? val.executedAt
+                  : (Date.parse(String(val.executedAt || '')) || (typeof val.receivedAt === 'number' ? val.receivedAt : Date.now()));
+                const ackKey = `${cmdId}_${status}_${ackExecTime}`;
+                if (ackKey !== lastHandledAckKey) {
+                  lastHandledAckKey = ackKey;
+                  // Only process fresh acks (within last 5 minutes, tolerant to clock drift)
+                  const ackAge = Date.now() - ackExecTime;
+                  if (Math.abs(ackAge) < 300000) {
+                    onAck(val);
+                  }
                 }
               }
             }
@@ -1369,8 +1381,8 @@ export function subscribeRemoteCommandsOnKid(
       return;
     }
 
-    // 5. Monotonic Sequence Check: Discard any command older than the last executed command
-    if (lastHandledCmdTimestamp > 0 && cmdTimestamp < lastHandledCmdTimestamp) {
+    // 5. Monotonic Sequence Check: Discard any command significantly older than the last executed command (10s clock-skew tolerance)
+    if (lastHandledCmdTimestamp > 0 && cmdTimestamp < (lastHandledCmdTimestamp - 10000)) {
       return;
     }
 
@@ -1398,6 +1410,35 @@ export function subscribeRemoteCommandsOnKid(
       unsubs.push(u1);
     } catch (err) {}
   }
+
+  // 🛡️ Active polling fallback (every 3 seconds):
+  // Guarantees command delivery on mobile even if Android OS suspends/drops background SSE connection!
+  const pollTimer = setInterval(async () => {
+    try {
+      const commands = await serverApiClient.getCommands(childId);
+      if (Array.isArray(commands) && commands.length > 0) {
+        for (const cmd of commands) {
+          if (cmd && (cmd.status === 'pending' || !cmd.status) && (cmd.command || cmd.type) && cmd.command !== 'none') {
+            const normalizedCmd: RemoteCommandData = {
+              id: cmd.id || `cmd_${cmd.timestamp || Date.now()}`,
+              command: cmd.command || cmd.type,
+              timestamp: typeof cmd.timestamp === 'number' ? cmd.timestamp : Date.now(),
+              payload: cmd.payload,
+              childId: cmd.childId || childId,
+              parentId: cmd.parentId || parentId,
+              childName: cmd.childName || childName || '',
+            };
+            const cId = normalizedCmd.id;
+            if (!handledIds.has(cId)) {
+              handleIncoming(normalizedCmd);
+              break;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }, 3000);
+  unsubs.push(() => clearInterval(pollTimer));
 
   return () => {
     unsubs.forEach((u) => {

@@ -1694,7 +1694,8 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
 
     // --- (I) Command Acknowledgment & Feedback Loop Listener ---
     const unsubCommandAck = subscribeCommandAck(parentId, childId, (ack) => {
-      if (!ack || !ack.id) return;
+      const ackId = ack?.id || (ack as any)?.commandId;
+      if (!ack || !ackId) return;
       if (isSilentRemoteCommand(ack.command, (ack as any).commandTitle || REMOTE_COMMAND_TITLES[ack.command])) {
         return;
       }
@@ -1711,21 +1712,66 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
       applyCloudStateUpdate((prev) => {
         const prevAck = prev.lastCommandAck;
         const updatedAck: CommandAckStatus = {
-          id: ack.id,
+          id: ackId,
           command: ack.command,
           commandTitle: cmdTitle,
           status: ack.status,
           childId: ack.childId || childId,
           childName: childDisplayName,
           deviceName: ack.deviceName || prevAck?.deviceName || '',
-          sentAt: prevAck?.id === ack.id ? prevAck.sentAt : (ack.receivedAt || now),
+          sentAt: prevAck?.id === ackId ? prevAck.sentAt : (ack.receivedAt || now),
           executedAt: ack.executedAt || now,
           detail: ack.detail || (ack.status === 'executed' ? 'Đã thực thi thành công trên máy con' : 'Máy con đã nhận lệnh'),
         };
 
+        let nextChildren = prev.children;
+        let nextChildSettings = prev.childSettings;
+        let nextLockChallenge = prev.lockChallenge;
+        let nextChild = prev.child;
+
+        // When child device CONFIRMS actual execution, update confirmed child settings & state
+        if (ack.status === 'executed') {
+          const targetCid = ack.childId || childId;
+          const isLockCmd = ack.command === 'lock_now';
+          const isUnlockCmd = ack.command === 'unlock_now';
+
+          if (isLockCmd || isUnlockCmd) {
+            const nextLocked = isLockCmd;
+            nextChildren = (prev.children || []).map((c) =>
+              c.id === targetCid ? { ...c, isLocked: nextLocked, lockType: nextLocked ? 'instant' : 'none' } : c
+            );
+            if (prev.child && prev.child.id === targetCid) {
+              nextChild = { ...prev.child, isLocked: nextLocked, lockType: nextLocked ? 'instant' : 'none' };
+            }
+            const curSettings = prev.childSettings[targetCid] || createDefaultChildSettings(targetCid);
+            const updatedLock: LockChallengeState = {
+              ...curSettings.lockChallenge,
+              isLocked: nextLocked,
+              lockType: nextLocked ? 'instant' : 'none',
+              title: nextLocked ? 'Thiết bị đang bị khóa từ xa' : '',
+              description: nextLocked ? 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!' : '',
+            };
+            nextChildSettings = {
+              ...prev.childSettings,
+              [targetCid]: {
+                ...curSettings,
+                isLocked: nextLocked,
+                lockChallenge: updatedLock,
+              },
+            };
+            if (targetCid === prev.selectedChildId) {
+              nextLockChallenge = updatedLock;
+            }
+          }
+        }
+
         return {
           ...prev,
           lastCommandAck: updatedAck,
+          children: nextChildren,
+          child: nextChild,
+          childSettings: nextChildSettings,
+          lockChallenge: nextLockChallenge,
         };
       });
 
@@ -1733,7 +1779,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
         showSystemNotification(`✅ MÁY CON ĐÃ THỰC THI LỆNH!`, {
           body: `Bé ${childDisplayName} đã nhận & thực thi [${cmdTitle}] lúc ${timeStr}!`,
           soundType: 'info',
-          tag: `ack_${ack.id}`,
+          tag: `ack_${ackId}`,
         });
       }
     });
@@ -1967,8 +2013,14 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             }),
           ];
 
-          const curIdValid = mergedChildren.some((c) => c.id === prev.selectedChildId);
-          const nextSelectedChildId = curIdValid ? prev.selectedChildId : (mergedChildren[0]?.id || '');
+          const curChildObj = mergedChildren.find((c) => c.id === prev.selectedChildId);
+          // Sort children by recent activity to pick the active device
+          const sortedByActivity = [...mergedChildren].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+          const mostActiveChild = sortedByActivity[0];
+
+          // Auto-select the active child if current selection is empty or stale by > 12 hours while another child is active
+          const isCurStale = !curChildObj || (mostActiveChild && (mostActiveChild.updatedAt || 0) > ((curChildObj.updatedAt || 0) + 43200000));
+          const nextSelectedChildId = isCurStale && mostActiveChild ? mostActiveChild.id : (curChildObj ? prev.selectedChildId : (mostActiveChild?.id || ''));
           const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
 
           return {
@@ -2541,16 +2593,16 @@ export const useAppState = () => {
         lastCommandAck: pendingStatus,
       });
 
-      // 3. Set a 15-second timeout: If child has not acknowledged after 15s, inform parent
+      // 3. Set a 15-second timeout: If child has not acknowledged execution after 15s, inform parent
       setTimeout(() => {
         applyCloudStateUpdate((prev) => {
-          if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && prev.lastCommandAck.status === 'pending') {
+          if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && (prev.lastCommandAck.status === 'pending' || prev.lastCommandAck.status === 'received')) {
             return {
               ...prev,
               lastCommandAck: {
                 ...prev.lastCommandAck,
                 status: 'timeout',
-                detail: `Điện thoại của ${childName} chưa phản hồi (có thể đang tắt mạng hoặc mất sóng). Lệnh sẽ tự động chạy ngay khi máy con kết nối 4G/WiFi.`,
+                detail: `Điện thoại của ${childName} chưa phản hồi thực thi (có thể đang tắt mạng hoặc mất sóng). Trạng thái máy con: Vẫn giữ nguyên trạng thái thực tế.`,
               },
             };
           }
@@ -3548,31 +3600,35 @@ export const useAppState = () => {
 
   const lockChildDeviceNow = (childId?: string) => {
     const targetId = childId || state.selectedChildId;
-    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
-    const updatedLock: LockChallengeState = {
-      ...currentSettings.lockChallenge,
-      isLocked: true,
-      lockType: 'instant',
-      title: 'Thiết bị đang bị khóa từ xa',
-      description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
-    };
-    const updatedChildren = (state.children || []).map((c) =>
-      c.id === targetId ? { ...c, isLocked: true, lockType: 'instant', lockTitle: updatedLock.title } : c
-    );
-    saveAndNotify({
-      ...state,
-      children: updatedChildren,
-      child: state.child?.id === targetId ? { ...state.child, isLocked: true, lockType: 'instant', lockTitle: updatedLock.title } : state.child,
-      lockChallenge: updatedLock,
-      childSettings: {
-        ...state.childSettings,
-        [targetId]: {
-          ...currentSettings,
-          lockChallenge: updatedLock,
-          isLocked: true,
+    if (isKidAppMode()) {
+      const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+      const updatedLock: LockChallengeState = {
+        ...currentSettings.lockChallenge,
+        isLocked: true,
+        lockType: 'instant',
+        title: 'Thiết bị đang bị khóa từ xa',
+        description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+      };
+      const updatedChildren = (state.children || []).map((c) =>
+        c.id === targetId ? { ...c, isLocked: true, lockType: 'instant', lockTitle: updatedLock.title } : c
+      );
+      saveAndNotify({
+        ...state,
+        children: updatedChildren,
+        child: state.child?.id === targetId ? { ...state.child, isLocked: true, lockType: 'instant', lockTitle: updatedLock.title } : state.child,
+        lockChallenge: updatedLock,
+        childSettings: {
+          ...state.childSettings,
+          [targetId]: {
+            ...currentSettings,
+            lockChallenge: updatedLock,
+            isLocked: true,
+          },
         },
-      },
-    });
+      });
+      return;
+    }
+    // Parent mode: Dispatch remote command. DO NOT flip isLocked optimistically before kid confirms!
     dispatchRemoteCommand('lock_now', {
       title: 'Thiết bị đang bị khóa từ xa',
       description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
@@ -3581,63 +3637,54 @@ export const useAppState = () => {
 
   const unlockChildDeviceNow = (childId?: string) => {
     const targetId = childId || state.selectedChildId;
-    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
-    const curUsedMins = currentSettings.screenTime?.todayTotalMinutes || 0;
-    const curLimitMins = currentSettings.screenTimeLimitMinutes || 135;
-    const effectiveLimit = curUsedMins >= curLimitMins ? (curUsedMins + 15) : curLimitMins;
+    if (isKidAppMode()) {
+      const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+      const curUsedMins = currentSettings.screenTime?.todayTotalMinutes || 0;
+      const curLimitMins = currentSettings.screenTimeLimitMinutes || 135;
+      const effectiveLimit = curUsedMins >= curLimitMins ? (curUsedMins + 15) : curLimitMins;
 
-    const updatedLock: LockChallengeState = {
-      ...currentSettings.lockChallenge,
-      isLocked: false,
-      lockType: 'none',
-      title: '',
-      description: '',
-    };
-    const updatedRoutines: SmartRoutines = {
-      ...currentSettings.smartRoutines,
-      mealtimeLock: false,
-      bedtimeLock: false,
-    };
-    const updatedChildren = (state.children || []).map((c) =>
-      c.id === targetId ? { ...c, isLocked: false, lockType: 'none', lockTitle: '' } : c
-    );
-    saveAndNotify({
-      ...state,
-      children: updatedChildren,
-      child: state.child?.id === targetId ? { ...state.child, isLocked: false, lockType: 'none', lockTitle: '' } : state.child,
-      lockChallenge: updatedLock,
-      smartRoutines: {
-        ...state.smartRoutines,
+      const updatedLock: LockChallengeState = {
+        ...currentSettings.lockChallenge,
+        isLocked: false,
+        lockType: 'none',
+        title: '',
+        description: '',
+      };
+      const updatedRoutines: SmartRoutines = {
+        ...currentSettings.smartRoutines,
         mealtimeLock: false,
         bedtimeLock: false,
-      },
-      broadcastMessage: null,
-      childSettings: {
-        ...state.childSettings,
-        [targetId]: {
-          ...currentSettings,
-          screenTimeLimitMinutes: effectiveLimit,
-          lockChallenge: updatedLock,
-          smartRoutines: updatedRoutines,
-          isLocked: false,
-          broadcastMessage: null,
+      };
+      const updatedChildren = (state.children || []).map((c) =>
+        c.id === targetId ? { ...c, isLocked: false, lockType: 'none', lockTitle: '' } : c
+      );
+      saveAndNotify({
+        ...state,
+        children: updatedChildren,
+        child: state.child?.id === targetId ? { ...state.child, isLocked: false, lockType: 'none', lockTitle: '' } : state.child,
+        lockChallenge: updatedLock,
+        smartRoutines: {
+          ...state.smartRoutines,
+          mealtimeLock: false,
+          bedtimeLock: false,
         },
-      },
-    });
-    if (!isKidAppMode()) {
-      dispatchRemoteCommand('unlock_now', undefined, targetId, 'Mở khóa thiết bị 🔓');
-      const parentId = getActiveParentId();
-      if (parentId) {
-        const targetChild = state.children.find((c) => c.id === targetId) || state.child;
-        syncChildSettingsToCloud(parentId, targetId, {
-          screenTimeLimitMinutes: effectiveLimit,
-          isLocked: false,
-          lockChallenge: updatedLock,
-          smartRoutines: updatedRoutines,
-          broadcastMessage: null,
-        }, targetChild?.name).catch(() => {});
-      }
+        broadcastMessage: null,
+        childSettings: {
+          ...state.childSettings,
+          [targetId]: {
+            ...currentSettings,
+            screenTimeLimitMinutes: effectiveLimit,
+            lockChallenge: updatedLock,
+            smartRoutines: updatedRoutines,
+            isLocked: false,
+            broadcastMessage: null,
+          },
+        },
+      });
+      return;
     }
+    // Parent mode: Dispatch remote command. DO NOT flip isLocked optimistically before kid confirms!
+    dispatchRemoteCommand('unlock_now', undefined, targetId, 'Mở khóa thiết bị 🔓');
   };
 
   const extendChildTimeNow = (minutes: number, childId?: string) => {

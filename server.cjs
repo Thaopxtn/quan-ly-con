@@ -873,13 +873,67 @@ const server = http.createServer(async (req, res) => {
 
         commandRateLimitMap.set(cmdKey, { time: now, commandId: data.id });
 
-        // Synchronize child settings state if command modifies lock or screen time
-        if (cmdType === 'lock_now' || cmdType === 'unlock_now' || cmdType === 'extend_time') {
+        const commands = readDb('commands');
+        commands.unshift(data);
+        if (commands.length > 500) commands.pop();
+        writeDb('commands', commands);
+
+        // Broadcast command in real-time to Kid device
+        broadcastRealtime('command', data);
+        logServerEvent('CMD', `Lệnh điều khiển ${data.type} -> thiết bị con: ${data.childId}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, commandId: data.id }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing childId or command/type' }));
+      return;
+    }
+    if (req.method === 'GET') {
+      const childId = parsedUrl.searchParams.get('childId');
+      const status = parsedUrl.searchParams.get('status');
+      const commands = readDb('commands');
+      let filtered = childId ? commands.filter(c => c.childId === childId) : commands;
+      if (status) {
+        filtered = filtered.filter(c => c.status === status);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ commands: filtered.slice(0, 50) }));
+      return;
+    }
+  }
+
+  // 4.1 Remote Command ACK API (Kid sends execution feedback back to Parent)
+  if (pathname === '/api/command/ack') {
+    if (req.method === 'POST') {
+      const ack = await parseJsonBody(req);
+      const cmdId = ack && (ack.commandId || ack.id);
+      if (cmdId) {
+        const commands = readDb('commands');
+        const targetCmd = commands.find(c => c.id === cmdId);
+        const effectiveStatus = ack.status || 'executed';
+        const effectiveChildId = ack.childId || (targetCmd ? targetCmd.childId : '');
+        const cmdType = (targetCmd ? targetCmd.type : '') || ack.command;
+
+        if (targetCmd) {
+          targetCmd.status = effectiveStatus;
+          targetCmd.acknowledgedAt = new Date().toISOString();
+          if (ack.deviceName) targetCmd.deviceName = ack.deviceName;
+          if (ack.childName) targetCmd.childName = ack.childName;
+          if (ack.detail) targetCmd.detail = ack.detail;
+          writeDb('commands', commands);
+        }
+
+        // Only when kid device CONFIRMS actual execution, update confirmed child settings
+        if (effectiveStatus === 'executed' && effectiveChildId) {
           try {
             const settings = readDb('settings');
-            const childSet = settings[data.childId] || {};
+            const childSet = settings[effectiveChildId] || {};
+            let settingsModified = false;
+
             if (cmdType === 'lock_now') {
-              const lockPayload = data.payload || {};
+              const lockPayload = (targetCmd && targetCmd.payload) || ack.payload || {};
               childSet.isLocked = true;
               childSet.lockChallenge = {
                 isLocked: true,
@@ -888,6 +942,7 @@ const server = http.createServer(async (req, res) => {
                 description: lockPayload.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
                 challengeData: lockPayload.challengeData,
               };
+              settingsModified = true;
             } else if (cmdType === 'unlock_now') {
               childSet.isLocked = false;
               childSet.lockChallenge = {
@@ -906,77 +961,44 @@ const server = http.createServer(async (req, res) => {
               if (usedMins >= limitMins) {
                 childSet.screenTimeLimitMinutes = usedMins + 15;
               }
+              settingsModified = true;
             } else if (cmdType === 'extend_time') {
-              const extra = (data.payload && data.payload.minutes) || 15;
+              const extra = ((targetCmd && targetCmd.payload) || ack.payload)?.minutes || 15;
               childSet.screenTimeLimitMinutes = (childSet.screenTimeLimitMinutes || 135) + extra;
               childSet.isLocked = false;
               if (childSet.lockChallenge) {
                 childSet.lockChallenge.isLocked = false;
                 childSet.lockChallenge.lockType = 'none';
               }
+              settingsModified = true;
             }
-            settings[data.childId] = childSet;
-            writeDb('settings', settings);
-            broadcastRealtime('settings', { childId: data.childId, settings: childSet });
+
+            if (settingsModified) {
+              settings[effectiveChildId] = childSet;
+              writeDb('settings', settings);
+              broadcastRealtime('settings', { childId: effectiveChildId, settings: childSet });
+            }
           } catch (e) {
-            console.error('[server] Error syncing settings on command:', e.message);
+            console.error('[server] Error updating settings on command ACK:', e.message);
           }
         }
 
-        const commands = readDb('commands');
-        commands.unshift(data);
-        if (commands.length > 500) commands.pop();
-        writeDb('commands', commands);
-
-        // Broadcast command in real-time
-        broadcastRealtime('command', data);
-        logServerEvent('CMD', `Lệnh điều khiển ${data.type} -> thiết bị con: ${data.childId}`);
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, commandId: data.id }));
-        return;
-      }
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Missing childId or command/type' }));
-      return;
-    }
-    if (req.method === 'GET') {
-      const childId = parsedUrl.searchParams.get('childId');
-      const commands = readDb('commands');
-      const filtered = childId ? commands.filter(c => c.childId === childId) : commands;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ commands: filtered.slice(0, 50) }));
-      return;
-    }
-  }
-
-  // 4.1 Remote Command ACK API (Kid sends execution feedback back to Parent)
-  if (pathname === '/api/command/ack') {
-    if (req.method === 'POST') {
-      const ack = await parseJsonBody(req);
-      const cmdId = ack && (ack.commandId || ack.id);
-      if (cmdId) {
-        const commands = readDb('commands');
-        const targetCmd = commands.find(c => c.id === cmdId);
-        if (targetCmd) {
-          targetCmd.status = ack.status || 'executed';
-          targetCmd.acknowledgedAt = new Date().toISOString();
-          if (ack.deviceName) targetCmd.deviceName = ack.deviceName;
-          if (ack.childName) targetCmd.childName = ack.childName;
-          if (ack.detail) targetCmd.detail = ack.detail;
-          writeDb('commands', commands);
-        }
+        // Broadcast ACK to parent app (include both id and commandId for maximum client compatibility)
         broadcastRealtime('command_ack', {
+          id: cmdId,
           commandId: cmdId,
-          command: ack.command || (targetCmd ? targetCmd.type : ''),
-          status: ack.status || 'executed',
-          childId: ack.childId,
-          childName: ack.childName,
-          deviceName: ack.deviceName,
-          detail: ack.detail || 'Thực thi thành công trên máy con',
+          command: cmdType,
+          status: effectiveStatus,
+          childId: effectiveChildId,
+          childName: ack.childName || (targetCmd ? targetCmd.childName : ''),
+          deviceName: ack.deviceName || (targetCmd ? targetCmd.deviceName : ''),
+          detail: ack.detail || (effectiveStatus === 'executed' ? 'Đã thực thi thành công trên thiết bị con' : 'Máy con đã nhận lệnh'),
           executedAt: ack.executedAt || Date.now(),
           timestamp: new Date().toISOString(),
         });
+
+        logServerEvent('ACK', `Máy con [${effectiveChildId}] xác nhận lệnh ${cmdType}: ${effectiveStatus}`);
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, ackReceived: true, commandId: cmdId }));
         return;

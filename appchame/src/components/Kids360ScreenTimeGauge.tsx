@@ -8,7 +8,8 @@ import {
   Sparkles,
   Sliders,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Loader2
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { haptics } from '@shared/utils/haptics';
@@ -37,12 +38,26 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   onOpenLimitModal,
 }) => {
   const {
+    state,
     lockChildDeviceNow,
     unlockChildDeviceNow,
     toggleStudyModeAll,
     buzzKidPhone,
     setCustomScreenTimeLimit,
   } = useAppState();
+
+  const { lastCommandAck } = state;
+  const inFlightLockCmd = lastCommandAck &&
+    lastCommandAck.childId === childId &&
+    (lastCommandAck.command === 'lock_now' || lastCommandAck.command === 'unlock_now') &&
+    (lastCommandAck.status === 'pending' || lastCommandAck.status === 'received') &&
+    (Date.now() - (lastCommandAck.sentAt || 0) < 15000);
+
+  const timedOutLockCmd = lastCommandAck &&
+    lastCommandAck.childId === childId &&
+    (lastCommandAck.command === 'lock_now' || lastCommandAck.command === 'unlock_now') &&
+    lastCommandAck.status === 'timeout' &&
+    (Date.now() - (lastCommandAck.sentAt || 0) < 25000);
 
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [gaugeCooldown, setGaugeCooldown] = useState<Record<string, number>>({});
@@ -122,15 +137,15 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   // Fast action handlers with Anti-Spam protection
   const handleToggleLock = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (gaugeCooldown['lock']) return;
+    if (inFlightLockCmd || gaugeCooldown['lock']) return;
     triggerCooldown('lock');
     haptics.medium();
     if (isLocked) {
       unlockChildDeviceNow(childId);
-      triggerFeedback(`Đã mở khóa thiết bị cho ${childName}! 🔓`);
+      triggerFeedback(`Đang gửi lệnh mở khóa đến máy ${childName}... 🔓`);
     } else {
       lockChildDeviceNow(childId);
-      triggerFeedback(`Đã khóa tạm dừng thiết bị của ${childName}! 🔒`);
+      triggerFeedback(`Đang gửi lệnh khóa đến máy ${childName}... 🔒`);
     }
   };
 
@@ -281,30 +296,55 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
       <div className="space-y-2 pt-3 border-t border-slate-100">
         {/* Row 1: 2 Primary Hero Action Buttons */}
         <div className="grid grid-cols-2 gap-2.5">
-          {/* Button 1: Khóa máy ngay / Mở khóa */}
+          {/* Button 1: Khóa máy ngay / Mở khóa với hiển thị trạng thái thực tế của con */}
           <button
             type="button"
-            disabled={Boolean(gaugeCooldown['lock'])}
+            disabled={Boolean(inFlightLockCmd) || Boolean(gaugeCooldown['lock'])}
             onClick={handleToggleLock}
-            className={`py-3 px-3 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center gap-2 border ${
-              gaugeCooldown['lock']
+            className={`py-2 px-2.5 rounded-2xl font-black text-xs transition-all active:scale-95 cursor-pointer shadow-xs flex flex-col items-center justify-center gap-0.5 border min-h-[52px] ${
+              inFlightLockCmd
+                ? 'bg-amber-50 text-amber-900 border-amber-300 shadow-amber-500/10 cursor-wait'
+                : gaugeCooldown['lock']
                 ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed'
                 : isLocked
                 ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white border-rose-600 shadow-rose-500/25'
                 : 'bg-slate-900 hover:bg-slate-800 text-white border-slate-900 shadow-slate-900/20'
             }`}
           >
-            {gaugeCooldown['lock'] ? (
+            {inFlightLockCmd ? (
+              <>
+                <div className="flex items-center gap-1.5 text-amber-800">
+                  <Loader2 size={15} className="animate-spin text-amber-600 shrink-0" />
+                  <span className="font-extrabold text-[11px] leading-tight">
+                    {inFlightLockCmd.command === 'lock_now' ? 'Đang gửi lệnh khóa...' : 'Đang gửi lệnh mở...'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 text-[9px] font-bold text-amber-900 bg-amber-200/90 px-2 py-0.2 rounded-full">
+                  <span>Trạng thái con:</span>
+                  <span className="underline font-black">{isLocked ? 'Đang Khóa 🔒' : 'Đang Mở 🟢'}</span>
+                </div>
+              </>
+            ) : gaugeCooldown['lock'] ? (
               <span>Chờ {gaugeCooldown['lock']}s...</span>
             ) : isLocked ? (
               <>
-                <Unlock size={17} strokeWidth={2.5} />
-                <span>Mở Khóa Máy</span>
+                <div className="flex items-center gap-1.5">
+                  <Unlock size={16} strokeWidth={2.5} />
+                  <span className="leading-tight">Mở Khóa Máy</span>
+                </div>
+                <span className="text-[9.5px] opacity-80 font-semibold">
+                  Máy con: Đang khóa 🔒
+                </span>
               </>
             ) : (
               <>
-                <Lock size={17} strokeWidth={2.5} />
-                <span>Khóa Máy Ngay</span>
+                <div className="flex items-center gap-1.5">
+                  <Lock size={16} strokeWidth={2.5} />
+                  <span className="leading-tight">Khóa Máy Ngay</span>
+                </div>
+                <span className="text-[9.5px] opacity-80 font-semibold">
+                  Máy con: Đang mở 🟢
+                </span>
               </>
             )}
           </button>
@@ -324,6 +364,16 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
             <span>{gaugeCooldown['bonus'] ? `Chờ ${gaugeCooldown['bonus']}s` : '+15 Phút Thưởng'}</span>
           </button>
         </div>
+
+        {/* Warning notification banner if command timed out (Child device offline or hasn't received) */}
+        {timedOutLockCmd && (
+          <div className="bg-amber-50 border border-amber-200/90 rounded-xl px-2.5 py-1.5 text-[10.5px] text-amber-800 font-medium flex items-center gap-1.5 animate-fadeIn">
+            <AlertTriangle size={14} className="text-amber-600 shrink-0" />
+            <span>
+              Máy con <strong>{childName}</strong> chưa phản hồi (thiết bị có thể đang tắt mạng). Trạng thái thực tế: <strong>{isLocked ? 'Đang khóa 🔒' : 'Đang mở máy 🟢'}</strong>.
+            </span>
+          </div>
+        )}
 
         {/* Row 2: 2 Secondary Quick Toggles */}
         <div className="grid grid-cols-2 gap-2.5">

@@ -1243,6 +1243,20 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           });
           showToast('🔒 BỐ MẸ ĐÃ TẠM KHÓA MÁY TỪ XA!');
           uploadCurrentTelemetrySnapshot(true).catch(() => {});
+          // Send explicit executed ACK immediately back to parent
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'lock_now',
+            status: 'executed',
+            receivedAt: cmd.timestamp || Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild?.name || 'Con',
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: 'Đã khóa màn hình thành công trên máy con',
+          }).catch(() => {});
+          customAckSent = true;
+          clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           break;
         case 'unlock_now':
           wakeUpDevice().catch(() => {});
@@ -1290,6 +1304,20 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           });
           showToast('🔓 BỐ MẸ ĐÃ MỞ KHÓA THIẾT BỊ CHO CON!');
           uploadCurrentTelemetrySnapshot(true).catch(() => {});
+          // Send explicit executed ACK immediately back to parent
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'unlock_now',
+            status: 'executed',
+            receivedAt: cmd.timestamp || Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild?.name || 'Con',
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: 'Đã mở khóa màn hình thành công trên máy con',
+          }).catch(() => {});
+          customAckSent = true;
+          clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           break;
         case 'extend_time':
           const extra = cmd.payload?.minutes || 15;

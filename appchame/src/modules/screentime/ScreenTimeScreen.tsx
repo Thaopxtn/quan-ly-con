@@ -120,7 +120,7 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
           childName={child.name}
           usedMinutes={screenTime.todayTotalMinutes}
           limitMinutes={savedLimitMinutes}
-          isLocked={state.childSettings?.[child.id]?.lockChallenge?.isLocked ?? state.lockChallenge?.isLocked ?? false}
+          isLocked={Boolean(child.isLocked || state.childSettings?.[child.id]?.isLocked || state.childSettings?.[child.id]?.lockChallenge?.isLocked || (child.id === state.selectedChildId && state.lockChallenge?.isLocked))}
           isStudyMode={state.studyModeOnly}
           battery={child.battery}
           onOpenLimitModal={() => setShowLimitModal(true)}

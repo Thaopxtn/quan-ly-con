@@ -851,20 +851,28 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
         </div>
 
         {/* 4. Kids360 Signature Circular Radial Gauge & 4 Quick Action Modes */}
-        {activeChild && (
-          <div className="mt-3">
-            <Kids360ScreenTimeGauge
-              childId={activeChild.id}
-              childName={activeChild.name}
-              usedMinutes={usedMins}
-              limitMinutes={limitMins}
-              isLocked={activeChildSettings?.lockChallenge?.isLocked ?? lockChallenge?.isLocked ?? false}
-              isStudyMode={studyModeOnly}
-              battery={activeChild.battery}
-              onNavigate={onNavigate}
-            />
-          </div>
-        )}
+        {activeChild && (() => {
+          const isActiveChildLocked = Boolean(
+            activeChild.isLocked ||
+            activeChildSettings?.isLocked ||
+            activeChildSettings?.lockChallenge?.isLocked ||
+            (activeChild.id === selectedChildId && lockChallenge?.isLocked)
+          );
+          return (
+            <div className="mt-3">
+              <Kids360ScreenTimeGauge
+                childId={activeChild.id}
+                childName={activeChild.name}
+                usedMinutes={usedMins}
+                limitMinutes={limitMins}
+                isLocked={isActiveChildLocked}
+                isStudyMode={studyModeOnly}
+                battery={activeChild.battery}
+                onNavigate={onNavigate}
+              />
+            </div>
+          );
+        })()}
 
         {/* 5. Kids360 Visual 24-Hour Day-Planner Timeline & One-Touch Controls */}
         {activeChild && (

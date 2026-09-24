@@ -536,30 +536,59 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
 
         {/* Quick Instant Actions Strip */}
         <div className="grid grid-cols-4 gap-1.5">
-          <button
-            disabled={Boolean(btnCooldowns['lock'])}
-            onClick={() => {
-              if (btnCooldowns['lock']) return;
-              triggerBtnCooldown('lock');
-              if (lockChallenge.isLocked) {
-                unlockChildDeviceNow(child?.id);
-                showToast(`Đã gửi lệnh mở khóa máy ${child?.name || 'con'}!`);
-              } else {
-                lockChildDeviceNow(child?.id);
-                showToast(`Đã gửi lệnh khóa máy ${child?.name || 'con'} ngay lập tức!`);
-              }
-            }}
-            className={`p-2 rounded-2xl font-bold text-[11px] flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-xs border cursor-pointer ${
-              btnCooldowns['lock']
-                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                : lockChallenge.isLocked
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-            }`}
-          >
-            <Lock size={16} />
-            <span>{btnCooldowns['lock'] ? `Chờ ${btnCooldowns['lock']}s` : lockChallenge.isLocked ? 'Mở khóa' : 'Khóa máy'}</span>
-          </button>
+          {(() => {
+            const inFlightLockCmd = state.lastCommandAck &&
+              state.lastCommandAck.childId === child?.id &&
+              (state.lastCommandAck.command === 'lock_now' || state.lastCommandAck.command === 'unlock_now') &&
+              (state.lastCommandAck.status === 'pending' || state.lastCommandAck.status === 'received') &&
+              (Date.now() - (state.lastCommandAck.sentAt || 0) < 15000);
+
+            return (
+              <button
+                disabled={Boolean(inFlightLockCmd) || Boolean(btnCooldowns['lock'])}
+                onClick={() => {
+                  if (inFlightLockCmd || btnCooldowns['lock']) return;
+                  triggerBtnCooldown('lock');
+                  if (lockChallenge.isLocked) {
+                    unlockChildDeviceNow(child?.id);
+                    showToast(`Đang gửi lệnh mở khóa máy ${child?.name || 'con'}...`);
+                  } else {
+                    lockChildDeviceNow(child?.id);
+                    showToast(`Đang gửi lệnh khóa máy ${child?.name || 'con'}...`);
+                  }
+                }}
+                className={`p-1.5 rounded-2xl font-bold text-[11px] flex flex-col items-center justify-center gap-0.5 transition active:scale-95 shadow-xs border cursor-pointer min-h-[58px] ${
+                  inFlightLockCmd
+                    ? 'bg-amber-50 text-amber-900 border-amber-300 shadow-amber-500/10 cursor-wait'
+                    : btnCooldowns['lock']
+                    ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                    : lockChallenge.isLocked
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                }`}
+              >
+                {inFlightLockCmd ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin text-amber-600" />
+                    <span className="text-[10px] font-extrabold text-amber-900 leading-tight">
+                      {inFlightLockCmd.command === 'lock_now' ? 'Đang khóa...' : 'Đang mở...'}
+                    </span>
+                    <span className="text-[8.5px] font-bold text-amber-800 bg-amber-200/80 px-1.5 rounded-full">
+                      {lockChallenge.isLocked ? 'Khóa 🔒' : 'Mở 🟢'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Lock size={16} />
+                    <span>{btnCooldowns['lock'] ? `Chờ ${btnCooldowns['lock']}s` : lockChallenge.isLocked ? 'Mở khóa' : 'Khóa máy'}</span>
+                    <span className="text-[8.5px] opacity-75 font-medium">
+                      {lockChallenge.isLocked ? 'Đang khóa 🔒' : 'Đang mở 🟢'}
+                    </span>
+                  </>
+                )}
+              </button>
+            );
+          })()}
 
           <button
             disabled={Boolean(btnCooldowns['buzz'])}
