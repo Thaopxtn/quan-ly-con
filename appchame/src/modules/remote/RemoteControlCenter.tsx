@@ -537,11 +537,14 @@ export const RemoteControlCenter: React.FC<RemoteControlCenterProps> = ({
         {/* Quick Instant Actions Strip */}
         <div className="grid grid-cols-4 gap-1.5">
           {(() => {
-            const inFlightLockCmd = state.lastCommandAck &&
+            const isInFlightLock = Boolean(
+              state.lastCommandAck &&
               state.lastCommandAck.childId === child?.id &&
               (state.lastCommandAck.command === 'lock_now' || state.lastCommandAck.command === 'unlock_now') &&
               (state.lastCommandAck.status === 'pending' || state.lastCommandAck.status === 'received') &&
-              (Date.now() - (state.lastCommandAck.sentAt || 0) < 15000);
+              (Date.now() - (state.lastCommandAck.sentAt || 0) < 15000)
+            );
+            const inFlightLockCmd = isInFlightLock ? state.lastCommandAck : null;
 
             return (
               <button

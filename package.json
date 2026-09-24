@@ -22,20 +22,30 @@
     "build:apk:kid": "npm run build:kid && cmd.exe /c \"cd /d D:\\luufilelaptrinh\\quan ly con\\android-kid && gradlew.bat assembleDebug\" && node scripts/copy-apk.js kid",
     "build:apk:all": "npm run build:apk:parent && npm run build:apk:kid",
     "open:android": "npx cap open android",
-    "build:apk": "npm run build:apk:all"
+    "build:apk": "npm run build:apk:all",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:server": "node scripts/test-command-pipeline.cjs",
+    "install:kid": "node scripts/install-apks.cjs kid",
+    "install:parent": "node scripts/install-apks.cjs parent",
+    "install:all": "node scripts/install-apks.cjs all",
+    "verify:all": "npm run typecheck && npm run test && npm run test:server && npm run build:all"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/react": "^16.3.3",
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^26.5.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.6.0",
+    "jsdom": "^29.1.1",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
   },
   "dependencies": {
     "@capacitor-firebase/authentication": "^8.5.1",

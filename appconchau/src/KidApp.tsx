@@ -1242,7 +1242,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             tag: 'cmd_lock_now',
           });
           showToast('🔒 BỐ MẸ ĐÃ TẠM KHÓA MÁY TỪ XA!');
-          uploadCurrentTelemetrySnapshot(true).catch(() => {});
+          uploadCurrentTelemetrySnapshot('lock_now_executed').catch(() => {});
           // Send explicit executed ACK immediately back to parent
           sendRemoteCommandAck(activeParentId, targetChildId, {
             id: cmdId,
@@ -1303,7 +1303,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             tag: 'cmd_unlock_now',
           });
           showToast('🔓 BỐ MẸ ĐÃ MỞ KHÓA THIẾT BỊ CHO CON!');
-          uploadCurrentTelemetrySnapshot(true).catch(() => {});
+          uploadCurrentTelemetrySnapshot('unlock_now_executed').catch(() => {});
           // Send explicit executed ACK immediately back to parent
           sendRemoteCommandAck(activeParentId, targetChildId, {
             id: cmdId,

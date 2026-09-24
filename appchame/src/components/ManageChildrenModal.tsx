@@ -17,7 +17,8 @@ import {
   CheckCircle2,
   Loader2
 } from 'lucide-react';
-import { useAppState, ChildProfile } from '@shared/store';
+import { useAppState } from '@shared/store';
+import { ChildProfile } from '@shared/types';
 import { PairChildDeviceModal } from './PairChildDeviceModal';
 
 interface ManageChildrenModalProps {

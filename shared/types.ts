@@ -143,6 +143,8 @@ export interface ChildProfile {
   appStatus?: 'active_in_app' | 'in_background' | 'screen_off';
   syncMode?: 'realtime' | 'balanced' | 'power_saving';
   activeOpenedApp?: string;
+  deviceName?: string;
+  model?: string;
   screenTimeUsedMinutes?: number;
   isLocked?: boolean;
   lockType?: string;
@@ -183,12 +185,14 @@ export interface AppItem {
 
 export interface ScreenTimeData {
   todayTotalMinutes: number;
-  yesterdayTotalMinutes: number;
-  percentChangeVsYesterday: number;
-  hourlyUsage: number[]; // 24 hours: 0..23
-  weekTotalHours: number;
-  studyHours: number;
-  entertainmentHours: number;
+  yesterdayTotalMinutes?: number;
+  percentChangeVsYesterday?: number;
+  hourlyUsage?: number[]; // 24 hours: 0..23
+  weekTotalHours?: number;
+  studyHours?: number;
+  entertainmentHours?: number;
+  dailyLimitMinutes?: number;
+  appUsage?: Record<string, number>;
 }
 
 export interface ContentFilterCategory {
@@ -409,13 +413,14 @@ export interface LockChallengeState {
   quizChallenge?: QuizChallenge;
   movementChallenge?: MovementChallenge;
   countdownChallenge?: CountdownChallenge;
+  lockedAt?: number;
 }
 
 export interface SmartRoutines {
-  mealtimeLock: boolean;
+  mealtimeLock?: boolean;
   mealtimeStart?: string; // "11:30"
   mealtimeEnd?: string; // "12:30"
-  bedtimeLock: boolean;
+  bedtimeLock?: boolean;
   bedtimeStart?: string; // "21:30"
   bedtimeEnd?: string; // "06:30"
   schoolMorningStart?: string; // "07:30"
@@ -425,13 +430,13 @@ export interface SmartRoutines {
   homeStudyStart?: string; // "19:30"
   homeStudyEnd?: string; // "21:30"
   studyModeLock?: boolean;
-  continuousLimitMinutes: number; // 0 = off, 30, 45, 60
-  profanityDetection: boolean;
-  profanityPenaltyMinutes: number; // 5, 10, 15, 30
-  noiseDetection: boolean;
-  noiseThresholdDb: number; // 75, 80, 85, 90
-  hydrationReminder: boolean;
-  schoolReminder: boolean;
+  continuousLimitMinutes?: number; // 0 = off, 30, 45, 60
+  profanityDetection?: boolean;
+  profanityPenaltyMinutes?: number; // 5, 10, 15, 30
+  noiseDetection?: boolean;
+  noiseThresholdDb?: number; // 75, 80, 85, 90
+  hydrationReminder?: boolean;
+  schoolReminder?: boolean;
 }
 
 export interface LiveMonitoring {
@@ -633,6 +638,7 @@ export interface ChildSpecificSettings {
   trackingConfig?: TrackingCollectionConfig;
   pcConfig?: ChildPcControlConfig;
   pcTelemetry?: ChildPcTelemetry;
+  lastResetDate?: string;
 }
 
 export interface TrackingCollectionConfig {

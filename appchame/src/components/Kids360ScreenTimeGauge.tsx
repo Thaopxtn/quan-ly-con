@@ -47,17 +47,23 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   } = useAppState();
 
   const { lastCommandAck } = state;
-  const inFlightLockCmd = lastCommandAck &&
+  const isInFlightLock = Boolean(
+    lastCommandAck &&
     lastCommandAck.childId === childId &&
     (lastCommandAck.command === 'lock_now' || lastCommandAck.command === 'unlock_now') &&
     (lastCommandAck.status === 'pending' || lastCommandAck.status === 'received') &&
-    (Date.now() - (lastCommandAck.sentAt || 0) < 15000);
+    (Date.now() - (lastCommandAck.sentAt || 0) < 15000)
+  );
+  const inFlightLockCmd = isInFlightLock ? lastCommandAck : null;
 
-  const timedOutLockCmd = lastCommandAck &&
+  const isTimedOutLock = Boolean(
+    lastCommandAck &&
     lastCommandAck.childId === childId &&
     (lastCommandAck.command === 'lock_now' || lastCommandAck.command === 'unlock_now') &&
     lastCommandAck.status === 'timeout' &&
-    (Date.now() - (lastCommandAck.sentAt || 0) < 25000);
+    (Date.now() - (lastCommandAck.sentAt || 0) < 25000)
+  );
+  const timedOutLockCmd = isTimedOutLock ? lastCommandAck : null;
 
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [gaugeCooldown, setGaugeCooldown] = useState<Record<string, number>>({});

@@ -14,7 +14,7 @@ export interface SystemNotificationPluginInterface {
 
 const SystemNotificationPlugin = registerPlugin<SystemNotificationPluginInterface>('SystemNotificationPlugin');
 
-export type NotificationSoundType = 'info' | 'success' | 'warning' | 'emergency' | 'chat';
+export type NotificationSoundType = 'info' | 'success' | 'warning' | 'emergency' | 'chat' | 'default';
 
 export interface SystemNotificationOptions {
   body?: string;

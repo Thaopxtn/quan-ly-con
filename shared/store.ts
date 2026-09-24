@@ -247,6 +247,7 @@ export interface AppState {
 
   // Remote Command Delivery & Acknowledgment Tracking
   lastCommandAck?: CommandAckStatus | null;
+  isLocked?: boolean;
 }
 
 export interface CommandAckStatus {
@@ -1832,9 +1833,9 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             hourlyUsage: (cloudSettings.screenTime?.hourlyUsage && cloudSettings.screenTime.hourlyUsage.length > 0)
               ? cloudSettings.screenTime.hourlyUsage
               : (localHourlyUsage || []),
-            appUsage: (cloudSettings.screenTime?.appUsage && cloudSettings.screenTime.appUsage.length > 0)
+            appUsage: (cloudSettings.screenTime?.appUsage && Object.keys(cloudSettings.screenTime.appUsage).length > 0)
               ? cloudSettings.screenTime.appUsage
-              : (curSettings.screenTime?.appUsage || []),
+              : ((curSettings.screenTime?.appUsage || {}) as any),
           };
 
           const mergedSettings = {

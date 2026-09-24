@@ -247,7 +247,7 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
     };
 
     const unsub = subscribePairingSession(generatedSession.code, (session) => {
-      if (session && (session.status === 'paired' || session.status === 'connected')) {
+      if (session && ((session.status as any) === 'paired' || (session.status as any) === 'connected')) {
         finalizePinSuccess(session);
       }
     });
