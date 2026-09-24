@@ -4,6 +4,7 @@ import { useAppState } from '@shared/store';
 import { ChildSwitcherBar } from '../../components/ChildSwitcherBar';
 import { Kids360ScreenTimeGauge } from '../../components/Kids360ScreenTimeGauge';
 import { Kids360DayTimeline } from '../../components/Kids360DayTimeline';
+import { UsageAccessPermissionAlert } from '../../components/UsageAccessPermissionAlert';
 
 interface ScreenTimeScreenProps {
   onBack: () => void;
@@ -82,6 +83,9 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
       <div className="px-4 pt-3">
         <ChildSwitcherBar />
       </div>
+
+      {/* Usage Permission Prompt: Warns parent if kid hasn't granted PACKAGE_USAGE_STATS */}
+      <UsageAccessPermissionAlert childId={child.id} className="mx-4 mt-3" />
 
       {/* Tabs Filter */}
       <div className="px-4 pt-3 pb-1">

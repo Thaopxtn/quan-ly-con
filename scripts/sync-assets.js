@@ -192,7 +192,16 @@ function syncParent() {
       }
     }
   };
-  fs.writeFileSync(capConfigFile, JSON.stringify(capConfigContent, null, 2));
+  // Copy 4G server discovery configuration files
+  const serverUrlTxt = path.join(root, 'server-url.txt');
+  const serverUrlJson = path.join(root, 'server-url.json');
+  if (fs.existsSync(serverUrlTxt)) {
+    fs.copyFileSync(serverUrlTxt, path.join(targetDir, 'server-url.txt'));
+  }
+  if (fs.existsSync(serverUrlJson)) {
+    fs.copyFileSync(serverUrlJson, path.join(targetDir, 'server-url.json'));
+  }
+
   console.log('✅ Đã đồng bộ dist-parent -> android-parent/app/src/main/assets/public/');
 }
 
@@ -218,6 +227,16 @@ function syncKid() {
   // Suppress Capacitor cordova.js / cordova_plugins.js warning
   fs.writeFileSync(path.join(targetDir, 'cordova.js'), '// Capacitor Cordova Compatibility Placeholder\nwindow.Cordova = window.cordova = window.cordova || {};\n', 'utf8');
   fs.writeFileSync(path.join(targetDir, 'cordova_plugins.js'), '// Capacitor Cordova Plugins Placeholder\nif (typeof cordova !== "undefined" && cordova.define) { cordova.define("cordova/plugin_list", function(require, exports, module) { module.exports = []; module.exports.metadata = {}; }); }\n', 'utf8');
+
+  // Copy 4G server discovery configuration files
+  const serverUrlTxt = path.join(root, 'server-url.txt');
+  const serverUrlJson = path.join(root, 'server-url.json');
+  if (fs.existsSync(serverUrlTxt)) {
+    fs.copyFileSync(serverUrlTxt, path.join(targetDir, 'server-url.txt'));
+  }
+  if (fs.existsSync(serverUrlJson)) {
+    fs.copyFileSync(serverUrlJson, path.join(targetDir, 'server-url.json'));
+  }
 
   const capKidConfigFile = path.join(root, 'android-kid', 'app', 'src', 'main', 'assets', 'capacitor.config.json');
   const capKidConfigContent = {

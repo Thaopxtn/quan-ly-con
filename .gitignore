@@ -11,6 +11,10 @@ dist-kid/
 # Testing & Dev Screenshots
 screen_*.png
 parent_phone_home.png
+artifacts_*.png
+
+# Dynamic build assets
+public/server-url.*
 
 # Android Build & Gradle
 .gradle/

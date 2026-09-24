@@ -82,6 +82,8 @@ export type RemoteCommandType =
   | "pc_block_app"
   | "live_tracking_start"
   | "live_tracking_stop"
+  | "request_usage_permission"
+  | "open_usage_settings"
   | "none";
 
 export interface RemoteCommandData {
@@ -633,6 +635,7 @@ export async function uploadChildTelemetryToCloud(
     lockType?: string;
     lockTitle?: string;
     lockedAt?: number;
+    hasUsageAccessPermission?: boolean;
   },
   autoQueue: boolean = true,
   childName?: string
@@ -745,6 +748,11 @@ export async function uploadChildTelemetryToCloud(
       uploadSuccess = true;
     } catch (err) {}
   }
+
+  // 3. Dual transport to Local PC / 4G Server (guarantees real-time telemetry over WAN/LAN)
+  try {
+    serverApiClient.uploadTelemetry(payload).catch(() => {});
+  } catch (_) {}
 
   // If both network writes failed, queue telemetry for retry
   if (!uploadSuccess && autoQueue) {

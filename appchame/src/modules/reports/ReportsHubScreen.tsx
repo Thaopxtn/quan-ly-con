@@ -3,6 +3,7 @@ import { BarChart3, BookOpen, HeartPulse } from 'lucide-react';
 import { AnalyticsReportScreen } from './AnalyticsReportScreen';
 import { LearningScreen } from '../learning/LearningScreen';
 import { HealthScreen } from '../health/HealthScreen';
+import { UsageAccessPermissionAlert } from '../../components/UsageAccessPermissionAlert';
 import { haptics } from '@shared/utils/haptics';
 
 export type ReportsTab = 'overview' | 'learning' | 'health';
@@ -59,7 +60,10 @@ export const ReportsHubScreen: React.FC<ReportsHubScreenProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {activeTab === 'overview' && (
-          <AnalyticsReportScreen onBack={onBack} />
+          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+            <UsageAccessPermissionAlert className="m-3" />
+            <AnalyticsReportScreen onBack={onBack} />
+          </div>
         )}
         {activeTab === 'learning' && (
           <LearningScreen onBack={() => setActiveTab('overview')} />

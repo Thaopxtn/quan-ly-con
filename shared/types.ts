@@ -18,6 +18,7 @@ export interface DeviceTelemetryData {
   lockType?: string;
   lockTitle?: string;
   lockedAt?: number;
+  hasUsageAccessPermission?: boolean;
   network?: any;
   sensors?: any;
   lastActive?: string;
@@ -66,6 +67,7 @@ export interface ChildDeviceInfo {
   lockType?: string;
   lockTitle?: string;
   lockedAt?: number;
+  hasUsageAccessPermission?: boolean;
   telemetry?: DeviceTelemetryData;
   settings?: DeviceSpecificSettings;
   pcTelemetry?: ChildPcTelemetry;
@@ -150,6 +152,7 @@ export interface ChildProfile {
   lockType?: string;
   lockTitle?: string;
   lockedAt?: number;
+  hasUsageAccessPermission?: boolean;
 }
 
 export interface SafeZone {

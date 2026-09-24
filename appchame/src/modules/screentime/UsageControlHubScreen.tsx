@@ -3,6 +3,7 @@ import { Clock, LayoutGrid, Shield } from 'lucide-react';
 import { ScreenTimeScreen } from './ScreenTimeScreen';
 import { AppManagementScreen } from './AppManagementScreen';
 import { ContentFilterScreen } from '../content/ContentFilterScreen';
+import { UsageAccessPermissionAlert } from '../../components/UsageAccessPermissionAlert';
 import { haptics } from '@shared/utils/haptics';
 
 export type UsageControlTab = 'screentime' | 'apps' | 'content';
@@ -75,7 +76,10 @@ export const UsageControlHubScreen: React.FC<UsageControlHubScreenProps> = ({
           <ScreenTimeScreen onBack={onBack} onNavigate={handleInternalNavigate} />
         )}
         {activeTab === 'apps' && (
-          <AppManagementScreen onBack={() => setActiveTab('screentime')} />
+          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+            <UsageAccessPermissionAlert className="m-3 mb-0" />
+            <AppManagementScreen onBack={() => setActiveTab('screentime')} />
+          </div>
         )}
         {activeTab === 'content' && (
           <ContentFilterScreen onBack={() => setActiveTab('screentime')} />

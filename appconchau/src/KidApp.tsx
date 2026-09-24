@@ -59,6 +59,7 @@ import { KidActivationScreen } from './KidActivationScreen';
 import { KidPermissionsScreen } from './KidPermissionsScreen';
 import {
   checkRealAndroidPermissions,
+  openAndroidPermissionSettings,
   startNativeProtectionService,
   updateNativeEnforcementRules,
   openHomeLauncherSettings,
@@ -306,6 +307,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
   // Ensure store selectedChildId matches Kid device targetChildId once on load
   const hasSyncedChildRef = useRef(false);
+  const hasUsageAccessRef = useRef<boolean>(true);
   useEffect(() => {
     if (targetChildId && state.selectedChildId !== targetChildId && !hasSyncedChildRef.current) {
       hasSyncedChildRef.current = true;
@@ -765,6 +767,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     let missing = false;
     const realStatus = await checkRealAndroidPermissions();
     if (realStatus) {
+      hasUsageAccessRef.current = realStatus.usage_stats !== undefined ? Boolean(realStatus.usage_stats) : true;
       missing = !realStatus.isAllGranted;
       setHasMissingPermissions(missing);
       return missing;
@@ -1390,6 +1393,35 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           setIsBroadcastDismissed(true);
           clearBroadcastOverlay();
           break;
+        case 'request_usage_permission':
+        case 'open_usage_settings':
+          wakeUpDevice().catch(() => {});
+          showSystemNotification('⚠️ YÊU CẦU CẤP QUYỀN THỜI GIAN SỬ DỤNG', {
+            body: 'Bố mẹ yêu cầu kích hoạt quyền theo dõi sử dụng ứng dụng. Con hãy chọn KidCare và bật cho phép nhé!',
+            soundType: 'emergency',
+            tag: 'cmd_request_usage_permission',
+          });
+          speakVietnamese('Bố mẹ yêu cầu cấp quyền theo dõi thời gian sử dụng. Con hãy chọn ứng dụng KidCare và bật cho phép nhé!');
+          showToast('⚠️ BỐ MẸ YÊU CẦU CẤP QUYỀN THỜI GIAN SỬ DỤNG!');
+          openAndroidPermissionSettings('usage_stats').catch(() => {});
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'request_usage_permission',
+            status: 'executed',
+            receivedAt: cmd.timestamp || Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild?.name || 'Con',
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: 'Đã mở màn hình Cài đặt cấp quyền thời gian sử dụng trên máy con',
+          }).catch(() => {});
+          customAckSent = true;
+          clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
+          setTimeout(async () => {
+            await checkPermissions();
+            uploadCurrentTelemetrySnapshot('usage_permission_requested').catch(() => {});
+          }, 3500);
+          break;
         case 'flash_toggle': {
           customAckSent = true;
           const nextFlash = cmd.payload?.flashlight !== undefined ? cmd.payload.flashlight : !curHw.flashlight;
@@ -1969,6 +2001,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             lockType: effectiveLockType,
             lockTitle: effectiveLockTitle,
             lockedAt: effectiveLockedAt,
+            hasUsageAccessPermission: hasUsageAccessRef.current,
           },
           true,
           curChild.name

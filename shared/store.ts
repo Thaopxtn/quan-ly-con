@@ -1371,6 +1371,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                   lockType: telemetry.lockType !== undefined ? telemetry.lockType : baseDev?.lockType,
                   lockTitle: telemetry.lockTitle !== undefined ? telemetry.lockTitle : baseDev?.lockTitle,
                   lockedAt: telemetry.lockedAt !== undefined ? telemetry.lockedAt : baseDev?.lockedAt,
+                  hasUsageAccessPermission: telemetry.hasUsageAccessPermission !== undefined ? telemetry.hasUsageAccessPermission : baseDev?.hasUsageAccessPermission,
                   lastActive: new Date().toISOString(),
                   status: 'online',
                   telemetry: {
@@ -1391,6 +1392,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                     lockType: telemetry.lockType,
                     lockTitle: telemetry.lockTitle,
                     lockedAt: telemetry.lockedAt,
+                    hasUsageAccessPermission: telemetry.hasUsageAccessPermission,
                     sensors: telemetry.sensors,
                     network: telemetry.network,
                     lastActive: new Date().toISOString(),
@@ -1426,6 +1428,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                   lockType: telemetry.lockType !== undefined ? telemetry.lockType : c.lockType,
                   lockTitle: telemetry.lockTitle !== undefined ? telemetry.lockTitle : c.lockTitle,
                   lockedAt: telemetry.lockedAt !== undefined ? telemetry.lockedAt : c.lockedAt,
+                  hasUsageAccessPermission: telemetry.hasUsageAccessPermission !== undefined ? telemetry.hasUsageAccessPermission : c.hasUsageAccessPermission,
                 } : {}),
                 lastUpdated: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
               };

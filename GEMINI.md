@@ -57,6 +57,24 @@ Dự án gồm 3 phần chính chạy song song:
 - Tránh tình trạng lưu cố định hồ sơ cũ đã offline nhiều ngày (như máy cũ) khiến lệnh gửi không tới đúng điện thoại con đang dùng.
 - Hiển thị rõ tên và trạng thái của bé đang được điều khiển trên tất cả các nút bấm và màn hình chính.
 
+### Quy Tắc 4: Quản Lý & Nhắc Nhở Quyền Truy Cập Thời Gian Sử Dụng (`PACKAGE_USAGE_STATS`)
+- Khi Cha Mẹ xem bất kỳ màn hình nào liên quan đến **Thời gian sử dụng**, **Đồng hồ 360** hoặc **Báo cáo ứng dụng**:
+  - Hệ thống phải kiểm tra cờ `hasUsageAccessPermission` của thiết bị con.
+  - Nếu con **Chưa cấp quyền**, hiển thị ngay thông báo cảnh báo kèm nút hành động: **"Yêu cầu máy con cấp quyền ngay"**.
+  - Khi Cha Mẹ bấm nút, hệ thống gửi lệnh từ xa `request_usage_permission` tới máy con.
+  - Thiết bị con (`KidApp.tsx`) khi nhận lệnh sẽ tự động đánh thức màn hình, phát âm thanh hướng dẫn và mở thẳng màn hình Cài đặt Android (`Settings.ACTION_USAGE_ACCESS_SETTINGS`).
+  - Sau khi con bật quyền, app con gửi cập nhật telemetry ngay lập tức để màn hình Cha Mẹ tự động chuyển sang trạng thái hợp lệ màu xanh.
+
+### Quy Tắc 5: Truyền Nhận Dữ Liệu 4G/WAN Tin Cậy & Xác Thực Bearer Token
+- Đường truyền từ xa qua 4G Internet (Cloudflare Tunnel) phải đảm bảo:
+  1. **Khám phá URL máy chủ thông minh**: Luôn ưu tiên GitHub Contents API (`api.github.com/repos/Thaopxtn/quan-ly-con/contents/server-url.txt` giải mã Base64) để tránh độ trễ DNS và không bị jsDelivr cache giữ URL cũ. Tự động đồng bộ `server-url.txt` vào thư mục assets của cả 2 APK để khởi động nguội tức thì (0ms).
+  2. **Tự động chuyển mạng Wi-Fi LAN / 4G WAN**: Nếu đang lưu IP nội bộ (`192.168.x.x`) mà ra khỏi nhà (mất kết nối LAN), client phải tự động kích hoạt Cloudflare Tunnel 4G mà không cần người dùng thao tác thủ công.
+  3. **Xác thực bảo mật**: Hỗ trợ đầy đủ `Bearer parent_master_secret_2026` và token HMAC-SHA256 trên mọi endpoint API và SSE stream, không để xảy ra lỗi `401 Unauthorized` hay `405 Method Not Allowed` khi chạy từ file APK.
+
+### Quy Tắc 6: Hiển Thị Trạng Thái Kết Nối & Mã Nguồn GitHub Chính Thức
+- App Cha Mẹ phải có thanh trạng thái kết nối trực quan (`ConnectionStatusBar`) hiển thị độ trễ máy chủ, trạng thái Cloudflare 4G và trạng thái máy con.
+- Đặt liên kết mã nguồn mở chính thức của dự án (`https://github.com/Thaopxtn/quan-ly-con`) ở sidebar, thanh tiêu đề và màn hình Cài đặt của App Cha Mẹ.
+
 ---
 
 ## 3. Quy Trình Kiểm Thử & Xác Nhận (Automated Testing & Verification)

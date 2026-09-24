@@ -106,11 +106,19 @@ function updateDiscoveryFiles(url) {
     fs.writeFileSync(path.join(ROOT_DIR, 'server-url.txt'), url.trim(), 'utf8');
     fs.writeFileSync(path.join(ROOT_DIR, 'server-url.json'), JSON.stringify(payload, null, 2), 'utf8');
 
-    const copyDists = ['dist', 'dist-parent', 'dist-kid'];
+    const copyDists = [
+      'public',
+      'dist',
+      'dist-parent',
+      'dist-kid',
+      path.join('android-parent', 'app', 'src', 'main', 'assets', 'public'),
+      path.join('android-kid', 'app', 'src', 'main', 'assets', 'public'),
+    ];
     for (const d of copyDists) {
       const dirPath = path.join(ROOT_DIR, d);
       if (fs.existsSync(dirPath)) {
         fs.writeFileSync(path.join(dirPath, 'server-url.txt'), url.trim(), 'utf8');
+        fs.writeFileSync(path.join(dirPath, 'server-url.json'), JSON.stringify(payload, null, 2), 'utf8');
       }
     }
     log(`💾 Đã cập nhật file server-url.txt & server-url.json -> ${url}`);

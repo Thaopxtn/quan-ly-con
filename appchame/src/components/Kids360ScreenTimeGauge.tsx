@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { haptics } from '@shared/utils/haptics';
+import { UsageAccessPermissionAlert } from './UsageAccessPermissionAlert';
 
 interface Kids360ScreenTimeGaugeProps {
   childId: string;
@@ -225,6 +226,9 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
           </button>
         ) : null}
       </div>
+
+      {/* Usage Permission Alert if child device hasn't granted PACKAGE_USAGE_STATS */}
+      <UsageAccessPermissionAlert childId={childId} compact={true} className="mb-2.5" />
 
       {/* Radial Donut Gauge Center Piece */}
       <div className="flex flex-col sm:flex-row items-center justify-center gap-5 py-4">
