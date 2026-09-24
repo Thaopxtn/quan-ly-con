@@ -278,7 +278,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const lastLowBatteryAlertRef = React.useRef<number>(0);
   const lastTickRef = React.useRef<number>(Date.now());
   const sensorValuesRef = React.useRef<{accelX?: number, accelY?: number, accelZ?: number}>({});
-  const bypassedRoutinesRef = React.useRef<{ mealtime?: boolean; bedtime?: boolean }>({});
+  const bypassedRoutinesRef = React.useRef<{ mealtime?: boolean; bedtime?: boolean; screentime?: boolean }>({});
   const [isSosButtonCooldown, setIsSosButtonCooldown] = useState(false);
 
   const handleKidTriggerSOS = (source: 'header' | 'button') => {
@@ -1263,7 +1263,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
         case 'unlock_now':
           wakeUpDevice().catch(() => {});
-          unlockDevice();
+          unlockDevice(targetChildId);
+          bypassedRoutinesRef.current = { mealtime: true, bedtime: true, screentime: true };
           if (lockChallengeRef.current) {
             lockChallengeRef.current = {
               ...lockChallengeRef.current,
@@ -1283,16 +1284,16 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               lockedAt: undefined,
             };
           }
-          bypassedRoutinesRef.current = { mealtime: true, bedtime: true };
           if (broadcastMessage) {
             const bKey = broadcastMessage.id || `${broadcastMessage.title}_${broadcastMessage.message}_${broadcastMessage.timestamp}`;
             markBroadcastDismissed(bKey);
           }
-          // If child was locked because they reached or exceeded daily limit, extend by 15 mins so they can use the phone
+          // If child was locked because they reached or exceeded daily limit, extend by at least 60 mins so they can actually use the phone!
           const curUsedMins = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
           const curLimitMins = targetSettingsRef.current.screenTimeLimitMinutes || 135;
           if (curUsedMins >= curLimitMins) {
-            extendChildTimeNow(15, targetChildId);
+            const extraNeeded = Math.max(60, curUsedMins - curLimitMins + 60);
+            extendChildTimeNow(extraNeeded, targetChildId);
           }
           updateNativeEnforcementRules({
             isLocked: false,
@@ -1322,15 +1323,76 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           customAckSent = true;
           clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           break;
+        case 'unpair_device':
+          wakeUpDevice().catch(() => {});
+          updateNativeEnforcementRules({
+            isLocked: false,
+            kioskEnabled: false,
+            kioskPackage: '',
+            blockedPackages: [],
+          }).catch(() => {});
+          unpairKidDevice();
+          logoutKidAccount();
+          setPairedInfo(null);
+          setShowKidControlPanel(false);
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.removeItem('kidcare_paired_device');
+              localStorage.removeItem('kidcare_paired_device_backup');
+              localStorage.removeItem('kidcare_permissions_state_v1');
+              localStorage.removeItem('kidcare_screen_time_v1');
+            } catch (_) {}
+          }
+          showSystemNotification('🔌 HỦY GHÉP NỐI THIẾT BỊ', {
+            body: 'Bố mẹ đã xóa hồ sơ con và hủy liên kết thiết bị này.',
+            soundType: 'warning',
+            tag: 'cmd_unpair_device',
+          });
+          showToast('🔌 BỐ MẸ ĐÃ HỦY LIÊN KẾT THIẾT BỊ NÀY!');
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'unpair_device',
+            status: 'executed',
+            receivedAt: cmd.timestamp || Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild?.name || 'Con',
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: 'Đã xóa hồ sơ và hủy liên kết thiết bị con thành công',
+          }).catch(() => {});
+          customAckSent = true;
+          clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
+          break;
         case 'extend_time':
           const extra = cmd.payload?.minutes || 15;
           extendChildTimeNow(extra, targetChildId);
+          bypassedRoutinesRef.current = { ...bypassedRoutinesRef.current, screentime: true };
+          unlockDevice(targetChildId);
+          updateNativeEnforcementRules({
+            isLocked: false,
+            kioskEnabled: Boolean(curKioskMode.isEnabled),
+            kioskPackage: curKioskMode.pinnedAppId || '',
+            blockedPackages: getBlockedPackagesList(curApps, curStudyModeOnly),
+          }).catch(() => {});
           showSystemNotification(`⏱️ BỐ MẸ CỘNG THÊM +${extra} PHÚT`, {
             body: `Bố mẹ đã đồng ý cộng thêm ${extra} phút sử dụng thiết bị cho con!`,
             soundType: 'info',
             tag: 'cmd_extend_time',
           });
           showToast(`⏱️ BỐ MẸ ĐÃ CỘNG THÊM +${extra} PHÚT DÙNG MÁY!`);
+          sendRemoteCommandAck(activeParentId, targetChildId, {
+            id: cmdId,
+            command: 'extend_time',
+            status: 'executed',
+            receivedAt: cmd.timestamp || Date.now(),
+            executedAt: Date.now(),
+            childId: targetChildId,
+            childName: curChild?.name || 'Con',
+            deviceName: curPairedInfo?.deviceName || curPairedInfo?.model || 'Điện thoại con',
+            detail: `Đã cộng thêm +${extra} phút sử dụng máy cho con`,
+          }).catch(() => {});
+          customAckSent = true;
+          clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           break;
         case 'kiosk_lock':
           wakeUpDevice().catch(() => {});
@@ -1776,7 +1838,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const totalLimit = targetSettings.screenTimeLimitMinutes || 135;
       const currentUsed = (targetSettings.screenTime?.todayTotalMinutes || 0) + (timeIncremented ? 1 : 0);
 
-      if (currentUsed >= totalLimit && !lockChallenge.isLocked) {
+      if (currentUsed >= totalLimit && !lockChallenge.isLocked && !bypassedRoutinesRef.current.screentime) {
         setLockChallenge(
           'instant',
           'Đã hết thời gian dùng máy hôm nay!',
@@ -1784,6 +1846,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         );
         haptics.warning();
         speakVietnamese('Bé ơi, đã hết thời gian sử dụng điện thoại hôm nay rồi nhé!');
+      } else if (currentUsed < totalLimit) {
+        bypassedRoutinesRef.current.screentime = false;
       }
     }, 60000);
 

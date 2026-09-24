@@ -109,7 +109,8 @@ export const ManageChildrenModal: React.FC<ManageChildrenModalProps> = ({
     const childName = childToDelete.name;
     try {
       deleteChild(childToDelete.id);
-      showToast(`Đã xóa hồ sơ bé ${childName} thành công!`);
+      await new Promise((r) => setTimeout(r, 600));
+      showToast(`Đã xóa hồ sơ bé ${childName} và gửi lệnh gỡ thiết bị thành công!`);
       setChildToDelete(null);
     } catch (e) {
       showToast('Có lỗi xảy ra khi xóa hồ sơ');
@@ -478,7 +479,7 @@ export const ManageChildrenModal: React.FC<ManageChildrenModalProps> = ({
                 {isDeleting ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
-                    <span>Đang xóa...</span>
+                    <span>Đang gỡ thiết bị & xóa...</span>
                   </>
                 ) : (
                   <>

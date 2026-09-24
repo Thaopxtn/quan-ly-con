@@ -3074,7 +3074,8 @@ export const useAppState = () => {
     }
   };
 
-  const unlockDevice = () => {
+  const unlockDevice = (targetChildIdParam?: string) => {
+    const curChildId = targetChildIdParam || (isKidAppMode() ? getKidDevicePairedInfo()?.childId : null) || state.selectedChildId || getActiveChildId();
     const updatedLock: LockChallengeState = {
       ...state.lockChallenge,
       isLocked: false,
@@ -3088,18 +3089,40 @@ export const useAppState = () => {
       bedtimeLock: false,
     };
     const updatedChildSettings = { ...state.childSettings };
-    Object.keys(updatedChildSettings).forEach((cid) => {
-      updatedChildSettings[cid] = {
-        ...updatedChildSettings[cid],
+
+    // Explicitly update target child settings
+    if (curChildId) {
+      const curSet = updatedChildSettings[curChildId] || createDefaultChildSettings(curChildId);
+      const curUsed = curSet.screenTime?.todayTotalMinutes || 0;
+      const curLimit = curSet.screenTimeLimitMinutes || 135;
+      const effectiveLimit = curUsed >= curLimit ? (curUsed + 60) : curLimit;
+      updatedChildSettings[curChildId] = {
+        ...curSet,
         lockChallenge: updatedLock,
         smartRoutines: {
-          ...updatedChildSettings[cid].smartRoutines,
+          ...(curSet.smartRoutines || {}),
           mealtimeLock: false,
           bedtimeLock: false,
         },
+        screenTimeLimitMinutes: effectiveLimit,
         isLocked: false,
         broadcastMessage: null,
       };
+    }
+    Object.keys(updatedChildSettings).forEach((cid) => {
+      if (cid !== curChildId) {
+        updatedChildSettings[cid] = {
+          ...updatedChildSettings[cid],
+          lockChallenge: updatedLock,
+          smartRoutines: {
+            ...updatedChildSettings[cid].smartRoutines,
+            mealtimeLock: false,
+            bedtimeLock: false,
+          },
+          isLocked: false,
+          broadcastMessage: null,
+        };
+      }
     });
     saveAndNotify({
       ...state,
@@ -3107,11 +3130,11 @@ export const useAppState = () => {
       smartRoutines: updatedRoutines,
       broadcastMessage: null,
       childSettings: updatedChildSettings,
-    });
+    }, curChildId);
     eventBus.publish('LOCK_CHALLENGE_UPDATED', updatedLock, 'parent');
     eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
     const parentId = getActiveParentId();
-    const targetChildId = state.selectedChildId;
+    const targetChildId = curChildId || state.selectedChildId;
     const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
     if (parentId && targetChildId && !isKidAppMode()) {
       sendRemoteCommandToKid(parentId, targetChildId, 'unlock_now', undefined, targetChild?.name).catch(() => {});
@@ -3123,6 +3146,7 @@ export const useAppState = () => {
           mealtimeLock: false,
           bedtimeLock: false,
         },
+        screenTimeLimitMinutes: updatedChildSettings[targetChildId]?.screenTimeLimitMinutes || 135,
         broadcastMessage: null,
       }, targetChild?.name).catch(() => {});
     }
@@ -4430,7 +4454,16 @@ export const useAppState = () => {
     saveAndNotify(nextState);
 
     const activeParentId = getActiveParentId();
-    if (activeParentId) {
+    // 🛡️ Remote Unpair Command: Command kid device to clear pairing, wipe storage & reset enforcement
+    if (activeParentId && childId) {
+      sendRemoteCommandToKid(activeParentId, childId, 'unpair_device', { reason: 'parent_deleted_child' }, childObj?.name).catch(() => {});
+      serverApiClient.sendCommand({
+        childId,
+        parentId: activeParentId,
+        command: 'unpair_device',
+        type: 'unpair_device',
+        payload: { reason: 'parent_deleted_child' }
+      }).catch(() => {});
       deleteChildFromCloud(activeParentId, childId, childObj?.name).catch(() => {});
     }
     serverApiClient.deleteChild(activeParentId || 'family_primary', childId).catch(() => {});

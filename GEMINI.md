@@ -75,6 +75,13 @@ Dự án gồm 3 phần chính chạy song song:
 - App Cha Mẹ phải có thanh trạng thái kết nối trực quan (`ConnectionStatusBar`) hiển thị độ trễ máy chủ, trạng thái Cloudflare 4G và trạng thái máy con.
 - Đặt liên kết mã nguồn mở chính thức của dự án (`https://github.com/Thaopxtn/quan-ly-con`) ở sidebar, thanh tiêu đề và màn hình Cài đặt của App Cha Mẹ.
 
+### Quy Tắc 7: Đồng Bộ Hóa Xóa Hồ Sơ & Bắt Buộc Máy Con Xác Nhận (Mandatory ACK & Clean Unpairing)
+- Khi Cha Mẹ thực hiện bất kỳ thao tác nào tác động tới máy con (khóa, mở khóa, gia hạn giờ, hủy ghép đôi / xóa hồ sơ, ghim app, đổi quy tắc...), **BẮT BUỘC** phải có luồng xác nhận ACK hai chiều:
+  1. Máy con tiếp nhận lệnh, thực thi triệt để trong môi trường native/webview và gửi ngay ACK `status: 'executed'`.
+  2. Khi xóa hồ sơ con, app cha mẹ phát lệnh `unpair_device` để máy con tự động xóa sạch dữ liệu ghép đôi (`localStorage`), gỡ bỏ khóa native (`is_locked: false`), đưa app con về màn hình kích hoạt ban đầu và gửi ACK xác nhận.
+  3. Máy chủ dọn sạch dữ liệu toàn diện (settings, pairings, telemetry_history, remote_commands, chats, time_requests, sos) và ngăn chặn việc telemetry từ máy cũ tự ý phục hồi hồ sơ con đã xóa.
+  4. Khi mở khóa máy (`unlock_now`), nếu con đã hết giờ dùng trong ngày, hệ thống tự động gia hạn thêm ít nhất 60 phút và kích hoạt cờ bỏ qua tạm thời (`screentime bypass`) để máy con không bị vòng lặp tự khóa lại ngay sau khi mở.
+
 ---
 
 ## 3. Quy Trình Kiểm Thử & Xác Nhận (Automated Testing & Verification)

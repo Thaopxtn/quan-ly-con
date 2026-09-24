@@ -84,6 +84,7 @@ export type RemoteCommandType =
   | "live_tracking_stop"
   | "request_usage_permission"
   | "open_usage_settings"
+  | "unpair_device"
   | "none";
 
 export interface RemoteCommandData {
@@ -2134,8 +2135,10 @@ export async function deleteChildFromCloud(
   if (!isFirebaseConfigured() || !childId) return;
 
   const slug = normalizeChildSlug(childName);
+  const syncKey = getPartitionedSyncKey(parentId, childId);
 
   if (rtdb) {
+    rtdbRemove(rtdbRef(rtdb, `pairings/sync/${syncKey}`)).catch(() => {});
     rtdbRemove(rtdbRef(rtdb, `pairings/active_children/${childId}`)).catch(() => {});
     rtdbRemove(rtdbRef(rtdb, `pairings/${childId}`)).catch(() => {});
     if (slug) {

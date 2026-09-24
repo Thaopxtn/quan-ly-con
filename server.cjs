@@ -882,28 +882,40 @@ const server = http.createServer(async (req, res) => {
         broadcastRealtime('telemetry', data);
         logServerEvent('GPS', `Vị trí mới bé ${data.childId}: [${Number(data.latitude || data.lat || 0).toFixed(4)}, ${Number(data.longitude || data.lng || 0).toFixed(4)}] • Pin: ${data.battery != null ? data.battery : '--'}% • Quyền thời gian: ${data.hasUsageAccessPermission !== false ? 'Đã cấp' : 'CHƯA CẤP'}`);
 
-        // Update child_settings.json with latest state from device
+        // Update child_settings.json with latest state from device (only for registered active children)
         try {
-          const settingsDb = readDb('settings') || {};
-          const cur = settingsDb[data.childId] || {};
-          settingsDb[data.childId] = {
-            ...cur,
-            childId: data.childId,
-            battery: data.battery != null ? data.battery : cur.battery,
-            lat: data.lat != null ? data.lat : (data.latitude != null ? data.latitude : cur.lat),
-            lng: data.lng != null ? data.lng : (data.longitude != null ? data.longitude : cur.lng),
-            currentAddress: data.currentAddress || cur.currentAddress,
-            isScreenOn: data.isScreenOn != null ? data.isScreenOn : cur.isScreenOn,
-            screenState: data.screenState || cur.screenState,
-            activeOpenedApp: data.activeOpenedApp || cur.activeOpenedApp,
-            screenTimeUsedMinutes: data.screenTimeUsedMinutes != null ? data.screenTimeUsedMinutes : cur.screenTimeUsedMinutes,
-            hasUsageAccessPermission: data.hasUsageAccessPermission != null ? data.hasUsageAccessPermission : cur.hasUsageAccessPermission,
-            isLocked: data.isLocked != null ? data.isLocked : cur.isLocked,
-            lockType: data.lockType != null ? data.lockType : cur.lockType,
-            lockTitle: data.lockTitle != null ? data.lockTitle : cur.lockTitle,
-            updatedAt: Date.now(),
-          };
-          writeDb('settings', settingsDb);
+          const childrenDb = readDb('children') || {};
+          let childExists = false;
+          for (const pId of Object.keys(childrenDb)) {
+            const list = childrenDb[pId];
+            if (Array.isArray(list) && list.some(ch => ch.id === data.childId)) {
+              childExists = true;
+              break;
+            }
+          }
+
+          if (childExists) {
+            const settingsDb = readDb('settings') || {};
+            const cur = settingsDb[data.childId] || {};
+            settingsDb[data.childId] = {
+              ...cur,
+              childId: data.childId,
+              battery: data.battery != null ? data.battery : cur.battery,
+              lat: data.lat != null ? data.lat : (data.latitude != null ? data.latitude : cur.lat),
+              lng: data.lng != null ? data.lng : (data.longitude != null ? data.longitude : cur.lng),
+              currentAddress: data.currentAddress || cur.currentAddress,
+              isScreenOn: data.isScreenOn != null ? data.isScreenOn : cur.isScreenOn,
+              screenState: data.screenState || cur.screenState,
+              activeOpenedApp: data.activeOpenedApp || cur.activeOpenedApp,
+              screenTimeUsedMinutes: data.screenTimeUsedMinutes != null ? data.screenTimeUsedMinutes : cur.screenTimeUsedMinutes,
+              hasUsageAccessPermission: data.hasUsageAccessPermission != null ? data.hasUsageAccessPermission : cur.hasUsageAccessPermission,
+              isLocked: data.isLocked != null ? data.isLocked : cur.isLocked,
+              lockType: data.lockType != null ? data.lockType : cur.lockType,
+              lockTitle: data.lockTitle != null ? data.lockTitle : cur.lockTitle,
+              updatedAt: Date.now(),
+            };
+            writeDb('settings', settingsDb);
+          }
         } catch (_) {}
 
         // Update children.json with status and battery
@@ -1062,7 +1074,7 @@ const server = http.createServer(async (req, res) => {
               const usedMins = (childSet.screenTime && childSet.screenTime.todayTotalMinutes) || 0;
               const limitMins = childSet.screenTimeLimitMinutes || 135;
               if (usedMins >= limitMins) {
-                childSet.screenTimeLimitMinutes = usedMins + 15;
+                childSet.screenTimeLimitMinutes = Math.max(limitMins, usedMins + 60);
               }
               settingsModified = true;
             } else if (cmdType === 'extend_time') {
@@ -1080,6 +1092,29 @@ const server = http.createServer(async (req, res) => {
               settings[effectiveChildId] = childSet;
               writeDb('settings', settings);
               broadcastRealtime('settings', { childId: effectiveChildId, settings: childSet });
+            }
+
+            // Synchronize children.json lock state
+            if (cmdType === 'lock_now' || cmdType === 'unlock_now') {
+              try {
+                const childrenDb = readDb('children');
+                let cModified = false;
+                for (const pId of Object.keys(childrenDb)) {
+                  if (Array.isArray(childrenDb[pId])) {
+                    for (const ch of childrenDb[pId]) {
+                      if (ch.id === effectiveChildId) {
+                        ch.isLocked = (cmdType === 'lock_now');
+                        ch.updatedAt = Date.now();
+                        cModified = true;
+                      }
+                    }
+                  }
+                }
+                if (cModified) {
+                  writeDb('children', childrenDb);
+                  broadcastRealtime('children_updated', { parentId: targetCmd?.parentId, children: childrenDb[targetCmd?.parentId] || [] });
+                }
+              } catch (_) {}
             }
           } catch (e) {
             console.error('[server] Error updating settings on command ACK:', e.message);
@@ -1813,10 +1848,42 @@ const server = http.createServer(async (req, res) => {
             pairingChanged = true;
           }
         }
-        if (pairingChanged) {
-          writeDb('pairings', pairingsDb);
+        // Cleanup telemetry history
+        const telemetryDb = readDb('telemetry');
+        const cleanTelemetry = telemetryDb.filter(t => t.childId !== childId);
+        if (cleanTelemetry.length !== telemetryDb.length) {
+          writeDb('telemetry', cleanTelemetry);
         }
 
+        // Cleanup commands
+        const commandsDb = readDb('commands');
+        const cleanCommands = commandsDb.filter(c => c.childId !== childId);
+        if (cleanCommands.length !== commandsDb.length) {
+          writeDb('commands', cleanCommands);
+        }
+
+        // Cleanup chat messages
+        const chatsDb = readDb('chats');
+        const cleanChats = chatsDb.filter(c => c.childId !== childId);
+        if (cleanChats.length !== chatsDb.length) {
+          writeDb('chats', cleanChats);
+        }
+
+        // Cleanup time requests
+        const timeReqDb = readDb('time_requests');
+        const cleanTimeReq = timeReqDb.filter(r => r.childId !== childId);
+        if (cleanTimeReq.length !== timeReqDb.length) {
+          writeDb('time_requests', cleanTimeReq);
+        }
+
+        // Cleanup SOS alerts
+        const sosDb = readDb('sos');
+        const cleanSos = sosDb.filter(s => s.childId !== childId);
+        if (cleanSos.length !== sosDb.length) {
+          writeDb('sos', cleanSos);
+        }
+
+        broadcastRealtime('child_deleted', { parentId, childId });
         logServerEvent('INFO', `Đã xóa hồ sơ con [${childId}] và giải phóng toàn bộ dữ liệu liên quan`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, deleted: childId }));
