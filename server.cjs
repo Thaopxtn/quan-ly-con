@@ -335,6 +335,66 @@ function broadcastRealtime(event, payload) {
   }
 }
 
+function formatTimeAgoHelper(timestampMs) {
+  if (!timestampMs || timestampMs <= 0) return 'Chưa có tín hiệu';
+  const diffSec = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
+  if (diffSec < 15) return 'Vừa xong';
+  if (diffSec < 60) return `${diffSec} giây trước`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours} giờ trước`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} ngày trước`;
+}
+
+function enrichChildWithLiveStatus(child) {
+  if (!child || !child.id) return child;
+  const telemetryDb = readDb('telemetry');
+  // Find newest telemetry for this child
+  const lastTele = Array.isArray(telemetryDb) ? telemetryDb.find(t => t && t.childId === child.id) : null;
+  const lastTime = (lastTele && (lastTele.lastUpdated || lastTele.timestamp || (lastTele.savedAt ? new Date(lastTele.savedAt).getTime() : 0)))
+    || (child.updatedAt ? Number(child.updatedAt) : 0);
+
+  const now = Date.now();
+  const isOnline = Boolean(lastTime && (now - lastTime < 120000)); // 2 minutes threshold
+  const status = isOnline ? 'online' : 'offline';
+
+  // Last known coordinates
+  const rawLat = (lastTele && (lastTele.lat !== undefined ? lastTele.lat : lastTele.latitude)) !== undefined
+    ? (lastTele.lat !== undefined ? lastTele.lat : lastTele.latitude)
+    : child.lat;
+  const rawLng = (lastTele && (lastTele.lng !== undefined ? lastTele.lng : lastTele.longitude)) !== undefined
+    ? (lastTele.lng !== undefined ? lastTele.lng : lastTele.longitude)
+    : child.lng;
+  const effectiveLat = typeof rawLat === 'number' && Number.isFinite(rawLat) ? rawLat : child.lat;
+  const effectiveLng = typeof rawLng === 'number' && Number.isFinite(rawLng) ? rawLng : child.lng;
+
+  let currentAddress = (lastTele && lastTele.currentAddress) || child.currentAddress || '';
+  if (currentAddress.startsWith('Vị trí thực tế')) {
+    currentAddress = currentAddress.replace('Vị trí thực tế', isOnline ? 'Vị trí hiện tại' : 'Vị trí sau cùng');
+  } else if (currentAddress.startsWith('Bé đang mở ứng dụng') && !isOnline) {
+    currentAddress = currentAddress.replace('Bé đang mở ứng dụng', 'Vị trí sau cùng');
+  }
+
+  return {
+    ...child,
+    status,
+    isOnline,
+    lastSeenMs: lastTime,
+    lastSeenText: formatTimeAgoHelper(lastTime),
+    lastUpdated: lastTime ? new Date(lastTime).toISOString() : child.lastUpdated,
+    lat: effectiveLat,
+    lng: effectiveLng,
+    battery: (lastTele && typeof lastTele.battery === 'number') ? lastTele.battery : (child.battery ?? 100),
+    speed: isOnline ? ((lastTele && typeof lastTele.speed === 'number') ? lastTele.speed : (child.speed || 0)) : 0,
+    currentAddress,
+    isScreenOn: (lastTele && lastTele.isScreenOn !== undefined) ? lastTele.isScreenOn : (child.isScreenOn ?? false),
+    screenState: (lastTele && lastTele.screenState) || child.screenState || (isOnline ? 'active' : 'screen_off'),
+    appStatus: (lastTele && lastTele.appStatus) || child.appStatus || (isOnline ? 'active_in_app' : 'screen_off'),
+  };
+}
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -651,12 +711,12 @@ const server = http.createServer(async (req, res) => {
           if (Array.isArray(childrenDb[pId])) {
             for (const child of childrenDb[pId]) {
               const setting = settingsDb[child.id] || {};
-              activeChildren.push({
+              activeChildren.push(enrichChildWithLiveStatus({
                 ...child,
                 isLocked: setting.isLocked || false,
                 screenTimeLimitMinutes: setting.screenTimeLimitMinutes || 120,
                 pcTelemetry: setting.pcTelemetry || null,
-              });
+              }));
             }
           }
         }
@@ -1846,10 +1906,11 @@ const server = http.createServer(async (req, res) => {
         }
         writeDb('children', childrenDb);
 
-        broadcastRealtime('children_updated', { parentId, children: childrenDb[parentId] });
+        const enrichedList = childrenDb[parentId].map(enrichChildWithLiveStatus);
+        broadcastRealtime('children_updated', { parentId, children: enrichedList });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, children: childrenDb[parentId] }));
+        res.end(JSON.stringify({ success: true, children: enrichedList }));
         return;
       }
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1859,7 +1920,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET') {
       const parentId = parsedUrl.searchParams.get('parentId') || 'family_primary';
       const childrenDb = readDb('children');
-      const list = childrenDb[parentId] || [];
+      const list = (childrenDb[parentId] || []).map(enrichChildWithLiveStatus);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, children: list }));
       return;
@@ -1872,7 +1933,8 @@ const server = http.createServer(async (req, res) => {
         if (Array.isArray(childrenDb[parentId])) {
           childrenDb[parentId] = childrenDb[parentId].filter(c => c.id !== childId);
           writeDb('children', childrenDb);
-          broadcastRealtime('children_updated', { parentId, children: childrenDb[parentId] });
+          const enrichedDeleted = childrenDb[parentId].map(enrichChildWithLiveStatus);
+          broadcastRealtime('children_updated', { parentId, children: enrichedDeleted });
         }
 
         // Cascade cleanup child-specific databases

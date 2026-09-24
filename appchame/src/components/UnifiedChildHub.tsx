@@ -525,7 +525,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                             ? 'bg-emerald-500 ring-2 ring-emerald-200'
                             : activeChild.status === 'studying'
                             ? 'bg-indigo-500 ring-2 ring-indigo-200'
-                            : 'bg-amber-500'
+                            : 'bg-slate-400'
                         }`}
                       />
                     )}
@@ -591,7 +591,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                   ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                   : 'bg-slate-100 text-slate-600 border-slate-200'
               }`}>
-                {activeChild.status === 'online' ? 'Online' : activeChild.status === 'studying' ? 'Đang học bài' : 'Nghỉ ngơi'}
+                {activeChild.status === 'online' ? 'Online' : activeChild.status === 'studying' ? 'Đang học bài' : `Ngoại tuyến${activeChild.lastSeenText ? ` (${activeChild.lastSeenText})` : ''}`}
               </span>
 
               {/* Real-time Locked Badge */}
@@ -603,7 +603,12 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
               )}
 
               {/* Smart Adaptive Sync Status Badge */}
-              {activeChild.isScreenOn === false || activeChild.screenState === 'screen_off' ? (
+              {activeChild.status !== 'online' ? (
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-slate-100 text-slate-600 border-slate-200 flex items-center gap-1 shadow-2xs">
+                  <span>⚪</span>
+                  <span>Ngoại tuyến{activeChild.lastSeenText ? ` (${activeChild.lastSeenText})` : ''}</span>
+                </span>
+              ) : activeChild.isScreenOn === false || activeChild.screenState === 'screen_off' ? (
                 <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200 flex items-center gap-1 shadow-2xs">
                   <span>🍃</span>
                   <span>Màn hình tắt (Tiết kiệm pin)</span>

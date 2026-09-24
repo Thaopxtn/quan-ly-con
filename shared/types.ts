@@ -153,6 +153,10 @@ export interface ChildProfile {
   lockTitle?: string;
   lockedAt?: number;
   hasUsageAccessPermission?: boolean;
+  isOnline?: boolean;
+  lastSeenMs?: number;
+  lastSeenText?: string;
+  updatedAt?: number;
 }
 
 export interface SafeZone {

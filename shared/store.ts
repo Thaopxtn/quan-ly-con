@@ -42,7 +42,9 @@ import {
   ChildPcAppRule,
   ChildPcControlConfig,
   ChildPcTelemetry,
+  ChildStatus,
 } from './types';
+import { connectionMonitor } from './services/connectionMonitorService';
 
 export function getLocalDateString(dateInput?: Date | number | string): string {
   const d = dateInput ? new Date(dateInput) : new Date();
@@ -2137,6 +2139,51 @@ if (typeof window !== 'undefined') {
     syncWithCloudForChild(parentId, childId);
     syncAllChildrenFromCloud(parentId);
   } catch (e) {}
+
+  // Keep children online/offline status, timestamps, and last known locations strictly in sync with connection monitor
+  try {
+    connectionMonitor.subscribe((globalConn) => {
+      if (!globalConn.children || globalConn.children.length === 0) return;
+      applyCloudStateUpdate((prev) => {
+        let changed = false;
+        const updatedChildren = prev.children.map((c) => {
+          const summary = globalConn.children.find((sc) => sc.childId === c.id);
+          if (!summary) return c;
+          const expectedStatus: ChildStatus = summary.isOnline ? 'online' : 'offline';
+          const expectedLastSeenMs = summary.lastSeenMs || (c.lastSeenMs ? Number(c.lastSeenMs) : 0);
+          const expectedLastSeenText = summary.lastSeenText || c.lastSeenText || '';
+
+          if (
+            c.status !== expectedStatus ||
+            c.isOnline !== summary.isOnline ||
+            c.lastSeenMs !== expectedLastSeenMs ||
+            c.lastSeenText !== expectedLastSeenText
+          ) {
+            changed = true;
+            return {
+              ...c,
+              status: expectedStatus,
+              isOnline: summary.isOnline,
+              lastSeenMs: expectedLastSeenMs,
+              lastSeenText: expectedLastSeenText,
+              battery: summary.battery ?? c.battery,
+              lat: typeof summary.lat === 'number' && Number.isFinite(summary.lat) ? summary.lat : c.lat,
+              lng: typeof summary.lng === 'number' && Number.isFinite(summary.lng) ? summary.lng : c.lng,
+              currentAddress: summary.address || c.currentAddress,
+            };
+          }
+          return c;
+        });
+        if (!changed) return prev;
+        const curChild = updatedChildren.find((c) => c.id === prev.selectedChildId) || prev.child;
+        return {
+          ...prev,
+          children: updatedChildren,
+          child: curChild,
+        };
+      });
+    });
+  } catch (_) {}
 }
 
 // Global EventBus Subscribers

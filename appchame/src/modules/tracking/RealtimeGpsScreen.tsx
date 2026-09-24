@@ -20,7 +20,8 @@ import {
   Eye,
   Grid,
   Map as MapIcon,
-  Sparkles
+  Sparkles,
+  Clock
 } from 'lucide-react';
 import { useAppState, getActiveParentId } from '@shared/store';
 import { InteractiveMap, MapChildItem } from '@shared/components/InteractiveMap';
@@ -34,6 +35,7 @@ import {
 import { ChildDeviceInfo, ChildProfile } from '@shared/types';
 import { haptics } from '@shared/utils/haptics';
 import { makePhoneCall } from '@shared/utils/phoneCall';
+import { connectionMonitor } from '@shared/services/connectionMonitorService';
 
 interface RealtimeGpsScreenProps {
   onBack: () => void;
@@ -46,6 +48,9 @@ export interface EnrichedChildProfile extends ChildProfile {
   nearestZoneName: string | null;
   hasValidNearestZone: boolean;
   formattedDistance: string;
+  isOnline: boolean;
+  lastSeenMs: number;
+  timeAgoText: string;
 }
 
 // Haversine distance in meters
@@ -80,20 +85,39 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
   const [expandedChildMapId, setExpandedChildMapId] = useState<string | null>(null);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [secondsAgo, setSecondsAgo] = useState(3);
+  const [, setTicker] = useState(0);
   const [buzzFeedback, setBuzzFeedback] = useState<string | null>(null);
   const [buzzingChildId, setBuzzingChildId] = useState<string | null>(null);
 
   // Live Tracking and Bandwidth Safety
-  const [isLiveActive, setIsLiveActive] = useState<boolean>(true);
-  const [liveExpiresAt, setLiveExpiresAt] = useState<number>(Date.now() + 5 * 60 * 1000);
+  const [isLiveActive, setIsLiveActive] = useState<boolean>(false);
+  const [liveExpiresAt, setLiveExpiresAt] = useState<number>(0);
   const [showQuotaWarning, setShowQuotaWarning] = useState<boolean>(false);
   const [quotaWarningReason, setQuotaWarningReason] = useState<string>('');
   const continuousLiveSecondsRef = React.useRef<number>(0);
 
-  // Manage Live Tracking activation on mount / target child change
+  // Periodic ticker to recalculate relative elapsed times every 10s
+  useEffect(() => {
+    const timer = setInterval(() => setTicker((t) => t + 1), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Manage Live Tracking activation on mount / target child change ONLY IF child is ONLINE
   useEffect(() => {
     const parentId = getActiveParentId();
+    const targetChild = safeChildren.find((c) => c.id === focusedChildId) || safeChildren[0];
+    const tel = targetChild ? telemetryMap[targetChild.id] : null;
+    const lastSeenMs = (tel && (tel.lastUpdated || tel.timestamp))
+      || (targetChild?.lastSeenMs ? Number(targetChild.lastSeenMs) : 0)
+      || (targetChild?.updatedAt ? Number(targetChild.updatedAt) : 0)
+      || (targetChild?.lastUpdated && !isNaN(Date.parse(targetChild.lastUpdated)) ? Date.parse(targetChild.lastUpdated) : 0);
+    const isTargetOnline = Boolean(lastSeenMs && (Date.now() - lastSeenMs < 120000) && targetChild?.status !== 'offline');
+
+    if (!isTargetOnline) {
+      setIsLiveActive(false);
+      return;
+    }
+
     const targetChildIds = viewMode === 'all' ? safeChildren.map((c) => c.id) : [focusedChildId];
 
     // Check bandwidth upload frequency first
@@ -200,6 +224,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     screenState?: 'active' | 'screen_off' | 'background';
     appStatus?: 'active_in_app' | 'in_background' | 'screen_off';
     syncMode?: 'realtime' | 'balanced' | 'power_saving';
+    lastUpdated?: number;
+    timestamp?: number;
+    updatedAt?: number;
   }>>({});
 
   // Subscribe to Cloud Firestore telemetry for ALL children simultaneously
@@ -214,7 +241,6 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
             ...prev,
             [c.id]: telemetry,
           }));
-          setSecondsAgo(1);
         }
       }, c.name);
       unsubs.push(unsub);
@@ -227,18 +253,18 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     };
   }, [safeChildren]);
 
-  // Periodic ticker for seconds ago
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSecondsAgo((s) => s + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
   // Compute live enhanced data for every child
   const enrichedChildren: EnrichedChildProfile[] = useMemo(() => {
     return safeChildren.map((c) => {
       const tel = telemetryMap[c.id];
+      const now = Date.now();
+      const lastSeenMs = (tel && (tel.lastUpdated || tel.timestamp))
+        || (c.lastSeenMs ? Number(c.lastSeenMs) : 0)
+        || (c.updatedAt ? Number(c.updatedAt) : 0)
+        || (c.lastUpdated && !isNaN(Date.parse(c.lastUpdated)) ? Date.parse(c.lastUpdated) : 0);
+      const isOnline = Boolean(lastSeenMs && (now - lastSeenMs < 120000) && c.status !== 'offline');
+      const timeAgoText = lastSeenMs > 0 ? connectionMonitor.formatTimeAgo(lastSeenMs) : 'Chưa có tín hiệu';
+
       const lat = typeof tel?.lat === 'number' && Number.isFinite(tel.lat)
         ? tel.lat
         : (typeof c?.lat === 'number' && Number.isFinite(c.lat) ? c.lat : 21.028511);
@@ -246,11 +272,21 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         ? tel.lng
         : (typeof c?.lng === 'number' && Number.isFinite(c.lng) ? c.lng : 105.854444);
       const battery = tel?.battery ?? c?.battery ?? 100;
-      const speed = tel?.speed ?? c?.speed ?? 0;
-      const address = tel?.currentAddress || c?.currentAddress || 'Đang cập nhật vị trí...';
+      const speed = isOnline ? (tel?.speed ?? c?.speed ?? 0) : 0;
+
+      let rawAddress = tel?.currentAddress || c?.currentAddress || '';
+      if (rawAddress.startsWith('Vị trí thực tế')) {
+        rawAddress = rawAddress.replace('Vị trí thực tế', isOnline ? 'Vị trí hiện tại' : 'Vị trí sau cùng');
+      } else if (rawAddress.startsWith('Bé đang mở ứng dụng') && !isOnline) {
+        rawAddress = rawAddress.replace('Bé đang mở ứng dụng', 'Vị trí sau cùng');
+      }
+      const address = rawAddress || (isOnline
+        ? `Tọa độ: ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+        : `Vị trí sau cùng: (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+
       const isScreenOn = tel?.isScreenOn ?? c?.isScreenOn ?? true;
-      const screenState = tel?.screenState || c?.screenState || 'active';
-      const appStatus = tel?.appStatus || c?.appStatus || 'active_in_app';
+      const screenState = tel?.screenState || c?.screenState || (isOnline ? 'active' : 'screen_off');
+      const appStatus = tel?.appStatus || c?.appStatus || (isOnline ? 'active_in_app' : 'screen_off');
       const syncMode = tel?.syncMode || c?.syncMode || 'realtime';
 
       // Geofence check
@@ -300,6 +336,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
         nearestZoneName,
         hasValidNearestZone,
         formattedDistance,
+        isOnline,
+        lastSeenMs,
+        timeAgoText,
       };
     });
   }, [safeChildren, telemetryMap, safeSafeZones]);
@@ -335,6 +374,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     activeDeviceId: child?.activeDeviceId,
     activeOpenedApp: child?.activeOpenedApp,
     screenTimeUsedMinutes: child?.screenTimeUsedMinutes,
+    isOnline: child?.isOnline ?? (child?.status === 'online'),
+    lastSeenMs: child?.lastSeenMs ?? 0,
+    timeAgoText: child?.lastSeenText || 'Chưa có tín hiệu',
   };
 
   // Active child for single mode
@@ -342,6 +384,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
     enrichedChildren.find((c) => c.id === focusedChildId) ||
     enrichedChildren[0] ||
     fallbackChild;
+
+  const currentChildIsOnline = Boolean(currentChild.isOnline);
+  const currentChildTimeAgo = currentChild.timeAgoText || 'Chưa có tín hiệu';
 
   const currentChildSettings = childSettings ? childSettings[currentChild.id] : undefined;
   const isCurrentGpsDisabled =
@@ -417,7 +462,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
   const handleRefreshAll = () => {
     haptics.light();
     setIsRefreshing(true);
-    setSecondsAgo(0);
+    connectionMonitor.checkAllConnections();
     try {
       const parentId = getActiveParentId();
       safeChildren.forEach((c) => {
@@ -463,12 +508,34 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
       speed: c.speed,
       currentAddress: c.address,
       status: c.status,
+      isOnline: c.isOnline,
+      lastSeenText: c.timeAgoText,
     }));
   }, [enrichedChildren]);
 
   // Floating Live Tracking & Continue button (compact, zero vertical space lost)
-  const renderLiveTrackingFloatingWidget = () => (
-    isLiveActive ? (
+  const renderLiveTrackingFloatingWidget = () => {
+    if (!currentChildIsOnline) {
+      return (
+        <div className="flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full shadow-md border border-slate-300 select-none text-[11px] font-bold text-slate-700 animate-in fade-in">
+          <span className="w-2 h-2 rounded-full bg-slate-400" />
+          <span>Vị trí sau cùng ({currentChildTimeAgo})</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRefreshAll();
+            }}
+            className="ml-1 px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-[10px] font-black transition cursor-pointer shadow-2xs active:scale-95"
+            title="Thử tìm lại tín hiệu vị trí của con"
+          >
+            Tìm lại
+          </button>
+        </div>
+      );
+    }
+
+    return isLiveActive ? (
       <div className="flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full shadow-md border border-rose-200/90 animate-in fade-in select-none">
         <span className="relative flex h-2 w-2">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
@@ -521,8 +588,8 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
           showQuotaWarning ? 'bg-amber-600 text-amber-100' : 'bg-blue-100 text-blue-800'
         }`}>+5p</span>
       </button>
-    )
-  );
+    );
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50 select-none pb-0">
@@ -541,13 +608,34 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                 ? `Vị trí tất cả các con (${children.length} bé)`
                 : `Định vị ${currentChild.name}`}
             </h2>
-            <div className="flex items-center space-x-1.5 text-[10px] text-slate-500 font-medium mt-0.5">
-              <Radio size={11} className="text-emerald-500 animate-pulse shrink-0" />
-              <span>
-                {viewMode === 'all'
-                  ? `${children.length} máy kết nối • ${secondsAgo < 5 ? 'Vừa xong' : `${secondsAgo}s trước`}`
-                  : `Vệ tinh GPS • ${secondsAgo < 5 ? 'Vừa xong' : `${secondsAgo}s trước`}`}
-              </span>
+            <div className="flex items-center space-x-1.5 text-[10px] font-medium mt-0.5">
+              {viewMode === 'all' ? (
+                enrichedChildren.some((c) => c.isOnline) ? (
+                  <>
+                    <Radio size={11} className="text-emerald-500 animate-pulse shrink-0" />
+                    <span className="text-emerald-700 font-bold">
+                      {enrichedChildren.filter((c) => c.isOnline).length}/{enrichedChildren.length} máy trực tuyến
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Clock size={11} className="text-slate-400 shrink-0" />
+                    <span className="text-slate-500">Tất cả thiết bị đang ngoại tuyến</span>
+                  </>
+                )
+              ) : currentChildIsOnline ? (
+                <>
+                  <Radio size={11} className="text-emerald-500 animate-pulse shrink-0" />
+                  <span className="text-emerald-700 font-bold">Vệ tinh GPS trực tuyến • Vừa xong</span>
+                </>
+              ) : (
+                <>
+                  <Clock size={11} className="text-slate-400 shrink-0" />
+                  <span className="text-slate-500 font-semibold">
+                    Ngoại tuyến • Vị trí sau cùng ({currentChildTimeAgo})
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -657,11 +745,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                 <span>{c.name}</span>
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
-                    c.status === 'online'
-                      ? 'bg-emerald-400'
-                      : c.status === 'moving'
-                      ? 'bg-blue-400'
-                      : 'bg-amber-400'
+                    c.isOnline ? 'bg-emerald-400' : 'bg-slate-400'
                   }`}
                 />
               </button>
@@ -694,6 +778,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                   topControl={renderLiveTrackingFloatingWidget()}
                   childName="Tất cả các con"
                   childAddress={`Đang hiển thị vị trí của ${safeChildren.length} bé trong khu vực`}
+                  isOnline={enrichedChildren.some((c) => c.isOnline)}
                   className="w-full h-[400px] min-h-[350px]"
                 />
               </div>
@@ -727,11 +812,7 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                             />
                             <span
                               className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white ${
-                                kid.status === 'online'
-                                  ? 'bg-emerald-500'
-                                  : kid.status === 'moving'
-                                  ? 'bg-blue-500'
-                                  : 'bg-amber-500'
+                                kid.isOnline ? 'bg-emerald-500' : 'bg-slate-400'
                               }`}
                             />
                           </div>
@@ -777,10 +858,15 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                                   <AlertTriangle size={12} className="shrink-0" />
                                   <span>Ngoài vùng an toàn (Cách {kid.nearestZoneName} {kid.formattedDistance})</span>
                                 </span>
-                              ) : (
-                                <span className="text-[11px] text-blue-600 font-semibold flex items-center gap-1">
+                              ) : kid.isOnline ? (
+                                <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1">
                                   <ShieldCheck size={12} className="shrink-0" />
-                                  <span>GPS vệ tinh ổn định</span>
+                                  <span>GPS trực tuyến ổn định</span>
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                                  <Clock size={12} className="shrink-0 text-slate-400" />
+                                  <span>Ngoại tuyến • Vị trí sau cùng ({kid.timeAgoText})</span>
                                 </span>
                               )}
                             </div>
@@ -790,7 +876,12 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                         {/* Battery, Speed & Adaptive Sync Mode Pill */}
                         <div className="flex flex-col items-end space-y-1 shrink-0">
                           {/* Sync Mode Badge */}
-                          {kid.isScreenOn === false || kid.screenState === 'screen_off' ? (
+                          {!kid.isOnline ? (
+                            <span className="px-1.5 py-0.5 rounded-lg text-[9px] font-bold bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1">
+                              <Clock size={10} />
+                              <span>Ngoại tuyến ({kid.timeAgoText})</span>
+                            </span>
+                          ) : kid.isScreenOn === false || kid.screenState === 'screen_off' ? (
                             <span className="px-1.5 py-0.5 rounded-lg text-[9px] font-bold bg-teal-50 text-teal-700 border border-teal-200/90 flex items-center gap-1 shadow-2xs">
                               <span>🍃</span>
                               <span>Tiết kiệm pin</span>
@@ -946,6 +1037,8 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                           battery={kid.battery}
                           speed={kid.speed}
                           initialZoom={16}
+                          isOnline={kid.isOnline}
+                          lastSeenText={kid.timeAgoText}
                           className="w-full h-56 rounded-2xl"
                         />
                         <div className="text-right">
@@ -1049,7 +1142,9 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                   alt={currentChild.name}
                   className="w-8 h-8 rounded-xl object-cover ring-2 ring-blue-500 shadow-2xs"
                 />
-                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
+                <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                  currentChildIsOnline ? 'bg-emerald-500' : 'bg-slate-400'
+                }`} />
               </div>
               <div className="min-w-0">
                 <div className="flex items-center space-x-1.5">
@@ -1069,10 +1164,15 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                       <AlertTriangle size={12} className="shrink-0" />
                       <span>Ngoài an toàn (Cách {currentChild.nearestZoneName} {currentChild.formattedDistance})</span>
                     </span>
-                  ) : (
+                  ) : currentChildIsOnline ? (
                     <span className="text-emerald-600 font-semibold flex items-center gap-1">
                       <ShieldCheck size={12} className="shrink-0" />
-                      <span>Vệ tinh GPS ổn định</span>
+                      <span>Vệ tinh GPS trực tuyến ổn định</span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-500 font-semibold flex items-center gap-1">
+                      <Clock size={12} className="shrink-0 text-slate-400" />
+                      <span>Mất tín hiệu GPS • Vị trí sau cùng ({currentChildTimeAgo})</span>
                     </span>
                   )}
                 </p>
@@ -1195,6 +1295,8 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
                 }
               }}
               topControl={renderLiveTrackingFloatingWidget()}
+              isOnline={currentChildIsOnline}
+              lastSeenText={currentChildTimeAgo}
               className="w-full h-[380px] sm:h-[450px] min-h-[320px]"
             />
           </div>
@@ -1204,20 +1306,36 @@ export const RealtimeGpsScreen: React.FC<RealtimeGpsScreenProps> = ({ onBack, on
             {/* Top row: Address & Telemetry badges */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center space-x-1.5 min-w-0 flex-1">
-                <MapPin size={13} className="text-blue-600 shrink-0" />
-                <span className="text-xs font-bold text-slate-900 truncate" title={currentChild.address}>
-                  {currentChild.address}
-                </span>
+                <MapPin size={13} className={currentChildIsOnline ? "text-emerald-600 shrink-0" : "text-slate-400 shrink-0"} />
+                <div className="min-w-0">
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                    {currentChildIsOnline ? 'Vị trí trực tiếp' : `Vị trí sau cùng ghi nhận (${currentChildTimeAgo})`}
+                  </div>
+                  <span className="text-xs font-bold text-slate-900 truncate block" title={currentChild.address}>
+                    {currentChild.address}
+                  </span>
+                </div>
               </div>
               <div className="flex items-center space-x-1.5 shrink-0 font-bold text-[10.5px]">
-                <span className="inline-flex items-center space-x-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200/80">
+                <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg border ${
+                  currentChildIsOnline
+                    ? 'text-emerald-700 bg-emerald-50 border-emerald-200/80'
+                    : 'text-slate-600 bg-slate-50 border-slate-200/80'
+                }`}>
                   <BatteryCharging size={12} />
-                  <span>{currentChild.battery}%</span>
+                  <span>{currentChild.battery}% Pin</span>
                 </span>
-                <span className="inline-flex items-center space-x-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200/80">
-                  <Gauge size={12} />
-                  <span>{currentChild.speed} km/h</span>
-                </span>
+                {currentChildIsOnline ? (
+                  <span className="inline-flex items-center space-x-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200/80">
+                    <Gauge size={12} />
+                    <span>{currentChild.speed} km/h</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center space-x-1 text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                    <Clock size={11} />
+                    <span>Ngoại tuyến</span>
+                  </span>
+                )}
               </div>
             </div>
 

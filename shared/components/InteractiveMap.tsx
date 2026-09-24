@@ -40,6 +40,8 @@ export interface MapChildItem {
   speed?: number;
   currentAddress?: string;
   status?: string;
+  isOnline?: boolean;
+  lastSeenText?: string;
 }
 
 interface InteractiveMapProps {
@@ -68,6 +70,8 @@ interface InteractiveMapProps {
   activeChildId?: string;
   onSelectChild?: (childId: string) => void;
   topControl?: React.ReactNode;
+  isOnline?: boolean;
+  lastSeenText?: string;
 }
 
 const TILE_SIZE = 256;
@@ -122,7 +126,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   allChildren = [],
   activeChildId,
   onSelectChild,
+  isOnline,
+  lastSeenText,
 }) => {
+  const effectiveIsOnline = isOnline !== undefined ? isOnline : true;
   const safeSafeZones = useMemo(() => (Array.isArray(safeZones) ? safeZones : []), [safeZones]);
   const safeRoutePoints = useMemo(() => (Array.isArray(routePoints) ? routePoints : []), [routePoints]);
   const safeAllChildren = useMemo(() => (Array.isArray(allChildren) ? allChildren : []), [allChildren]);
@@ -534,6 +541,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         safeAllChildren.map((kid) => {
           const pos = latLngToScreen(kid.lat, kid.lng);
           const isFocused = activeChildId === kid.id;
+          const kidOnline = kid.isOnline !== undefined ? kid.isOnline : (kid.status === 'online');
           return (
             <button
               key={`kid-pin-${kid.id}`}
@@ -545,14 +553,18 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
               style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
             >
               <div className="relative flex flex-col items-center">
-                {isFocused && (
+                {isFocused && kidOnline && (
                   <span className="absolute -inset-2 rounded-full bg-blue-500/30 animate-ping pointer-events-none" />
                 )}
                 <div
                   className={`w-9 h-9 rounded-full p-0.5 shadow-lg flex items-center justify-center transition-all ${
-                    isFocused
-                      ? 'bg-gradient-to-tr from-blue-600 to-indigo-500 ring-3 ring-blue-400/80 shadow-blue-500/40'
-                      : 'bg-white ring-2 ring-slate-300 hover:ring-blue-400'
+                    kidOnline
+                      ? isFocused
+                        ? 'bg-gradient-to-tr from-blue-600 to-indigo-500 ring-3 ring-blue-400/80 shadow-blue-500/40'
+                        : 'bg-white ring-2 ring-slate-300 hover:ring-blue-400'
+                      : isFocused
+                      ? 'bg-slate-600 ring-3 ring-slate-400 opacity-95'
+                      : 'bg-slate-200 ring-2 ring-slate-300 opacity-80'
                   }`}
                 >
                   <img
@@ -560,9 +572,12 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                     alt={kid.name}
                     className="w-full h-full rounded-full object-cover"
                   />
+                  <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-white ${
+                    kidOnline ? 'bg-emerald-500' : 'bg-slate-400'
+                  }`} />
                 </div>
                 <div className="mt-1 bg-slate-900/90 text-white px-2 py-0.5 rounded-full text-[10px] font-black shadow-md border border-white/20 whitespace-nowrap">
-                  {kid.name} {kid.battery !== undefined && `• ${kid.battery}%`}
+                  {kid.name} {kidOnline ? (kid.battery !== undefined ? `• ${kid.battery}%` : '') : '• Ngoại tuyến'}
                 </div>
               </div>
             </button>
@@ -576,12 +591,20 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           style={{ left: `${mainChildPos.x}px`, top: `${mainChildPos.y}px` }}
         >
           <div className="relative flex flex-col items-center">
-            {/* Animated Pulsing Wave */}
-            <span className="absolute -inset-3 rounded-full bg-blue-500/30 animate-ping" />
-            <span className="absolute -inset-6 rounded-full bg-blue-400/15 animate-pulse" />
+            {/* Animated Pulsing Wave only when ONLINE */}
+            {effectiveIsOnline && (
+              <>
+                <span className="absolute -inset-3 rounded-full bg-blue-500/30 animate-ping" />
+                <span className="absolute -inset-6 rounded-full bg-blue-400/15 animate-pulse" />
+              </>
+            )}
 
             {/* Avatar Ring */}
-            <div className="relative w-11 h-11 rounded-full p-0.5 bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-400 shadow-xl ring-3 ring-white flex items-center justify-center">
+            <div className={`relative w-11 h-11 rounded-full p-0.5 shadow-xl ring-3 ring-white flex items-center justify-center ${
+              effectiveIsOnline
+                ? 'bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-400'
+                : 'bg-gradient-to-tr from-slate-500 to-slate-400 opacity-90'
+            }`}>
               {childAvatar ? (
                 <img
                   src={childAvatar}
@@ -589,19 +612,31 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                   className="w-full h-full rounded-full object-cover"
                 />
               ) : (
-                <div className="w-full h-full bg-blue-600 rounded-full flex items-center justify-center text-white font-black text-sm">
+                <div className={`w-full h-full rounded-full flex items-center justify-center text-white font-black text-sm ${
+                  effectiveIsOnline ? 'bg-blue-600' : 'bg-slate-500'
+                }`}>
                   {(childName || 'Bé').slice(0, 1).toUpperCase()}
                 </div>
               )}
-              {/* Online pulse dot */}
-              <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full" />
+              {/* Online / Offline status dot */}
+              <span className={`absolute bottom-0 right-0 w-3.5 h-3.5 border-2 border-white rounded-full ${
+                effectiveIsOnline ? 'bg-emerald-500' : 'bg-slate-400'
+              }`} />
             </div>
 
             {/* Compass / Direction Pointer if moving */}
-            {speed > 3 && (
+            {effectiveIsOnline && speed > 3 && (
               <div className="mt-0.5 bg-indigo-600 text-white px-1.5 py-0.2 rounded-full text-[9px] font-black flex items-center gap-0.5 shadow-sm">
                 <Navigation size={9} className="rotate-45" />
                 <span>{speed} km/h</span>
+              </div>
+            )}
+
+            {/* Offline label badge under pin */}
+            {!effectiveIsOnline && (
+              <div className="mt-1 bg-slate-900/90 text-white px-2 py-0.5 rounded-full text-[9.5px] font-bold shadow-md border border-white/20 whitespace-nowrap flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                <span>Vị trí sau cùng{lastSeenText ? ` (${lastSeenText})` : ''}</span>
               </div>
             )}
           </div>
@@ -812,15 +847,20 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       <div className="absolute bottom-2.5 left-3 right-3 z-25 pointer-events-none">
         <div className="bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-md border border-slate-200/80 flex items-center justify-between text-[11px] text-slate-700 pointer-events-auto">
           <div className="flex items-center space-x-1.5 truncate pr-2">
-            <MapPin size={13} className="text-rose-500 shrink-0" />
+            <MapPin size={13} className={effectiveIsOnline ? "text-rose-500 shrink-0" : "text-slate-400 shrink-0"} />
             <span className="font-bold text-slate-900 truncate">
-              {childAddress || `Tọa độ: ${Number.isFinite(effectiveLat) ? effectiveLat.toFixed(4) : '21.0285'}, ${Number.isFinite(effectiveLng) ? effectiveLng.toFixed(4) : '105.8544'}`}
+              {childAddress || (effectiveIsOnline
+                ? `Tọa độ: ${Number.isFinite(effectiveLat) ? effectiveLat.toFixed(4) : '21.0285'}, ${Number.isFinite(effectiveLng) ? effectiveLng.toFixed(4) : '105.8544'}`
+                : `Vị trí sau cùng: ${Number.isFinite(effectiveLat) ? effectiveLat.toFixed(4) : '21.0285'}, ${Number.isFinite(effectiveLng) ? effectiveLng.toFixed(4) : '105.8544'}`
+              )}
             </span>
           </div>
           <div className="flex items-center space-x-2 shrink-0 text-[10px] font-mono text-slate-400 font-medium">
             <span>Zoom {zoom}x</span>
             <span>•</span>
-            <span className="text-emerald-600 font-bold">Trực tiếp</span>
+            <span className={effectiveIsOnline ? "text-emerald-600 font-bold" : "text-slate-500 font-bold"}>
+              {effectiveIsOnline ? 'Trực tiếp' : 'Vị trí sau cùng'}
+            </span>
           </div>
         </div>
       </div>

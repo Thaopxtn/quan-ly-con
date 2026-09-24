@@ -2046,19 +2046,26 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         screenState = 'screen_off';
       }
 
-      let effectiveAddress = curChild.currentAddress;
+      let effectiveAddress = '';
       if (!isMasterOn) {
         effectiveAddress = 'Chế độ ngủ đông - Tiết kiệm pin tối đa (Tạm dừng thu thập)';
       } else if (!isGpsOn) {
         effectiveAddress = 'Đang tạm dừng định vị GPS theo cài đặt của cha mẹ';
       } else {
-        effectiveAddress = curChild.currentAddress || (
-          inForeground && screenOn
-            ? `Bé đang mở ứng dụng (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
-            : !screenOn
-            ? `Màn hình tắt - Tiết kiệm pin (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
-            : `Vị trí thực tế (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
-        );
+        const hasRealAddress = curChild.currentAddress &&
+          !curChild.currentAddress.startsWith('Vị trí') &&
+          !curChild.currentAddress.startsWith('Bé đang') &&
+          !curChild.currentAddress.startsWith('Màn hình tắt') &&
+          !curChild.currentAddress.startsWith('Tọa độ');
+        effectiveAddress = hasRealAddress
+          ? curChild.currentAddress
+          : (
+            inForeground && screenOn
+              ? `Bé đang mở ứng dụng (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
+              : !screenOn
+              ? `Màn hình tắt - Tiết kiệm pin (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
+              : `Tọa độ GPS (${curLat.toFixed(4)}, ${curLng.toFixed(4)})`
+          );
       }
 
       const baseSensorsData = curTargetSettings.sensorValues || {

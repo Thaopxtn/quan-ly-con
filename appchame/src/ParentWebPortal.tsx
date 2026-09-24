@@ -187,7 +187,7 @@ export const ParentWebPortal: React.FC = () => {
                         ? 'bg-emerald-500'
                         : currentChild?.status === 'moving'
                         ? 'bg-blue-500'
-                        : 'bg-amber-500'
+                        : 'bg-slate-400'
                     }`}
                   />
                 </div>
@@ -204,7 +204,11 @@ export const ParentWebPortal: React.FC = () => {
                       <span>{currentChild?.battery ?? 85}%</span>
                     </span>
                     <span>•</span>
-                    <span className="truncate">{currentChild?.grade || 'Lớp 5'}</span>
+                    <span className="truncate">
+                      {currentChild?.status === 'online'
+                        ? (currentChild?.grade || 'Trực tuyến')
+                        : `Ngoại tuyến${currentChild?.lastSeenText ? ` (${currentChild.lastSeenText})` : ''}`}
+                    </span>
                   </div>
                 </div>
               </div>
