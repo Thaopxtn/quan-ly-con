@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ChevronLeft,
   Compass,
@@ -108,7 +108,7 @@ function Phone3DModel({ pitch, roll, yaw }: { pitch: number; roll: number; yaw: 
             <div style={{ width: "4px", height: "4px", borderRadius: "50%", backgroundColor: "#3b82f6" }} />
           </div>
 
-          {/* Screen with simulated lockscreen / UI */}
+          {/* Screen showing real-time 3D orientation */}
           <div
             style={{
               flex: 1,
@@ -129,7 +129,7 @@ function Phone3DModel({ pitch, roll, yaw }: { pitch: number; roll: number; yaw: 
             <span style={{ fontSize: "10px", fontWeight: "900", letterSpacing: "-0.5px" }}>
               KidCare OS
             </span>
-            <span style={{ fontSize: "8px", opacity: 0.8 }}>Mô Phỏng 3D</span>
+            <span style={{ fontSize: "8px", opacity: 0.9 }}>Không Gian 3D Realtime</span>
           </div>
 
           {/* Home indicator bar */}
@@ -188,27 +188,6 @@ export const SensorDashboardScreen: React.FC<SensorDashboardScreenProps> = ({ on
   };
 
   const [tab, setTab] = useState<"3d" | "motion" | "environment">("3d");
-
-  // Real-time sensor micro-variation simulation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const randDelta = (range: number) => (Math.random() - 0.5) * range;
-      updateSensorValues(targetChildId, {
-        accelX: parseFloat((sensors.accelX + randDelta(0.2)).toFixed(3)),
-        accelY: parseFloat((sensors.accelY + randDelta(0.15)).toFixed(3)),
-        accelZ: parseFloat((sensors.accelZ + randDelta(0.15)).toFixed(3)),
-        gyroX: parseFloat(randDelta(0.04).toFixed(4)),
-        gyroY: parseFloat(randDelta(0.04).toFixed(4)),
-        gyroZ: parseFloat(randDelta(0.02).toFixed(4)),
-        pitch: Math.max(-90, Math.min(90, sensors.pitch + randDelta(1.5))),
-        roll: Math.max(-180, Math.min(180, sensors.roll + randDelta(1.0))),
-        yaw: (sensors.yaw + randDelta(2.5) + 360) % 360,
-        lightLux: Math.max(0, Math.round(sensors.lightLux + randDelta(15))),
-        stepCount: sensors.stepCount + (Math.random() > 0.7 ? 1 : 0),
-      });
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [targetChildId, sensors]);
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50 select-none pb-8 overflow-y-auto">

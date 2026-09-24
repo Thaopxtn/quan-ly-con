@@ -923,6 +923,8 @@ const server = http.createServer(async (req, res) => {
               isLocked: isLockSafeToUpdate ? (data.isLocked != null ? data.isLocked : cur.isLocked) : cur.isLocked,
               lockType: isLockSafeToUpdate ? (data.lockType != null ? data.lockType : cur.lockType) : cur.lockType,
               lockTitle: isLockSafeToUpdate ? (data.lockTitle != null ? data.lockTitle : cur.lockTitle) : cur.lockTitle,
+              sensorValues: data.sensors ? { ...(cur.sensorValues || {}), ...data.sensors } : cur.sensorValues,
+              networkInfo: data.network ? { ...(cur.networkInfo || {}), ...data.network } : cur.networkInfo,
               updatedAt: Date.now(),
             };
             writeDb('settings', settingsDb);

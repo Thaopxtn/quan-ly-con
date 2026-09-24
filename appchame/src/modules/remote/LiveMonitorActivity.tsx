@@ -23,11 +23,14 @@ interface LiveMonitorActivityProps {
 export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack }) => {
   const {
     state,
-    setLockChallenge,
+    lockChildDeviceNow,
     toggleLiveStream,
     switchCameraFacing,
   } = useAppState();
 
+  const targetChildId = state.selectedChildId;
+  const currentChild = state.children.find((c) => c.id === targetChildId) || state.children[0] || state.child;
+  const childSettings = state.childSettings[targetChildId] || state.childSettings[currentChild?.id || ''];
   const { liveMonitoring, kioskMode } = state;
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [isSnapshotSaved, setIsSnapshotSaved] = useState(false);
@@ -43,6 +46,13 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
     setTimeout(() => setIsSnapshotSaved(false), 3000);
   };
 
+  const isChildOnline = currentChild?.status === 'online';
+  const isScreenOn = currentChild?.isScreenOn !== false;
+  const activeApp = currentChild?.activeOpenedApp || childSettings?.activeOpenedApp || state.activeOpenedApp;
+  const activeAppName = typeof activeApp === 'object' && activeApp ? activeApp.name : (typeof activeApp === 'string' ? activeApp : '');
+  const screenTimeUsed = childSettings?.screenTime?.todayTotalMinutes ?? currentChild?.screenTimeUsedMinutes ?? state.screenTime?.todayTotalMinutes ?? 0;
+  const isLocked = Boolean(currentChild?.isLocked || childSettings?.isLocked || childSettings?.lockChallenge?.isLocked);
+
   return (
     <div className="flex-1 flex flex-col bg-slate-50 select-none pb-8 overflow-y-auto">
       {/* Top App Bar */}
@@ -56,14 +66,18 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
           </button>
           <div>
             <h1 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
-              <span>Giám Sát Màn Hình & Camera</span>
+              <span>Giám Sát Màn Hình & Trực Tiếp</span>
             </h1>
-            <p className="text-[11px] text-slate-500 font-medium">Truyền phát trực tiếp 1080p bảo mật</p>
+            <p className="text-[11px] text-slate-500 font-medium">
+              Thiết bị {currentChild?.name || 'Bé'} • {isChildOnline ? '🟢 Đang kết nối trực tuyến' : '⚪ Ngoại tuyến'}
+            </p>
           </div>
         </div>
-        <div className="flex items-center space-x-1.5 px-2.5 py-1 bg-rose-50 text-rose-600 rounded-full text-[11px] font-bold border border-rose-200/60">
-          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
-          <span>LIVE 1080P</span>
+        <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+          isChildOnline ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60' : 'bg-slate-100 text-slate-600 border-slate-200'
+        }`}>
+          <span className={`w-2 h-2 rounded-full ${isChildOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+          <span>{isChildOnline ? 'TRỰC TUYẾN' : 'OFFLINE'}</span>
         </div>
       </div>
 
@@ -83,51 +97,63 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
                 <Tv size={18} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Màn Hình Trực Tiếp Của Con</h3>
-                <p className="text-[10px] text-slate-500">Phản chiếu thời gian thực • 30 FPS • Latency 12ms</p>
+                <h3 className="text-sm font-bold text-slate-900">Màn Hình Thiết Bị Của Con</h3>
+                <p className="text-[10px] text-slate-500">
+                  {currentChild?.deviceName || currentChild?.model || 'Điện thoại con'} • Màn hình {isScreenOn ? 'Đang bật 🟢' : 'Đang tắt 💤'}
+                </p>
               </div>
             </div>
-            <button
-              onClick={() => {
-                setLockChallenge('instant');
-                showToast('Đã kích hoạt khóa máy con tức thì!');
-              }}
-              className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 shadow-xs"
-            >
-              <Lock size={12} />
-              <span>Khóa ngay</span>
-            </button>
+            {!isLocked && (
+              <button
+                onClick={() => {
+                  lockChildDeviceNow(targetChildId);
+                  showToast('Đang gửi lệnh khóa máy đến thiết bị con...');
+                }}
+                className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 shadow-xs"
+              >
+                <Lock size={12} />
+                <span>Khóa ngay</span>
+              </button>
+            )}
           </div>
 
-          {/* Screen Simulation Box */}
-          <div className="relative aspect-video bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 rounded-2xl overflow-hidden border border-slate-700/80 shadow-md flex flex-col justify-between p-3.5 text-white">
+          {/* Screen Status Box with Real Telemetry */}
+          <div className={`relative aspect-video rounded-2xl overflow-hidden border shadow-md flex flex-col justify-between p-3.5 text-white ${
+            isLocked
+              ? 'bg-gradient-to-br from-rose-950 via-slate-900 to-slate-950 border-rose-800/80'
+              : isScreenOn
+              ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 border-slate-700/80'
+              : 'bg-gradient-to-br from-slate-950 via-slate-900 to-black border-slate-800'
+          }`}>
             <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-              <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                LIVE STREAMING
+              <span className={`flex items-center gap-1.5 font-bold ${isLocked ? 'text-rose-400' : isScreenOn ? 'text-emerald-400' : 'text-slate-400'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isLocked ? 'bg-rose-500' : isScreenOn ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`}></span>
+                {isLocked ? 'THIẾT BỊ ĐÃ KHÓA' : isScreenOn ? 'MÀN HÌNH ĐANG BẬT' : 'MÀN HÌNH ĐANG TẮT'}
               </span>
-              <span>1080p • 60fps</span>
+              <span>Pin: {currentChild?.battery ?? '--'}%</span>
             </div>
 
             <div className="text-center space-y-1 my-auto py-4">
               <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center mx-auto mb-2 text-cyan-300">
-                <Tv size={24} />
+                {isLocked ? <Lock size={24} className="text-rose-400" /> : <Tv size={24} />}
               </div>
               <p className="text-xs font-extrabold text-white">
-                {kioskMode.isEnabled
+                {isLocked
+                  ? `Máy đang trong trạng thái bị khóa an toàn`
+                  : kioskMode.isEnabled
                   ? `Đang ghim app: ${kioskMode.pinnedAppName}`
-                  : state.activeOpenedApp
-                  ? `Bé đang dùng: ${typeof state.activeOpenedApp === 'object' ? state.activeOpenedApp.name : state.activeOpenedApp}`
-                  : `Bé ${state.child?.name || 'con'} đang mở máy`}
+                  : activeAppName
+                  ? `Bé đang mở: ${activeAppName}`
+                  : `Bé ${currentChild?.name || 'con'} đang ở màn hình chính`}
               </p>
               <p className="text-[10px] text-slate-300">
-                Đã dùng hôm nay: {state.screenTime?.todayTotalMinutes || 0} phút • Không phát hiện vi phạm
+                Đã dùng hôm nay: {screenTimeUsed} phút • Vị trí: {currentChild?.currentAddress || 'Đang cập nhật'}
               </p>
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-white/10 text-[10px] text-slate-400">
-              <span>Mã hóa bảo mật E2E</span>
-              <span className="text-cyan-300">Bấm &quot;Khóa ngay&quot; nếu cần can thiệp</span>
+              <span>Mã hóa bảo mật Bearer HMAC-SHA256</span>
+              <span className="text-cyan-300">{isLocked ? 'Đã khóa an toàn' : 'Bấm "Khóa ngay" nếu cần can thiệp'}</span>
             </div>
           </div>
         </div>

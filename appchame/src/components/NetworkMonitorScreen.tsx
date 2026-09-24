@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import {
   ChevronLeft,
   Wifi,
@@ -54,7 +54,7 @@ function CellBars({ bars }: { bars: number }) {
 }
 
 export const NetworkMonitorScreen: React.FC<NetworkMonitorScreenProps> = ({ onBack }) => {
-  const { state } = useAppState();
+  const { state, dispatchRemoteCommand } = useAppState();
   const targetChildId = state.selectedChildId;
   const child = state.children.find((c) => c.id === targetChildId) || state.children[0] || state.child;
   const settings = state.childSettings[targetChildId];
@@ -73,14 +73,21 @@ export const NetworkMonitorScreen: React.FC<NetworkMonitorScreenProps> = ({ onBa
   const [isScanning, setIsScanning] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  const handleScan = () => {
+  const handleScan = async () => {
     setIsScanning(true);
-    setToastMsg("Đang quét sóng WiFi & Bluetooth xung quanh máy con...");
-    setTimeout(() => {
+    setToastMsg("Đang gửi yêu cầu quét sóng & đồng bộ mạng đến máy con...");
+    try {
+      await dispatchRemoteCommand("sync_request", undefined, targetChildId, "Yêu cầu đồng bộ mạng & cảm biến 🔄");
+      setTimeout(() => {
+        setIsScanning(false);
+        setToastMsg("Đã gửi lệnh yêu cầu cập nhật mạng từ xa thành công!");
+        setTimeout(() => setToastMsg(null), 2500);
+      }, 1500);
+    } catch (_) {
       setIsScanning(false);
-      setToastMsg("Đã cập nhật danh sách tín hiệu mới nhất!");
-      setTimeout(() => setToastMsg(null), 2000);
-    }, 1200);
+      setToastMsg("Không thể gửi lệnh đồng bộ. Vui lòng kiểm tra kết nối mạng!");
+      setTimeout(() => setToastMsg(null), 2500);
+    }
   };
 
   const getBtIcon = (type: string) => {

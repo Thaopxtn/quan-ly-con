@@ -81,7 +81,7 @@ import { showSystemNotification, requestSystemNotificationPermission } from '@sh
 import { EmergencyContactBar } from './EmergencyContactBar';
 import { KidNotificationBanner } from './KidNotificationBanner';
 import { SharedLessonViewerModal } from './SharedLessonViewerModal';
-import { SharedLessonLink, AppItem, BroadcastMessage } from '../../shared/types';
+import { SharedLessonLink, AppItem, BroadcastMessage, SensorValues } from '../../shared/types';
 import { FamilyChatModal } from '../../shared/components/FamilyChatModal';
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
 import { TimeExtensionRequestModal } from '../../shared/components/TimeExtensionRequestModal';
@@ -277,7 +277,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const liveTrackingExpiresAtRef = React.useRef<number>(0);
   const lastLowBatteryAlertRef = React.useRef<number>(0);
   const lastTickRef = React.useRef<number>(Date.now());
-  const sensorValuesRef = React.useRef<{accelX?: number, accelY?: number, accelZ?: number}>({});
+  const sensorValuesRef = React.useRef<Partial<SensorValues>>({});
   const bypassedRoutinesRef = React.useRef<{ mealtime?: boolean; bedtime?: boolean; screentime?: boolean }>({});
   const [isSosButtonCooldown, setIsSosButtonCooldown] = useState(false);
 
@@ -1947,6 +1947,42 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     }
   }, [activeReminder?.title, activeReminder?.message]);
 
+  // 4. Real-time on-device Alarm & Schedule Event Runner
+  const triggeredAlarmsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const checkAlarmsAndSchedules = () => {
+      const now = new Date();
+      const currentHours = String(now.getHours()).padStart(2, '0');
+      const currentMins = String(now.getMinutes()).padStart(2, '0');
+      const currentTimeStr = `${currentHours}:${currentMins}`;
+      const currentDay = now.getDay(); // 0 = Sun, 1 = Mon...
+      const todayDateStr = now.toISOString().slice(0, 10);
+
+      const alarms = targetSettingsRef.current?.alarms || [];
+      alarms.forEach((alarm) => {
+        if (!alarm.isEnabled) return;
+        const appliesToday = !alarm.repeatDays || alarm.repeatDays.length === 0 || alarm.repeatDays.includes(currentDay);
+        const triggerKey = `${alarm.id}_${todayDateStr}_${alarm.time}`;
+        if (appliesToday && alarm.time === currentTimeStr && !triggeredAlarmsRef.current.has(triggerKey)) {
+          triggeredAlarmsRef.current.add(triggerKey);
+          wakeUpDevice().catch(() => {});
+          playBuzzSirenAudio();
+          speakVietnamese(`Báo thức: ${alarm.label}. Đã đến giờ rồi con nhé!`);
+          showSystemNotification(`⏰ BÁO THỨC: ${alarm.label}`, {
+            body: `Đã đến giờ: ${alarm.time}. Hãy thực hiện theo kế hoạch nhé!`,
+            soundType: 'emergency',
+            tag: `alarm_${alarm.id}`,
+          });
+          showToast(`⏰ BÁO THỨC: ${alarm.label} (${alarm.time})`);
+        }
+      });
+    };
+
+    const interval = setInterval(checkAlarmsAndSchedules, 15000);
+    checkAlarmsAndSchedules();
+    return () => clearInterval(interval);
+  }, []);
+
   // Core helper: Upload fresh telemetry snapshot with screen & sync mode (stabilized with refs)
   const uploadCurrentTelemetrySnapshot = React.useCallback(
     async (reason?: string) => {
@@ -2036,9 +2072,21 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         ...sensorValuesRef.current
       };
 
+      const conn = typeof navigator !== 'undefined' ? (navigator as any)?.connection : null;
+      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      const effectiveType = conn?.effectiveType || '4g';
+      const isWifi = conn?.type === 'wifi' || (!conn?.type && effectiveType === '4g' && isOnline);
       const networkInfo = {
-        online: typeof navigator !== 'undefined' ? navigator.onLine : true,
-        connectionType: (navigator as any)?.connection?.effectiveType || 'wifi/cellular',
+        online: isOnline,
+        wifiConnected: isWifi && isOnline,
+        wifiSSID: isWifi ? (curTargetSettings.networkInfo?.wifiSSID || 'WiFi Đang kết nối') : 'Chưa kết nối',
+        wifiSignalDbm: isWifi ? -58 : -100,
+        cellConnected: !isWifi && isOnline,
+        cellType: (effectiveType === '4g' ? '4G' : effectiveType === '3g' ? '3G' : effectiveType === '2g' ? '2G' : '4G') as '2G' | '3G' | '4G' | '5G' | 'N/A',
+        cellBars: isOnline ? (effectiveType === '4g' ? 4 : 3) : 0,
+        connectionType: effectiveType || 'wifi/cellular',
+        nearbyWifis: curTargetSettings.networkInfo?.nearbyWifis || [],
+        nearbyBluetooth: curTargetSettings.networkInfo?.nearbyBluetooth || [],
       };
 
       const isDeviceLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked);
@@ -2427,7 +2475,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     trackingConfig.enableGpsTracking,
   ]);
 
-  // Real motion sensor listener on native device (throttled to save memory, prevent frame drops & OOM)
+  // Real motion & orientation sensor listener on native device (throttled to save memory, prevent frame drops & OOM)
   useEffect(() => {
     const isMasterOn = trackingConfig.isMasterTrackingEnabled !== false;
     const isSensorOn = isMasterOn && trackingConfig.enableSensorMonitoring !== false;
@@ -2436,22 +2484,49 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     let lastMotionUpdate = 0;
     const handleMotion = (e: DeviceMotionEvent) => {
       const now = Date.now();
-      if (now - lastMotionUpdate < 3000) return;
+      if (now - lastMotionUpdate < 2500) return;
       if (e.accelerationIncludingGravity) {
         lastMotionUpdate = now;
         const { x, y, z } = e.accelerationIncludingGravity;
+        const rr = e.rotationRate;
         sensorValuesRef.current = {
           ...sensorValuesRef.current,
           accelX: parseFloat((x || 0).toFixed(2)),
           accelY: parseFloat((y || 0).toFixed(2)),
           accelZ: parseFloat((z || 9.8).toFixed(2)),
+          gyroX: rr ? parseFloat((rr.alpha || 0).toFixed(3)) : sensorValuesRef.current.gyroX,
+          gyroY: rr ? parseFloat((rr.beta || 0).toFixed(3)) : sensorValuesRef.current.gyroY,
+          gyroZ: rr ? parseFloat((rr.gamma || 0).toFixed(3)) : sensorValuesRef.current.gyroZ,
         };
       }
     };
 
-    if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
-      window.addEventListener('devicemotion', handleMotion, { passive: true });
-      return () => window.removeEventListener('devicemotion', handleMotion);
+    let lastOrientationUpdate = 0;
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      const now = Date.now();
+      if (now - lastOrientationUpdate < 2000) return;
+      lastOrientationUpdate = now;
+      if (e.beta !== null || e.gamma !== null || e.alpha !== null) {
+        sensorValuesRef.current = {
+          ...sensorValuesRef.current,
+          pitch: parseFloat((e.beta || 0).toFixed(1)), // -180 to 180 (front/back tilt)
+          roll: parseFloat((e.gamma || 0).toFixed(1)),  // -90 to 90 (left/right tilt)
+          yaw: parseFloat((e.alpha || 0).toFixed(1)),   // 0 to 360 (compass direction)
+        };
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      if ('DeviceMotionEvent' in window) {
+        window.addEventListener('devicemotion', handleMotion, { passive: true });
+      }
+      if ('DeviceOrientationEvent' in window) {
+        window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+      }
+      return () => {
+        window.removeEventListener('devicemotion', handleMotion);
+        window.removeEventListener('deviceorientation', handleOrientation);
+      };
     }
   }, [targetChildId, trackingConfig.isMasterTrackingEnabled, trackingConfig.enableSensorMonitoring]);
 

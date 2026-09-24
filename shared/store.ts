@@ -1618,6 +1618,13 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
               safeZones: mergedSettings.safeZones || prev.safeZones,
               activeReminder: mergedSettings.activeReminder !== undefined ? mergedSettings.activeReminder : prev.activeReminder,
               lastVoiceGuide: mergedSettings.lastVoiceGuide !== undefined ? mergedSettings.lastVoiceGuide : prev.lastVoiceGuide,
+              notifications: mergedSettings.notifications || prev.childSettings?.[childId]?.notifications || [],
+              mediaPlayback: mergedSettings.mediaPlayback || prev.childSettings?.[childId]?.mediaPlayback,
+              networkInfo: mergedSettings.networkInfo || prev.childSettings?.[childId]?.networkInfo,
+              sensorValues: mergedSettings.sensorValues || prev.childSettings?.[childId]?.sensorValues,
+              alarms: mergedSettings.alarms || prev.childSettings?.[childId]?.alarms || [],
+              timers: mergedSettings.timers || prev.childSettings?.[childId]?.timers || [],
+              scheduleEvents: mergedSettings.scheduleEvents || prev.childSettings?.[childId]?.scheduleEvents || [],
               screenTime: mergedSettings.screenTimeLimitMinutes !== undefined
                 ? { ...prev.screenTime, dailyLimitMinutes: mergedSettings.screenTimeLimitMinutes }
                 : prev.screenTime,
@@ -5414,6 +5421,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('ALARM_UPDATED', { childId, alarms: updatedAlarms }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { alarms: updatedAlarms }).catch(() => {});
+    }
   };
 
   const updateAlarm = (childId: string, alarmId: string, patch: Partial<ChildAlarm>) => {
@@ -5426,6 +5437,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('ALARM_UPDATED', { childId, alarms: updatedAlarms }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { alarms: updatedAlarms }).catch(() => {});
+    }
   };
 
   const deleteAlarm = (childId: string, alarmId: string) => {
@@ -5436,6 +5451,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('ALARM_UPDATED', { childId, alarms: updatedAlarms }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { alarms: updatedAlarms }).catch(() => {});
+    }
   };
 
   // ─── Timer actions ───────────────────────────────────────────
@@ -5455,6 +5474,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('TIMER_UPDATED', { childId, timers: updatedTimers }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { timers: updatedTimers }).catch(() => {});
+    }
   };
 
   const updateTimerState = (childId: string, timerId: string, patch: Partial<ChildTimer>) => {
@@ -5467,6 +5490,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('TIMER_UPDATED', { childId, timers: updatedTimers }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { timers: updatedTimers }).catch(() => {});
+    }
   };
 
   const deleteTimer = (childId: string, timerId: string) => {
@@ -5477,6 +5504,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('TIMER_UPDATED', { childId, timers: updatedTimers }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { timers: updatedTimers }).catch(() => {});
+    }
   };
 
   // ─── Schedule Event actions ──────────────────────────────────
@@ -5493,6 +5524,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('SCHEDULE_UPDATED', { childId, scheduleEvents: updatedEvents }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { scheduleEvents: updatedEvents }).catch(() => {});
+    }
   };
 
   const updateScheduleEvent = (childId: string, eventId: string, patch: Partial<ChildScheduleEvent>) => {
@@ -5505,6 +5540,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('SCHEDULE_UPDATED', { childId, scheduleEvents: updatedEvents }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { scheduleEvents: updatedEvents }).catch(() => {});
+    }
   };
 
   const deleteScheduleEvent = (childId: string, eventId: string) => {
@@ -5515,6 +5554,10 @@ export const useAppState = () => {
     const newState = { ...state, childSettings: { ...state.childSettings, [childId]: updatedSettings } };
     saveAndNotify(newState);
     eventBus.publish('SCHEDULE_UPDATED', { childId, scheduleEvents: updatedEvents }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { scheduleEvents: updatedEvents }).catch(() => {});
+    }
   };
 
   const resetAllData = () => {
