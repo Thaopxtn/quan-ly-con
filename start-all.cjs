@@ -1,21 +1,23 @@
 /**
- * Unified Runner for "Quản Lý Con":
- * 1. Checks/Starts Local High-Performance Node Server (server.cjs)
- * 2. Starts Cloudflare 4G Internet Tunnel (cloudflared)
- * 3. Automatically extracts the public HTTPS 4G URL and displays clean access links
- * 4. Gracefully handles ports, existing instances, and clean shutdown
+ * Unified Smart Dashboard & Runner for "Quản Lý Con":
+ * - Auto-detects existing PM2 services (quan-ly-con-server & quan-ly-con-tunnel)
+ * - Avoids port collision, avoiding false kills or duplicate processes
+ * - Verifies local server (http://127.0.0.1:3000) & Cloudflare 4G Tunnel health
+ * - Real-time watchdog monitor keeping the console window open and responsive
+ * - Keyboard shortcuts: [O] Mở Portal, [R] Tải lại link, [Ctrl+C] Đóng
  */
 
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const https = require('https');
+const readline = require('readline');
 
 const ROOT_DIR = __dirname;
 const PORT = process.env.PORT || 3000;
 
-// 1. Locate cloudflared binary
 function findCloudflared() {
   const candidates = [
     path.join(ROOT_DIR, 'cloudflared.exe'),
@@ -29,7 +31,6 @@ function findCloudflared() {
     if (fs.existsSync(p)) return p;
   }
 
-  // Try PATH
   try {
     const whereOut = execSync('where cloudflared', { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim();
     if (whereOut) return 'cloudflared';
@@ -38,7 +39,6 @@ function findCloudflared() {
   return null;
 }
 
-// 2. Get local LAN IPs
 function getLocalIps() {
   const interfaces = os.networkInterfaces();
   const ips = [];
@@ -52,7 +52,6 @@ function getLocalIps() {
   return ips;
 }
 
-// 3. Check if server is already responding
 function checkServerRunning(port) {
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${port}/api/health`, { timeout: 1500 }, (res) => {
@@ -66,183 +65,322 @@ function checkServerRunning(port) {
   });
 }
 
-// 4. Free port if blocked by a dead/unresponsive process
-function freePortIfBlocked(port) {
+function checkUrlHealth(targetUrl) {
+  if (!targetUrl || !targetUrl.startsWith('http')) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      const client = targetUrl.startsWith('https') ? https : http;
+      const req = client.get(`${targetUrl}/api/health`, { timeout: 4000 }, (res) => {
+        resolve(res.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+    } catch (_) {
+      resolve(false);
+    }
+  });
+}
+
+function isPm2ProcessOnline(serviceName) {
   try {
-    const stdout = execSync(`netstat -ano | findstr :${port}`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
-    const lines = stdout.split('\n');
-    for (const line of lines) {
-      if (line.includes('LISTENING')) {
-        const parts = line.trim().split(/\s+/);
-        const pid = parts[parts.length - 1];
-        if (pid && pid !== '0' && pid != process.pid) {
-          try {
-            execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-            console.log(`[Dọn dẹp] Đã giải phóng cổng ${port} (tiến trình cũ PID: ${pid})`);
-          } catch (_) {}
-        }
+    const out = execSync('npx pm2 jlist', { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
+    const list = JSON.parse(out);
+    return list.some(item => item.name === serviceName && item.pm2_env?.status === 'online');
+  } catch (_) {
+    return false;
+  }
+}
+
+function openBrowser(url) {
+  try {
+    const cmd = process.platform === 'win32' ? `start "" "${url}"` : `open "${url}"`;
+    exec(cmd);
+  } catch (_) {}
+}
+
+function updateDiscoveryFiles(url) {
+  if (!url) return;
+  try {
+    fs.writeFileSync(path.join(ROOT_DIR, 'server-url.txt'), url.trim(), 'utf8');
+    fs.writeFileSync(path.join(ROOT_DIR, 'server-url.json'), JSON.stringify({ url: url.trim(), updatedAt: Date.now() }, null, 2), 'utf8');
+
+    const copyDists = ['dist', 'dist-parent', 'dist-kid'];
+    for (const d of copyDists) {
+      const dirPath = path.join(ROOT_DIR, d);
+      if (fs.existsSync(dirPath)) {
+        fs.writeFileSync(path.join(dirPath, 'server-url.txt'), url.trim(), 'utf8');
       }
     }
   } catch (_) {}
+
+  // Sync to GitHub
+  try {
+    execSync('git add server-url.txt server-url.json', { cwd: ROOT_DIR, stdio: 'ignore' });
+    const gitStatus = execSync('git status --porcelain server-url.txt server-url.json', { cwd: ROOT_DIR }).toString().trim();
+    if (gitStatus) {
+      execSync('git commit -m "chore: auto-sync server url to github"', { cwd: ROOT_DIR, stdio: 'ignore' });
+      execSync('git push origin main', { cwd: ROOT_DIR, stdio: 'ignore' });
+    }
+  } catch (_) {}
+}
+
+function readStoredUrl() {
+  const urlFile = path.join(ROOT_DIR, 'server-url.txt');
+  if (fs.existsSync(urlFile)) {
+    try {
+      const u = fs.readFileSync(urlFile, 'utf8').trim();
+      if (u.startsWith('https://')) return u;
+    } catch (_) {}
+  }
+  return '';
+}
+
+function displayBanner(publicUrl) {
+  const localIps = getLocalIps();
+  console.log('\n================================================================');
+  console.log('  🎉 TẤT CẢ ĐÃ SẴN SÀNG! CÁC ĐƯỜNG LINK TRUY CẬP CỦA BẠN:');
+  console.log('================================================================');
+  console.log('\n🌐 1. LINK ỨNG DỤNG CHA MẸ (TRÊN ĐIỆN THOẠI HOẶC MÁY TÍNH):');
+  if (publicUrl) {
+    console.log(`   👉 Trên điện thoại (4G):   ${publicUrl}/parent.html`);
+  }
+  console.log(`   👉 Trên máy tính này (PC): http://localhost:${PORT}/parent.html`);
+  console.log(`   💻 Giao diện Quản trị PC:  http://localhost:${PORT}/portal`);
+  if (publicUrl) {
+    console.log(`   📥 Tải App Cha Mẹ (APK):   ${publicUrl}/download/parent`);
+  }
+
+  console.log('\n📱 2. LINK ỨNG DỤNG CON CÁI:');
+  console.log(`   👉 Mở App Con trên điện thoại và gõ mã 6 số từ Bố Mẹ là xong!`);
+  if (publicUrl) {
+    console.log(`   👉 Hoặc mở trên web:       ${publicUrl}/kid.html`);
+    console.log(`   📥 Tải App Con (APK):      ${publicUrl}/download/kid`);
+  }
+
+  if (publicUrl) {
+    console.log('\n📡 3. TRẠM ĐỒNG BỘ TỰ ĐỘNG QUA GITHUB:');
+    console.log(`   👉 URL máy chủ hiện tại:    ${publicUrl}`);
+    console.log(`   👉 Trạng thái:              🟢 Đã nạp và tự động nhận diện 100%`);
+  }
+
+  if (localIps.length > 0) {
+    console.log('\n🏠 LINK NỘI BỘ WI-FI TRONG NHÀ:');
+    localIps.forEach(ip => {
+      console.log(`   👉 http://${ip}:${PORT}/parent.html`);
+    });
+  }
+
+  console.log('\n================================================================');
+  console.log('💡 HƯỚNG DẪN DÙNG:');
+  console.log('• Giữ nguyên cửa sổ này để theo dõi trạng thái máy chủ.');
+  console.log('• Phím [O]: Mở Giao diện Quản trị Máy chủ (Portal) trên trình duyệt.');
+  console.log('• Phím [P]: Mở Giao diện App Cha Mẹ (Parent App) trên trình duyệt.');
+  console.log('• Nhấn [Ctrl + C] hoặc đóng cửa sổ khi hoàn tất.');
+  console.log('================================================================\n');
 }
 
 async function main() {
+  console.clear();
   console.log('================================================================');
-  console.log('       🚀 KHỞI ĐỘNG HỢP NHẤT MÁY CHỦ VÀ ĐƯỜNG TRUYỀN 4G');
+  console.log('       🚀 TRUNG TÂM KHỞI ĐỘNG HỢP NHẤT MÁY CHỦ VÀ 4G');
   console.log('                 Hệ Thống Quản Lý Con Cái');
   console.log('================================================================\n');
 
-  let serverProcess = null;
+  let serverSpawned = null;
+  let tunnelSpawned = null;
+  let publicUrl = '';
 
-  // Step 1: Always ensure fresh server instance with latest code
-  console.log(`[1/2] ⏳ Đang khởi động máy chủ nội bộ (cổng ${PORT})...`);
-  freePortIfBlocked(PORT);
+  // -------------------------------------------------------------
+  // STEP 1: Check and Start Local Server
+  // -------------------------------------------------------------
+  console.log(`[1/2] ⏳ Đang kiểm tra máy chủ nội bộ (cổng ${PORT})...`);
+  let isServerUp = await checkServerRunning(PORT);
 
-    console.log(`[1/2] ⏳ Đang khởi chạy máy chủ nội bộ...`);
-    serverProcess = spawn('node', [path.join(ROOT_DIR, 'server.cjs')], {
-      cwd: ROOT_DIR,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-
-    serverProcess.stderr.on('data', (d) => {
-      const msg = d.toString();
-      if (!msg.includes('EADDRINUSE')) {
-        console.error('[Server]:', msg);
+  if (isServerUp) {
+    const isPm2 = isPm2ProcessOnline('quan-ly-con-server');
+    console.log(`[1/2] ✅ Máy chủ nội bộ đang hoạt động sẵn sàng (cổng ${PORT})! ${isPm2 ? '[PM2 24/7 Mode]' : ''}`);
+  } else {
+    // Try PM2 restart first if registered
+    let restoredViaPm2 = false;
+    try {
+      execSync('npx pm2 restart quan-ly-con-server', { stdio: 'ignore' });
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        if (await checkServerRunning(PORT)) {
+          restoredViaPm2 = true;
+          break;
+        }
       }
-    });
+    } catch (_) {}
 
-    serverProcess.on('exit', (code) => {
-      if (code !== null && code !== 0) {
-        console.error(`[CẢNH BÁO] Máy chủ nội bộ đã dừng với mã: ${code}`);
+    if (restoredViaPm2) {
+      console.log(`[1/2] ✅ Đã khởi động máy chủ nội bộ thành công qua PM2 (cổng ${PORT})!`);
+    } else {
+      console.log(`[1/2] ⏳ Đang khởi chạy tiến trình máy chủ nội bộ...`);
+      serverSpawned = spawn('node', [path.join(ROOT_DIR, 'server.cjs')], {
+        cwd: ROOT_DIR,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+
+      serverSpawned.stderr.on('data', (d) => {
+        const msg = d.toString();
+        if (!msg.includes('EADDRINUSE')) {
+          console.error('[Server Error]:', msg);
+        }
+      });
+
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 600));
+        if (await checkServerRunning(PORT)) break;
       }
-    });
-
-    // Wait a brief moment for it to be ready
-    for (let i = 0; i < 5; i++) {
-      await new Promise(r => setTimeout(r, 600));
-      if (await checkServerRunning(PORT)) break;
+      console.log(`[1/2] ✅ Máy chủ nội bộ đã khởi động thành công (cổng ${PORT})!`);
     }
-    console.log(`[1/2] ✅ Máy chủ nội bộ đã khởi động thành công (cổng ${PORT})!`);
-
-  // Step 2: Locate & Launch Cloudflare Tunnel
-  const cfPath = findCloudflared();
-  if (!cfPath) {
-    console.error('\n❌ KHÔNG TÌM THẤY CLOUDFLARED!');
-    console.error('Vui lòng đảm bảo file "cloudflared.exe" tồn tại.');
-    console.log('\n[INFO] Máy chủ nội bộ vẫn đang chạy tại: http://localhost:' + PORT);
-    getLocalIps().forEach(ip => console.log('   Wi-Fi: http://' + ip + ':' + PORT));
-    return;
   }
 
-  console.log('\n[2/2] ⏳ Đang kích hoạt đường truyền Internet 4G (Cloudflare Tunnel)...');
+  // -------------------------------------------------------------
+  // STEP 2: Check and Start Cloudflare 4G Tunnel
+  // -------------------------------------------------------------
+  console.log('\n[2/2] ⏳ Đang kiểm tra đường truyền Internet 4G (Cloudflare Tunnel)...');
 
-  // Clean up any orphan old tunnel process before opening a new one
-  try {
-    execSync('taskkill /F /IM cloudflared.exe', { stdio: 'ignore' });
-  } catch (_) {}
+  // Check if we already have an active healthy tunnel URL
+  const existingUrl = readStoredUrl();
+  let isExistingUrlAlive = false;
 
-  const tunnelProcess = spawn(cfPath, ['tunnel', '--url', `http://localhost:${PORT}`], {
-    cwd: ROOT_DIR,
-    windowsHide: true,
-  });
-
-  let tunnelFound = false;
-
-  const handleTunnelOutput = (data) => {
-    const text = data.toString();
-    const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
-    if (match && !tunnelFound) {
-      tunnelFound = true;
-      const publicUrl = match[0];
-      const localIps = getLocalIps();
-
-      // 1. Save local discovery files
-      try {
-        fs.writeFileSync(path.join(ROOT_DIR, 'server-url.txt'), publicUrl.trim(), 'utf8');
-        fs.writeFileSync(path.join(ROOT_DIR, 'server-url.json'), JSON.stringify({ url: publicUrl.trim(), updatedAt: Date.now() }, null, 2), 'utf8');
-        
-        // Also copy into dist web folders if present
-        const copyDists = ['dist', 'dist-parent', 'dist-kid'];
-        for (const d of copyDists) {
-          const dirPath = path.join(ROOT_DIR, d);
-          if (fs.existsSync(dirPath)) {
-            fs.writeFileSync(path.join(dirPath, 'server-url.txt'), publicUrl.trim(), 'utf8');
-          }
-        }
-      } catch (err) {
-        console.warn('⚠️ Lỗi ghi file server-url.txt:', err.message);
-      }
-
-      // 2. Auto-sync to GitHub so Apps can discover the PC server URL permanently
-      try {
-        console.log('\n📡 Đang tự động đồng bộ link máy chủ lên GitHub (server-url.txt)...');
-        execSync('git add server-url.txt server-url.json', { cwd: ROOT_DIR, stdio: 'ignore' });
-        const gitStatus = execSync('git status --porcelain server-url.txt server-url.json', { cwd: ROOT_DIR }).toString().trim();
-        if (gitStatus) {
-          execSync('git commit -m "chore: auto-sync server url to github"', { cwd: ROOT_DIR, stdio: 'ignore' });
-          execSync('git push origin main', { cwd: ROOT_DIR, stdio: 'ignore' });
-          console.log('✅ ĐÃ ĐỒNG BỘ THÀNH CÔNG LÊN GITHUB! Cả 2 App sẽ tự kết nối tự động 100%.\n');
-        } else {
-          console.log('✅ Link máy chủ trên GitHub đã đồng bộ mới nhất.\n');
-        }
-      } catch (gitErr) {
-        console.warn('⚠️ Không thể tự động push lên GitHub (vẫn dùng link 4G trực tiếp bình thường):', gitErr.message);
-      }
-
-      console.log('================================================================');
-      console.log('  🎉 TẤT CẢ ĐÃ SẴN SÀNG! CÁC ĐƯỜNG LINK TRUY CẬP CỦA BẠN:');
-      console.log('================================================================');
-      console.log('\n🌐 1. LINK ỨNG DỤNG CHA MẸ (TRÊN ĐIỆN THOẠI HOẶC MÁY TÍNH):');
-      console.log(`   👉 Trên điện thoại (4G):   ${publicUrl}/parent.html`);
-      console.log(`   👉 Trên máy tính này (PC): http://localhost:${PORT}/parent.html`);
-      console.log(`   📥 Tải App Cha Mẹ (APK):   ${publicUrl}/download/parent`);
-
-      console.log('\n📱 2. LINK ỨNG DỤNG CON CÁI:');
-      console.log(`   👉 Mở App Con trên điện thoại và gõ mã 6 số từ Bố Mẹ là xong!`);
-      console.log(`   👉 Hoặc mở trên web:       ${publicUrl}/kid.html`);
-      console.log(`   📥 Tải App Con (APK):      ${publicUrl}/download/kid`);
-
-      console.log('\n📡 3. TRẠM ĐỒNG BỘ TỰ ĐỘNG QUA GITHUB:');
-      console.log(`   👉 URL máy chủ hiện tại:    ${publicUrl}`);
-      console.log(`   👉 Trạng thái:              🟢 Đã nạp và tự động nhận diện 100%`);
-
-      if (localIps.length > 0) {
-        console.log('\n🏠 LINK NỘI BỘ WI-FI TRONG NHÀ:');
-        localIps.forEach(ip => {
-          console.log(`   👉 http://${ip}:${PORT}/parent.html`);
-        });
-      }
-
-      console.log('\n================================================================');
-      console.log('💡 HƯỚNG DẪN DÙNG:');
-      console.log('• Giữ nguyên cửa sổ này để máy chủ tiếp tục chạy.');
-      console.log('• Trên máy con: Chỉ cần gõ mã 6 số từ máy bố mẹ ➔ Kết nối thành công ngay!');
-      console.log('• Nhấn [Ctrl + C] hoặc đóng cửa sổ khi muốn dừng máy chủ.');
-      console.log('================================================================\n');
+  if (existingUrl) {
+    process.stdout.write(`   Kiểm tra kết nối URL đã lưu: ${existingUrl}... `);
+    isExistingUrlAlive = await checkUrlHealth(existingUrl);
+    if (isExistingUrlAlive) {
+      console.log('🟢 ONLINE!');
+      publicUrl = existingUrl;
+    } else {
+      console.log('⚪ Không phản hồi (sẽ cấp URL mới).');
     }
-  };
-
-  tunnelProcess.stdout.on('data', handleTunnelOutput);
-  tunnelProcess.stderr.on('data', handleTunnelOutput);
-
-  tunnelProcess.on('exit', () => {
-    console.log(`[Cloudflare Tunnel] Đã ngắt kết nối.`);
-  });
-
-  // Handle Clean Shutdown
-  function cleanup() {
-    console.log('\n\n[Đang tắt] Đang đóng kết nối 4G và dọn dẹp...');
-    try { if (tunnelProcess) tunnelProcess.kill('SIGINT'); } catch (_) {}
-    try { if (serverProcess) serverProcess.kill('SIGINT'); } catch (_) {}
-    setTimeout(() => process.exit(0), 500);
   }
 
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
-  process.on('exit', cleanup);
+  // If tunnel is managed by PM2 and already alive
+  if (!isExistingUrlAlive) {
+    if (isPm2ProcessOnline('quan-ly-con-tunnel')) {
+      console.log('   Khởi động lại đường hầm PM2 (quan-ly-con-tunnel)...');
+      try {
+        execSync('npx pm2 restart quan-ly-con-tunnel', { stdio: 'ignore' });
+      } catch (_) {}
+    }
+
+    // Wait up to 15s for tunnel-manager or fresh URL
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const candidateUrl = readStoredUrl();
+      if (candidateUrl && candidateUrl !== existingUrl) {
+        const ok = await checkUrlHealth(candidateUrl);
+        if (ok) {
+          publicUrl = candidateUrl;
+          isExistingUrlAlive = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // If still no healthy tunnel, spawn directly
+  if (!isExistingUrlAlive) {
+    const cfPath = findCloudflared();
+    if (cfPath) {
+      console.log('   Khởi chạy trực tiếp cloudflared.exe...');
+      tunnelSpawned = spawn(cfPath, ['tunnel', '--url', `http://localhost:${PORT}`], {
+        cwd: ROOT_DIR,
+        windowsHide: true,
+      });
+
+      tunnelSpawned.stdout.on('data', (d) => {
+        const text = d.toString();
+        const m = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
+        if (m && !publicUrl) {
+          publicUrl = m[0];
+          updateDiscoveryFiles(publicUrl);
+        }
+      });
+      tunnelSpawned.stderr.on('data', (d) => {
+        const text = d.toString();
+        const m = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
+        if (m && !publicUrl) {
+          publicUrl = m[0];
+          updateDiscoveryFiles(publicUrl);
+        }
+      });
+
+      // Wait up to 15s for URL
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 600));
+        if (publicUrl) break;
+      }
+    }
+  }
+
+  if (publicUrl) {
+    console.log(`[2/2] ✅ Đường truyền Internet 4G đang hoạt động hoàn hảo!`);
+  } else {
+    console.log(`[2/2] ⚠️ Chưa thể kết nối 4G Tunnel. Máy chủ vẫn hoạt động tốt trong mạng Wi-Fi LAN.`);
+  }
+
+  // Display access banner
+  displayBanner(publicUrl);
+
+  // Setup interactive key listener
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
+
+  process.stdin.on('keypress', (str, key) => {
+    if (key.ctrl && key.name === 'c') {
+      shutdown();
+    } else if (key.name === 'o') {
+      console.log('👉 Đang mở Giao diện Quản trị Máy chủ: http://localhost:' + PORT + '/portal');
+      openBrowser(`http://localhost:${PORT}/portal`);
+    } else if (key.name === 'p') {
+      console.log('👉 Đang mở Ứng dụng Cha Mẹ: http://localhost:' + PORT + '/parent.html');
+      openBrowser(`http://localhost:${PORT}/parent.html`);
+    }
+  });
+
+  // Watchdog Loop: Keeps process alive and logs subtle pulse every 15s
+  let cycle = 0;
+  const watchdog = setInterval(async () => {
+    cycle++;
+    const sOk = await checkServerRunning(PORT);
+    const tOk = publicUrl ? await checkUrlHealth(publicUrl) : false;
+    const timeStr = new Date().toLocaleTimeString('vi-VN');
+
+    // Subtle single-line progress update
+    const sStatus = sOk ? '🟢 Server: OK' : '🔴 Server: ERROR';
+    const tStatus = tOk ? '🟢 4G: OK' : (publicUrl ? '🟡 4G: Chậm' : '⚪ 4G: Tắt');
+    process.stdout.write(`\r[${timeStr}] ${sStatus} (Port ${PORT}) | ${tStatus} | [O]: Mở Portal | [P]: Mở App Cha | [Ctrl+C]: Đóng `);
+  }, 10000);
+
+  function shutdown() {
+    clearInterval(watchdog);
+    console.log('\n\n[Đang tắt] Đóng cửa sổ giám sát...');
+    if (serverSpawned) {
+      try { serverSpawned.kill('SIGINT'); } catch (_) {}
+    }
+    if (tunnelSpawned) {
+      try { tunnelSpawned.kill('SIGINT'); } catch (_) {}
+    }
+    const isPm2 = isPm2ProcessOnline('quan-ly-con-server');
+    if (isPm2) {
+      console.log('ℹ️ Máy chủ ngầm (PM2) vẫn tiếp tục duy trì hoạt động 24/7.');
+    }
+    process.exit(0);
+  }
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 main().catch(err => {
-  console.error('Lỗi khởi động:', err);
+  console.error('Lỗi:', err.message);
 });
