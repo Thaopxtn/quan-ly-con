@@ -725,6 +725,9 @@ const server = http.createServer(async (req, res) => {
     if (target === 'chats' || target === 'all') writeDb('chats', []);
     if (target === 'commands' || target === 'all') writeDb('commands', []);
 
+    // BUG-14 FIX: Thông báo cho client biết dữ liệu đã bị xóa
+    broadcastRealtime('data_cleared', { target, clearedAt: Date.now() });
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, cleared: target }));
     return;
@@ -800,10 +803,13 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ success: true, message: 'Máy chủ đang khởi động lại...' }));
     setTimeout(() => {
       try {
+        // BUG-09 FIX: Flush tất cả dữ liệu đang chờ trước khi thoát để tránh mất dữ liệu
+        flushDirtyDbsSync();
         exec('pm2 restart quan-ly-con-server', { cwd: ROOT_DIR }, (err) => {
-          if (err) process.exit(0);
+          if (err) { flushDirtyDbsSync(); process.exit(0); }
         });
       } catch (_) {
+        flushDirtyDbsSync();
         process.exit(0);
       }
     }, 600);
@@ -897,6 +903,11 @@ const server = http.createServer(async (req, res) => {
           if (childExists) {
             const settingsDb = readDb('settings') || {};
             const cur = settingsDb[data.childId] || {};
+            // BUG-01 FIX: Bảo vệ isLocked khỏi bị telemetry cũ ghi đè sau khi ACK vừa cập nhật
+            // Chỉ nhận isLocked từ telemetry nếu telemetry mới hơn lần ACK/settings update gần nhất
+            const telemetryTime = typeof data.timestamp === 'number' ? data.timestamp : Date.now();
+            const settingsLastUpdate = cur.updatedAt || 0;
+            const isLockSafeToUpdate = !cur.updatedAt || telemetryTime > settingsLastUpdate;
             settingsDb[data.childId] = {
               ...cur,
               childId: data.childId,
@@ -909,9 +920,9 @@ const server = http.createServer(async (req, res) => {
               activeOpenedApp: data.activeOpenedApp || cur.activeOpenedApp,
               screenTimeUsedMinutes: data.screenTimeUsedMinutes != null ? data.screenTimeUsedMinutes : cur.screenTimeUsedMinutes,
               hasUsageAccessPermission: data.hasUsageAccessPermission != null ? data.hasUsageAccessPermission : cur.hasUsageAccessPermission,
-              isLocked: data.isLocked != null ? data.isLocked : cur.isLocked,
-              lockType: data.lockType != null ? data.lockType : cur.lockType,
-              lockTitle: data.lockTitle != null ? data.lockTitle : cur.lockTitle,
+              isLocked: isLockSafeToUpdate ? (data.isLocked != null ? data.isLocked : cur.isLocked) : cur.isLocked,
+              lockType: isLockSafeToUpdate ? (data.lockType != null ? data.lockType : cur.lockType) : cur.lockType,
+              lockTitle: isLockSafeToUpdate ? (data.lockTitle != null ? data.lockTitle : cur.lockTitle) : cur.lockTitle,
               updatedAt: Date.now(),
             };
             writeDb('settings', settingsDb);
@@ -932,6 +943,9 @@ const server = http.createServer(async (req, res) => {
                   if (data.battery != null) ch.battery = data.battery;
                   if (data.deviceName) ch.deviceName = data.deviceName;
                   if (data.model) ch.model = data.model;
+                  // BUG-12 FIX: Đồng bộ isLocked vào children.json để khớp với child_settings.json
+                  if (data.isLocked != null) ch.isLocked = data.isLocked;
+                  if (data.lockType != null) ch.lockType = data.lockType;
                   matched = true;
                 }
               }
@@ -1009,6 +1023,22 @@ const server = http.createServer(async (req, res) => {
       const childId = parsedUrl.searchParams.get('childId');
       const status = parsedUrl.searchParams.get('status');
       const commands = readDb('commands');
+
+      // BUG-11 FIX: Auto-expire lệnh pending quá 5 phút để tránh thực thi lệnh cũ
+      const CMD_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút
+      const now = Date.now();
+      let expiredAny = false;
+      for (const cmd of commands) {
+        if (cmd.status === 'pending' && cmd.timestamp && (now - cmd.timestamp > CMD_TIMEOUT_MS)) {
+          cmd.status = 'timeout';
+          cmd.expiredAt = new Date().toISOString();
+          expiredAny = true;
+        }
+      }
+      if (expiredAny) {
+        writeDb('commands', commands);
+      }
+
       let filtered = childId ? commands.filter(c => c.childId === childId) : commands;
       if (status) {
         filtered = filtered.filter(c => c.status === status);
@@ -1579,6 +1609,14 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'Pairing session not found or expired' }));
         return;
       }
+      // BUG-10 FIX: Kiểm tra hạn sử dụng mã ghép đôi
+      if (session.expiresAt && Date.now() > session.expiresAt && session.status !== 'paired') {
+        delete pairings[code];
+        writeDb('pairings', pairings);
+        res.writeHead(410, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Mã ghép đôi đã hết hạn. Vui lòng tạo mã mới từ App Cha Mẹ.' }));
+        return;
+      }
 
       session.status = 'paired';
       session.connectedAt = Date.now();
@@ -1615,6 +1653,22 @@ const server = http.createServer(async (req, res) => {
         childrenDb[parentId].push(childData);
       }
       writeDb('children', childrenDb);
+
+      // BUG-06 FIX: Khởi tạo entry mặc định trong child_settings.json khi ghép đôi
+      // để App Cha Mẹ có thể đọc settings ngay mà không cần chờ telemetry đầu tiên
+      const settingsDb = readDb('settings') || {};
+      if (!settingsDb[session.childId]) {
+        settingsDb[session.childId] = {
+          childId: session.childId,
+          parentId,
+          isLocked: false,
+          lockChallenge: { isLocked: false, lockType: 'none', title: '', description: '' },
+          screenTimeLimitMinutes: 135,
+          smartRoutines: { mealtimeLock: false, bedtimeLock: false },
+          updatedAt: Date.now(),
+        };
+        writeDb('settings', settingsDb);
+      }
 
       broadcastRealtime('pairing_connected', {
         code,
@@ -1848,7 +1902,28 @@ const server = http.createServer(async (req, res) => {
             pairingChanged = true;
           }
         }
-        // Cleanup telemetry history
+        // BUG-07 FIX: Ghi lại pairings.json sau khi xóa entries
+        if (pairingChanged) {
+          writeDb('pairings', pairingsDb);
+        }
+        // BUG-07 FIX: Cleanup shares.json (chia sẻ quyền giám sát)
+        const sharesDb = readDb('shares');
+        let shareChanged = false;
+        for (const [code, s] of Object.entries(sharesDb)) {
+          if (s && s.childId === childId) {
+            delete sharesDb[code];
+            shareChanged = true;
+          }
+        }
+        if (shareChanged) {
+          writeDb('shares', sharesDb);
+        }
+        // BUG-07 FIX: Cleanup pc_control.json (điều khiển PC con)
+        const pcDb = readDb('pc');
+        if (pcDb[childId]) {
+          delete pcDb[childId];
+          writeDb('pc', pcDb);
+        }
         const telemetryDb = readDb('telemetry');
         const cleanTelemetry = telemetryDb.filter(t => t.childId !== childId);
         if (cleanTelemetry.length !== telemetryDb.length) {

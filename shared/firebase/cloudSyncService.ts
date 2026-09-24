@@ -373,7 +373,7 @@ export function subscribeChildSettingsFromCloud(
     if (!rawVal) return;
     const now = Date.now();
     const updateTime = typeof rawVal.updatedAt === 'number' ? rawVal.updatedAt : 0;
-    if (updateTime && updateTime < lastSeenSettingsTime) {
+    if (!updateTime || updateTime < lastSeenSettingsTime) {
       return; // Discard older/stale settings update
     }
     if (updateTime) {
@@ -433,21 +433,7 @@ export function subscribeChildSettingsFromCloud(
       unsubs.push(u1);
     } catch (err) {}
 
-    // 2. Parent authenticated path fallback
-    if (parentId && parentId !== "family_primary" && auth?.currentUser && auth.currentUser.uid === parentId) {
-      try {
-        const u3 = rtdbOnValue(
-          rtdbRef(rtdb, `users/${parentId}/children/${childId}/settings`),
-          (snap) => {
-            if (snap.exists()) {
-              handleSettingsUpdate(snap.val());
-            }
-          },
-          () => {}
-        );
-        unsubs.push(u3);
-      } catch (err) {}
-    }
+
   }
 
   // Firestore listener fallback

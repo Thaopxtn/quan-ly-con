@@ -53,7 +53,9 @@ export const ParentWebPortal: React.FC = () => {
   const { state, switchChild, lockChildDeviceNow, buzzKidPhone, markChatAlertsAsRead } = useAppState();
   const { children, selectedChildId, child, alerts, activeSOS } = state;
   const currentParent = getCurrentParentAccount();
-  const currentChild = children.find((c) => c.id === selectedChildId) || children[0] || child;
+  const currentChild = children.find((c) => c.id === selectedChildId) 
+    || children.filter(c => c.status === 'online').sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
+    || children[0] || child;
 
   const unreadAlertCount = alerts.filter((a) => !a.isRead).length;
   const unreadChatCount = alerts.filter((a) => !a.isRead && (a.id.startsWith('chat_') || a.type === 'parent_message')).length;

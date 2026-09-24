@@ -1010,6 +1010,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
 
   // Remote Control Commands Execution (Decoupled from local state changes to prevent re-render loops)
+  const processedCmdIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!activeParentId || !targetChildId) return;
 
@@ -1024,6 +1025,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       const curPairedInfo = pairedInfoRef.current;
 
       const cmdId = cmd.id || `cmd_${cmd.timestamp || Date.now()}`;
+      
+      if (processedCmdIdsRef.current.has(cmdId)) return;
+      processedCmdIdsRef.current.add(cmdId);
+      if (processedCmdIdsRef.current.size > 200) {
+        const first = processedCmdIdsRef.current.values().next().value;
+        if (first) processedCmdIdsRef.current.delete(first);
+      }
 
       // 1. Immediately acknowledge that child phone has received the command
       sendRemoteCommandAck(activeParentId, targetChildId, {

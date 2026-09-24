@@ -432,6 +432,7 @@ export class ServerApiClient {
         'pairing_created',
         'pairing_connected',
         'children_updated',
+        'child_deleted',
         'safe_zones',
         'live_tracking',
         'share_created',

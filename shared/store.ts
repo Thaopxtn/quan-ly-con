@@ -3022,6 +3022,16 @@ export const useAppState = () => {
       lockType,
     };
 
+    if (!isKidAppMode()) {
+      dispatchRemoteCommand('lock_now', {
+        lockType,
+        title: challengeData.title,
+        description: challengeData.description,
+        challengeData: fullState,
+      }, state.selectedChildId, `Khóa thử thách ${lockType}`);
+      return;
+    }
+
     const updatedChildSettings = { ...state.childSettings };
     const curChildId = state.selectedChildId || getActiveChildId();
     if (curChildId && updatedChildSettings[curChildId]) {
@@ -3060,22 +3070,16 @@ export const useAppState = () => {
       },
       childSettings: updatedChildSettings,
     }, curChildId);
-    eventBus.publish('LOCK_CHALLENGE_UPDATED', fullState, 'parent');
-    const parentId = getActiveParentId();
-    const targetChildId = state.selectedChildId;
-    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-    if (parentId && targetChildId && !isKidAppMode()) {
-      sendRemoteCommandToKid(parentId, targetChildId, 'lock_now', {
-        lockType,
-        title: challengeData.title,
-        description: challengeData.description,
-        challengeData: fullState,
-      }, targetChild?.name).catch(() => {});
-    }
+    eventBus.publish('LOCK_CHALLENGE_UPDATED', fullState, 'child');
   };
 
   const unlockDevice = (targetChildIdParam?: string) => {
     const curChildId = targetChildIdParam || (isKidAppMode() ? getKidDevicePairedInfo()?.childId : null) || state.selectedChildId || getActiveChildId();
+    if (!isKidAppMode()) {
+      dispatchRemoteCommand('unlock_now', undefined, curChildId, 'Mở khóa thiết bị 🔓');
+      return;
+    }
+
     const updatedLock: LockChallengeState = {
       ...state.lockChallenge,
       isLocked: false,
@@ -3131,25 +3135,8 @@ export const useAppState = () => {
       broadcastMessage: null,
       childSettings: updatedChildSettings,
     }, curChildId);
-    eventBus.publish('LOCK_CHALLENGE_UPDATED', updatedLock, 'parent');
-    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
-    const parentId = getActiveParentId();
-    const targetChildId = curChildId || state.selectedChildId;
-    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
-    if (parentId && targetChildId && !isKidAppMode()) {
-      sendRemoteCommandToKid(parentId, targetChildId, 'unlock_now', undefined, targetChild?.name).catch(() => {});
-      syncChildSettingsToCloud(parentId, targetChildId, {
-        isLocked: false,
-        lockChallenge: updatedLock,
-        smartRoutines: {
-          ...(updatedChildSettings[targetChildId]?.smartRoutines || {}),
-          mealtimeLock: false,
-          bedtimeLock: false,
-        },
-        screenTimeLimitMinutes: updatedChildSettings[targetChildId]?.screenTimeLimitMinutes || 135,
-        broadcastMessage: null,
-      }, targetChild?.name).catch(() => {});
-    }
+    eventBus.publish('LOCK_CHALLENGE_UPDATED', updatedLock, 'child');
+    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'child');
   };
 
   const solveChallengeOnKid = () => {
@@ -4653,6 +4640,20 @@ export const useAppState = () => {
   };
 
   const lockAllChildrenForMealtime = () => {
+    if (!isKidAppMode()) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          dispatchRemoteCommand('lock_now', {
+            lockType: 'mealtime',
+            title: 'Giờ cơm gia đình 🍽️',
+            description: 'Cả nhà cùng quây quần bên mâm cơm nhé con!',
+          }, c.id, 'Giờ cơm gia đình 🍽️');
+        }
+      });
+      return;
+    }
+
     const updatedChildSettings = { ...state.childSettings };
     const updatedRoutines = { ...state.smartRoutines, mealtimeLock: true };
     const lock: LockChallengeState = {
@@ -4678,34 +4679,26 @@ export const useAppState = () => {
       childSettings: updatedChildSettings,
     };
     saveAndNotify(nextState);
-    eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'parent');
-    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
-    eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'mealtimeLock', enabled: true }, 'parent');
-
-    const parentId = getActiveParentId();
-    if (parentId && !isKidAppMode()) {
-      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
-      activeChildren.forEach((c) => {
-        if (c && c.id) {
-          sendRemoteCommandToKid(parentId, c.id, 'lock_now', {
-            lockType: 'mealtime',
-            title: lock.title,
-            description: lock.description,
-          }, c.name).catch(() => {});
-          syncChildSettingsToCloud(parentId, c.id, {
-            isLocked: true,
-            lockChallenge: lock,
-            smartRoutines: {
-              ...(updatedChildSettings[c.id]?.smartRoutines || {}),
-              mealtimeLock: true,
-            },
-          }, c.name).catch(() => {});
-        }
-      });
-    }
+    eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'child');
+    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'child');
+    eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'mealtimeLock', enabled: true }, 'child');
   };
 
   const lockAllChildrenForBedtime = () => {
+    if (!isKidAppMode()) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          dispatchRemoteCommand('lock_now', {
+            lockType: 'bedtime',
+            title: 'Đã đến giờ đi ngủ 🌙',
+            description: 'Chúc con ngủ thật ngon và mơ đẹp!',
+          }, c.id, 'Đã đến giờ đi ngủ 🌙');
+        }
+      });
+      return;
+    }
+
     const updatedChildSettings = { ...state.childSettings };
     const updatedRoutines = { ...state.smartRoutines, bedtimeLock: true };
     const lock: LockChallengeState = {
@@ -4731,34 +4724,22 @@ export const useAppState = () => {
       childSettings: updatedChildSettings,
     };
     saveAndNotify(nextState);
-    eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'parent');
-    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
-    eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'bedtimeLock', enabled: true }, 'parent');
-
-    const parentId = getActiveParentId();
-    if (parentId && !isKidAppMode()) {
-      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
-      activeChildren.forEach((c) => {
-        if (c && c.id) {
-          sendRemoteCommandToKid(parentId, c.id, 'lock_now', {
-            lockType: 'bedtime',
-            title: lock.title,
-            description: lock.description,
-          }, c.name).catch(() => {});
-          syncChildSettingsToCloud(parentId, c.id, {
-            isLocked: true,
-            lockChallenge: lock,
-            smartRoutines: {
-              ...(updatedChildSettings[c.id]?.smartRoutines || {}),
-              bedtimeLock: true,
-            },
-          }, c.name).catch(() => {});
-        }
-      });
-    }
+    eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'child');
+    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'child');
+    eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'bedtimeLock', enabled: true }, 'child');
   };
 
   const unlockAllChildren = () => {
+    if (!isKidAppMode()) {
+      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
+      activeChildren.forEach((c) => {
+        if (c && c.id) {
+          dispatchRemoteCommand('unlock_now', undefined, c.id, 'Mở khóa tất cả thiết bị 🔓');
+        }
+      });
+      return;
+    }
+
     const updatedChildSettings = { ...state.childSettings };
     const lock: LockChallengeState = {
       isLocked: false,
@@ -4800,30 +4781,9 @@ export const useAppState = () => {
       childSettings: updatedChildSettings,
     };
     saveAndNotify(nextState);
-    eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'parent');
-    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'parent');
-    eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'unlockAll' }, 'parent');
-
-    const parentId = getActiveParentId();
-    if (parentId && !isKidAppMode()) {
-      const activeChildren = state.children.length > 0 ? state.children : (state.child ? [state.child] : []);
-      activeChildren.forEach((c) => {
-        if (c && c.id) {
-          sendRemoteCommandToKid(parentId, c.id, 'unlock_now', undefined, c.name).catch(() => {});
-          syncChildSettingsToCloud(parentId, c.id, {
-            screenTimeLimitMinutes: updatedChildSettings[c.id]?.screenTimeLimitMinutes,
-            isLocked: false,
-            lockChallenge: lock,
-            smartRoutines: {
-              ...(updatedChildSettings[c.id]?.smartRoutines || {}),
-              mealtimeLock: false,
-              bedtimeLock: false,
-            },
-            broadcastMessage: null,
-          }, c.name).catch(() => {});
-        }
-      });
-    }
+    eventBus.publish('LOCK_CHALLENGE_UPDATED', lock, 'child');
+    eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'child');
+    eventBus.publish('FAMILY_ACTION_TRIGGERED', { action: 'unlockAll' }, 'child');
   };
 
   const toggleStudyModeAll = (enable?: boolean) => {

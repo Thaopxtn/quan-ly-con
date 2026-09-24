@@ -403,7 +403,7 @@ export function rtdbOnValue(
           callback(snap);
         }
       }).catch(() => {});
-    }, 2000);
+    }, 3000);
   }
 
   return () => {
