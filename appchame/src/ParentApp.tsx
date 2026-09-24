@@ -24,6 +24,7 @@ const PcControlCenter = lazy(() => import('./modules/pc/PcControlCenter').then((
 
 import { SystemNotificationBanner } from './components/SystemNotificationBanner';
 import { CommandFeedbackBanner } from './components/CommandFeedbackBanner';
+import { ConnectionStatusBar } from './components/ConnectionStatusBar';
 import { notifyEmergencyAlert, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
 import { PrivacyPolicyModal } from '../../shared/components/PrivacyPolicyModal';
 import { OfflineBanner } from '@shared/components/OfflineBanner';
@@ -331,6 +332,9 @@ export const ParentApp: React.FC<ParentAppProps> = ({
           style={{ height: 'var(--status-bar-height, 42px)' }}
         />
       )}
+
+      {/* Real-time Multi-Device & Server Connection Indicator */}
+      <ConnectionStatusBar />
 
       {/* Standard Non-blocking Floating Emergency Alert Banner */}
       {(() => {

@@ -32,6 +32,7 @@ import {
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
 import { FamilyChatModal } from '../../shared/components/FamilyChatModal';
+import { ConnectionStatusBar } from './components/ConnectionStatusBar';
 
 export const ParentWebPortal: React.FC = () => {
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -341,13 +342,9 @@ export const ParentWebPortal: React.FC = () => {
 
           {/* Center/Right Status & Quick Action Controls */}
           <div className="flex items-center space-x-3">
-            {/* Cloud Realtime Status Indicator */}
-            <div className="flex items-center space-x-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <span>Cloud Realtime Online</span>
+            {/* Interactive Realtime Connection Status */}
+            <div className="max-w-md">
+              <ConnectionStatusBar />
             </div>
 
             {/* Debug Logs Button */}
