@@ -463,17 +463,18 @@ export function subscribeChildSettingsFromCloud(
 export interface QueuedTelemetryItem {
   id: string;
   timestamp: number;
-  battery: number;
-  speed: number;
-  lat: number;
-  lng: number;
-  currentAddress: string;
+  battery?: number;
+  speed?: number;
+  lat?: number;
+  lng?: number;
+  currentAddress?: string;
   isScreenOn?: boolean;
   screenState?: 'active' | 'screen_off' | 'background';
   appStatus?: 'active_in_app' | 'in_background' | 'screen_off';
   syncMode?: 'realtime' | 'balanced' | 'power_saving';
   sensors?: any;
   network?: any;
+  mediaPlayback?: any;
   screenTimeUsedMinutes?: number;
 }
 
@@ -600,17 +601,18 @@ export async function uploadChildTelemetryToCloud(
   parentId: string,
   childId: string,
   telemetry: {
-    battery: number;
-    speed: number;
-    lat: number;
-    lng: number;
-    currentAddress: string;
+    battery?: number;
+    speed?: number;
+    lat?: number;
+    lng?: number;
+    currentAddress?: string;
     isScreenOn?: boolean;
     screenState?: 'active' | 'screen_off' | 'background';
     appStatus?: 'active_in_app' | 'in_background' | 'screen_off';
     syncMode?: 'realtime' | 'balanced' | 'power_saving';
     sensors?: any;
     network?: any;
+    mediaPlayback?: any;
     screenTimeUsedMinutes?: number;
     activeOpenedApp?: string;
     installedAppsCount?: number;

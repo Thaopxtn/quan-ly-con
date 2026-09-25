@@ -61,6 +61,43 @@ export interface RealInstalledApp {
   isSystem?: boolean;
 }
 
+export interface NativeNetworkInfoResult {
+  wifiSSID: string;
+  wifiSignalDbm: number;
+  wifiConnected: boolean;
+  carrierName: string;
+  cellType: '2G' | '3G' | '4G' | '5G' | 'WiFi' | 'N/A';
+  cellBars: number;
+  cellConnected: boolean;
+  nearbyWifis: Array<{
+    ssid: string;
+    signal: number;
+    isConnected: boolean;
+    isSecured: boolean;
+  }>;
+  nearbyBluetooth: Array<{
+    name: string;
+    rssi: number;
+    isPaired: boolean;
+    type: 'phone' | 'headphone' | 'watch' | 'speaker' | 'unknown';
+  }>;
+}
+
+export interface NativeSensorDataResult {
+  hasLightSensor: boolean;
+  hasAccelSensor: boolean;
+  hasGyroSensor: boolean;
+  stepCount: number;
+  lightLux: number;
+  pressureHpa: number;
+  proximityNear: boolean;
+}
+
+export interface NativeMediaStatusResult {
+  isPlaying: boolean;
+  volume: number;
+}
+
 export interface KidPermissionsPluginInterface {
   checkPermissions(): Promise<KidPermissionsStatus>;
   openPermissionSettings(options: { type: PermissionSettingType }): Promise<{ success: boolean; type?: string; fallback?: boolean }>;
@@ -85,6 +122,9 @@ export interface KidPermissionsPluginInterface {
   getUsageStats(): Promise<{ isGranted: boolean; totalMinutesToday: number; appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }> }>;
   getHealthData(): Promise<{ sensorAvailable: boolean; dailySteps: number; isActivityRecognitionGranted: boolean }>;
   getBatteryInfo(): Promise<{ level: number; isCharging: boolean }>;
+  getNetworkInfo(): Promise<NativeNetworkInfoResult>;
+  getSensorData(): Promise<NativeSensorDataResult>;
+  getMediaStatus(): Promise<NativeMediaStatusResult>;
   requestAllAppPermissions(): Promise<{ requested: boolean }>;
   addListener(
     eventName: 'screenStateChange',
@@ -480,5 +520,98 @@ export async function getNativeBatteryInfo(): Promise<{ level: number; isChargin
   }
 
   return { level: 100, isCharging: false };
+}
+
+export async function getNativeNetworkInfo(): Promise<NativeNetworkInfoResult> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getNetworkInfo();
+      if (res && res.wifiSSID !== undefined) {
+        return {
+          wifiSSID: res.wifiSSID || 'Chưa kết nối',
+          wifiSignalDbm: typeof res.wifiSignalDbm === 'number' ? res.wifiSignalDbm : -100,
+          wifiConnected: Boolean(res.wifiConnected),
+          carrierName: res.carrierName || 'Mạng di động',
+          cellType: res.cellType || '4G',
+          cellBars: typeof res.cellBars === 'number' ? res.cellBars : 0,
+          cellConnected: Boolean(res.cellConnected),
+          nearbyWifis: Array.isArray(res.nearbyWifis) ? res.nearbyWifis : [],
+          nearbyBluetooth: Array.isArray(res.nearbyBluetooth) ? res.nearbyBluetooth : [],
+        };
+      }
+    } catch (err) {
+      console.warn('getNativeNetworkInfo error:', err);
+    }
+  }
+
+  // Web / Simulator fallback
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  const conn = typeof navigator !== 'undefined' ? (navigator as any)?.connection : null;
+  const effType = conn?.effectiveType || '4g';
+  const isWifi = conn?.type === 'wifi' || (!conn?.type && isOnline);
+
+  return {
+    wifiSSID: isWifi && isOnline ? 'WiFi Trình duyệt Web' : 'Chưa kết nối',
+    wifiSignalDbm: isWifi && isOnline ? -52 : -100,
+    wifiConnected: isWifi && isOnline,
+    carrierName: isOnline ? 'Trình duyệt Web (Mạng LAN)' : 'Không có kết nối',
+    cellType: isWifi ? 'WiFi' : (effType === '4g' ? '4G' : '3G'),
+    cellBars: isOnline ? 4 : 0,
+    cellConnected: isOnline,
+    nearbyWifis: [],
+    nearbyBluetooth: [],
+  };
+}
+
+export async function getNativeSensorData(): Promise<NativeSensorDataResult> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getSensorData();
+      if (res) {
+        return {
+          hasLightSensor: Boolean(res.hasLightSensor),
+          hasAccelSensor: Boolean(res.hasAccelSensor),
+          hasGyroSensor: Boolean(res.hasGyroSensor),
+          stepCount: typeof res.stepCount === 'number' ? res.stepCount : 0,
+          lightLux: typeof res.lightLux === 'number' ? res.lightLux : 250,
+          pressureHpa: typeof res.pressureHpa === 'number' ? res.pressureHpa : 1013.25,
+          proximityNear: Boolean(res.proximityNear),
+        };
+      }
+    } catch (err) {
+      console.warn('getNativeSensorData error:', err);
+    }
+  }
+
+  return {
+    hasLightSensor: false,
+    hasAccelSensor: typeof window !== 'undefined' && 'DeviceMotionEvent' in window,
+    hasGyroSensor: typeof window !== 'undefined' && 'DeviceOrientationEvent' in window,
+    stepCount: 0,
+    lightLux: 250,
+    pressureHpa: 1013.25,
+    proximityNear: false,
+  };
+}
+
+export async function getNativeMediaStatus(): Promise<NativeMediaStatusResult> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getMediaStatus();
+      if (res) {
+        return {
+          isPlaying: Boolean(res.isPlaying),
+          volume: typeof res.volume === 'number' ? res.volume : 50,
+        };
+      }
+    } catch (err) {
+      console.warn('getNativeMediaStatus error:', err);
+    }
+  }
+
+  return {
+    isPlaying: false,
+    volume: 50,
+  };
 }
 

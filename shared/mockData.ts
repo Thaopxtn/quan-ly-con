@@ -480,110 +480,52 @@ export const INITIAL_REDEMPTIONS: RewardRedemption[] = [
 ];
 
 // ─── Notifications ───────────────────────────────────────────
-export const INITIAL_NOTIFICATIONS: ChildNotification[] = [
-  {
-    id: 'notif_1',
-    appName: 'Zalo',
-    appIcon: '💬',
-    title: 'Ngọc Linh',
-    body: 'Ngọc Linh vừa gửi cho bạn một tin nhắn.',
-    time: '10:15',
-    isRead: false,
-  },
-  {
-    id: 'notif_2',
-    appName: 'YouTube',
-    appIcon: '▶️',
-    title: 'Đề xuất cho bạn',
-    body: '10 bài toán thú vị dành cho học sinh lớp 5',
-    time: '09:42',
-    isRead: false,
-  },
-  {
-    id: 'notif_3',
-    appName: 'Gmail',
-    appIcon: '📧',
-    title: 'Trường Tiểu học',
-    body: 'Thông báo lịch kiểm tra giữa kỳ môn Toán ngày 20/9',
-    time: '08:30',
-    isRead: true,
-  },
-  {
-    id: 'notif_4',
-    appName: 'Messenger',
-    appIcon: '🟣',
-    title: 'Nhóm Gia đình',
-    body: 'Mẹ: Con ăn cơm chưa?',
-    time: '08:00',
-    isRead: true,
-  },
-  {
-    id: 'notif_5',
-    appName: 'Hệ thống',
-    appIcon: '🔋',
-    title: 'Pin yếu',
-    body: 'Điện thoại còn 20% pin. Hãy sạc ngay.',
-    time: '07:55',
-    isRead: true,
-  },
-];
+export const INITIAL_NOTIFICATIONS: ChildNotification[] = [];
 
 // ─── Media Playback ──────────────────────────────────────────
 export const INITIAL_MEDIA_PLAYBACK: MediaPlaybackState = {
-  isPlaying: true,
-  trackTitle: 'Vì Sao Em Buồn',
-  artist: 'Đức Phúc',
-  album: 'Lost In Space',
-  artUrl: 'https://images.unsplash.com/photo-1614680376573-df3480f0c6ff?w=300&auto=format&fit=crop',
-  positionSeconds: 87,
-  durationSeconds: 234,
-  volume: 65,
-  appName: 'Zing MP3',
+  isPlaying: false,
+  trackTitle: 'Chưa có bài hát nào đang phát',
+  artist: 'Chưa phát media',
+  album: '',
+  artUrl: '',
+  positionSeconds: 0,
+  durationSeconds: 0,
+  volume: 50,
+  appName: 'Trình phát nhạc',
 };
 
 // ─── Network Info ────────────────────────────────────────────
 export const INITIAL_NETWORK_INFO: NetworkInfo = {
-  wifiSSID: 'Nha_Ong_Ba_2.4G',
-  wifiSignalDbm: -52,
-  wifiConnected: true,
-  cellBars: 3,
+  wifiSSID: 'Chưa kết nối',
+  wifiSignalDbm: -100,
+  wifiConnected: false,
+  carrierName: 'Mạng di động',
+  cellBars: 0,
   cellType: '4G',
-  cellConnected: true,
-  nearbyWifis: [
-    { ssid: 'Nha_Ong_Ba_2.4G', signal: -52, isConnected: true, isSecured: true },
-    { ssid: 'VNPTFiber_123', signal: -68, isConnected: false, isSecured: true },
-    { ssid: 'FPT_Telecom_5G', signal: -72, isConnected: false, isSecured: true },
-    { ssid: 'AndroidAP_7B2F', signal: -75, isConnected: false, isSecured: false },
-    { ssid: 'VNPT-HN-2E9A', signal: -81, isConnected: false, isSecured: true },
-    { ssid: 'CafeWifi_Guest', signal: -88, isConnected: false, isSecured: false },
-  ],
-  nearbyBluetooth: [
-    { name: 'AirPods Pro', rssi: -45, isPaired: true, type: 'headphone' },
-    { name: 'Mi Band 7', rssi: -58, isPaired: true, type: 'watch' },
-    { name: 'JBL Flip 5', rssi: -67, isPaired: false, type: 'speaker' },
-    { name: 'Galaxy A54', rssi: -72, isPaired: false, type: 'phone' },
-    { name: 'BLE Device', rssi: -85, isPaired: false, type: 'unknown' },
-  ],
+  cellConnected: false,
+  nearbyWifis: [],
+  nearbyBluetooth: [],
 };
 
 // ─── Sensor Values ───────────────────────────────────────────
 export const INITIAL_SENSOR_VALUES: SensorValues = {
-  accelX: 0.12,
-  accelY: 9.72,
-  accelZ: 0.34,
-  gyroX: 0.003,
-  gyroY: -0.007,
-  gyroZ: 0.001,
-  magnetX: 22.4,
-  magnetY: -14.8,
-  magnetZ: 41.2,
-  pitch: 85,
-  roll: 3,
-  yaw: 127,
-  pressureHpa: 1013.2,
-  lightLux: 320,
+  accelX: 0,
+  accelY: 9.8,
+  accelZ: 0,
+  gyroX: 0,
+  gyroY: 0,
+  gyroZ: 0,
+  magnetX: 0,
+  magnetY: 0,
+  magnetZ: 0,
+  pitch: 0,
+  roll: 0,
+  yaw: 0,
+  pressureHpa: 1013.25,
+  lightLux: 250,
   proximityNear: false,
-  stepCount: 2847,
+  stepCount: 0,
 };
 
 // ─── Alarms ──────────────────────────────────────────────────

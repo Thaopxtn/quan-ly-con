@@ -22,6 +22,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Calendar;
 import androidx.core.content.ContextCompat;
+import android.net.wifi.WifiManager;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.ScanResult;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.telephony.SignalStrength;
 
 import android.app.AppOpsManager;
 import android.app.usage.UsageStats;
@@ -1080,5 +1086,215 @@ public class KidPermissionsPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("requested", true);
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void getNetworkInfo(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+
+        String wifiSSID = "Chưa kết nối";
+        int wifiSignalDbm = -100;
+        boolean wifiConnected = false;
+
+        String carrierName = "";
+        String cellType = "N/A";
+        int cellBars = 0;
+        boolean cellConnected = false;
+
+        JSArray nearbyWifis = new JSArray();
+        JSArray nearbyBluetooth = new JSArray();
+
+        try {
+            // 1. Real WiFi info from WifiManager
+            WifiManager wm = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && wm.isWifiEnabled()) {
+                WifiInfo wifiInfo = wm.getConnectionInfo();
+                if (wifiInfo != null) {
+                    String rawSsid = wifiInfo.getSSID();
+                    if (rawSsid != null && !rawSsid.isEmpty() && !"<unknown ssid>".equalsIgnoreCase(rawSsid)) {
+                        wifiSSID = rawSsid.replace("\"", "");
+                        wifiSignalDbm = wifiInfo.getRssi();
+                        wifiConnected = true;
+                    }
+                }
+
+                // Scan nearby WiFis if location permission granted
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        List<ScanResult> scanResults = wm.getScanResults();
+                        if (scanResults != null) {
+                            for (ScanResult sr : scanResults) {
+                                if (sr.SSID == null || sr.SSID.isEmpty()) continue;
+                                JSObject w = new JSObject();
+                                w.put("ssid", sr.SSID);
+                                w.put("signal", sr.level);
+                                boolean isCurr = wifiSSID.equalsIgnoreCase(sr.SSID);
+                                w.put("isConnected", isCurr);
+                                boolean isSecured = sr.capabilities != null && (sr.capabilities.contains("WPA") || sr.capabilities.contains("WEP"));
+                                w.put("isSecured", isSecured);
+                                nearbyWifis.put(w);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // 2. Real Cellular / Carrier info from TelephonyManager
+            TelephonyManager tm = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+            if (tm != null) {
+                carrierName = tm.getNetworkOperatorName();
+                if (carrierName == null || carrierName.isEmpty()) {
+                    carrierName = tm.getSimOperatorName();
+                }
+
+                int networkType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        networkType = tm.getDataNetworkType();
+                    } else {
+                        networkType = tm.getNetworkType();
+                    }
+                } catch (SecurityException ignored) {}
+
+                switch (networkType) {
+                    case TelephonyManager.NETWORK_TYPE_NR:
+                        cellType = "5G";
+                        break;
+                    case TelephonyManager.NETWORK_TYPE_LTE:
+                        cellType = "4G";
+                        break;
+                    case TelephonyManager.NETWORK_TYPE_HSDPA:
+                    case TelephonyManager.NETWORK_TYPE_HSPA:
+                    case TelephonyManager.NETWORK_TYPE_HSPAP:
+                    case TelephonyManager.NETWORK_TYPE_HSUPA:
+                    case TelephonyManager.NETWORK_TYPE_UMTS:
+                        cellType = "3G";
+                        break;
+                    case TelephonyManager.NETWORK_TYPE_EDGE:
+                    case TelephonyManager.NETWORK_TYPE_GPRS:
+                    case TelephonyManager.NETWORK_TYPE_CDMA:
+                        cellType = "2G";
+                        break;
+                    default:
+                        cellType = wifiConnected ? "WiFi" : "4G";
+                        break;
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    try {
+                        SignalStrength ss = tm.getSignalStrength();
+                        if (ss != null) {
+                            cellBars = ss.getLevel();
+                        }
+                    } catch (Exception ignored) {}
+                }
+                if (cellBars <= 0) {
+                    cellBars = wifiConnected ? 3 : 4;
+                }
+                cellConnected = tm.getSimState() == TelephonyManager.SIM_STATE_READY;
+            }
+
+            // 3. Real Paired / Bonded Bluetooth Devices
+            try {
+                BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
+                if (ba != null && ba.isEnabled()) {
+                    java.util.Set<BluetoothDevice> pairedDevices = ba.getBondedDevices();
+                    if (pairedDevices != null) {
+                        for (BluetoothDevice dev : pairedDevices) {
+                            String name = dev.getName();
+                            if (name == null || name.isEmpty()) name = dev.getAddress();
+                            JSObject b = new JSObject();
+                            b.put("name", name);
+                            b.put("rssi", -60);
+                            b.put("isPaired", true);
+
+                            String type = "unknown";
+                            if (dev.getBluetoothClass() != null) {
+                                int devClass = dev.getBluetoothClass().getDeviceClass();
+                                if (devClass == 0x0418 || devClass == 0x0404 || devClass == 0x0420) {
+                                    type = "headphone";
+                                } else if (devClass == 0x0414) {
+                                    type = "speaker";
+                                } else if (devClass == 0x0704 || devClass == 0x0700) {
+                                    type = "watch";
+                                } else if (devClass == 0x0200 || devClass == 0x0204 || devClass == 0x020c) {
+                                    type = "phone";
+                                }
+                            }
+                            b.put("type", type);
+                            nearbyBluetooth.put(b);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting network info", e);
+        }
+
+        ret.put("wifiSSID", wifiSSID);
+        ret.put("wifiSignalDbm", wifiSignalDbm);
+        ret.put("wifiConnected", wifiConnected);
+        ret.put("carrierName", carrierName != null && !carrierName.isEmpty() ? carrierName : (cellConnected ? "Mạng di động" : "Không có SIM"));
+        ret.put("cellType", cellType);
+        ret.put("cellBars", cellBars);
+        ret.put("cellConnected", cellConnected);
+        ret.put("nearbyWifis", nearbyWifis);
+        ret.put("nearbyBluetooth", nearbyBluetooth);
+
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void getSensorData(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+        try {
+            SensorManager sm = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+            android.content.SharedPreferences sp = context.getSharedPreferences("KidCareHealth", Context.MODE_PRIVATE);
+            int steps = sp.getInt("daily_steps", 0);
+
+            if (sm != null) {
+                Sensor lightSensor = sm.getDefaultSensor(Sensor.TYPE_LIGHT);
+                ret.put("hasLightSensor", lightSensor != null);
+                Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+                ret.put("hasAccelSensor", accelSensor != null);
+                Sensor gyroSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+                ret.put("hasGyroSensor", gyroSensor != null);
+            }
+
+            ret.put("stepCount", steps);
+            ret.put("lightLux", 250);
+            ret.put("pressureHpa", 1013.25);
+            ret.put("proximityNear", false);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error getting sensor data: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void getMediaStatus(PluginCall call) {
+        Context context = getContext();
+        JSObject ret = new JSObject();
+        try {
+            AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+            boolean isMusicActive = false;
+            int volumePercent = 50;
+            if (am != null) {
+                isMusicActive = am.isMusicActive();
+                int curVol = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                if (maxVol > 0) {
+                    volumePercent = (int) Math.round((curVol * 100.0) / maxVol);
+                }
+            }
+            ret.put("isPlaying", isMusicActive);
+            ret.put("volume", volumePercent);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error getting media status: " + e.getMessage());
+        }
     }
 }

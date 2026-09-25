@@ -75,6 +75,9 @@ import {
   getNativeUsageStats,
   getNativeHealthData,
   getNativeBatteryInfo,
+  getNativeNetworkInfo,
+  getNativeSensorData,
+  getNativeMediaStatus,
   type RealInstalledApp,
 } from './services/nativePermissionsService';
 import { showSystemNotification, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
@@ -1065,11 +1068,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           wakeUpDevice().catch(() => {});
           (async () => {
             try {
-              const [hwStatus, usageStats, healthData, nativeBattery] = await Promise.all([
+              const [hwStatus, usageStats, healthData, nativeBattery, netInfo, nativeSensors, mediaStatus] = await Promise.all([
                 getNativeHardwareStatus().catch(() => ({ volume: 65, brightness: 70 })),
                 getNativeUsageStats().catch(() => ({ isGranted: false, totalMinutesToday: 0, appsUsage: [] })),
                 getNativeHealthData().catch(() => ({ sensorAvailable: false, dailySteps: 0, isActivityRecognitionGranted: false })),
                 getNativeBatteryInfo().catch(() => ({ level: -1, isCharging: false })),
+                getNativeNetworkInfo().catch(() => null),
+                getNativeSensorData().catch(() => null),
+                getNativeMediaStatus().catch(() => null),
               ]);
 
               const todayMins = usageStats.totalMinutesToday || screenTimeRef.current?.todayTotalMinutes || 0;
@@ -1080,11 +1086,17 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   magnetX: 0, magnetY: 0, magnetZ: 0,
                   pitch: 0, roll: 0, yaw: 0,
                   pressureHpa: 1013,
-                  lightLux: 350,
+                  lightLux: 250,
                   proximityNear: false,
                   stepCount: 0,
                 }),
-                stepCount: healthData.dailySteps || targetSettingsRef.current.sensorValues?.stepCount || 0,
+                ...sensorValuesRef.current,
+                stepCount: healthData.dailySteps || nativeSensors?.stepCount || targetSettingsRef.current.sensorValues?.stepCount || 0,
+                ...(nativeSensors ? {
+                  lightLux: nativeSensors.lightLux,
+                  pressureHpa: nativeSensors.pressureHpa,
+                  proximityNear: nativeSensors.proximityNear,
+                } : {}),
               };
 
               const curLat = typeof lastTelemetryRef.current?.lat === 'number' && Number.isFinite(lastTelemetryRef.current.lat)
@@ -1097,6 +1109,18 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 ? nativeBattery.level
                 : (typeof lastTelemetryRef.current?.battery === 'number' ? lastTelemetryRef.current.battery : (curChild.battery ?? 100));
               const curSpeed = lastTelemetryRef.current?.speed || 0;
+
+              const realMediaState = mediaStatus ? {
+                isPlaying: mediaStatus.isPlaying,
+                volume: mediaStatus.volume,
+                trackTitle: mediaStatus.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát',
+                artist: 'Máy con',
+                album: '',
+                artUrl: '',
+                positionSeconds: 0,
+                durationSeconds: 0,
+                appName: 'Media Player',
+              } : undefined;
 
               // 1. Upload fresh comprehensive telemetry
               await uploadChildTelemetryToCloud(
@@ -1113,6 +1137,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   deviceName: curPairedInfo?.deviceName,
                   model: curPairedInfo?.model,
                   sensors: freshSensors,
+                  network: netInfo || undefined,
+                  mediaPlayback: realMediaState,
                   screenTimeUsedMinutes: todayMins,
                   activeOpenedApp: typeof activeOpenedAppRef.current === 'object' && activeOpenedAppRef.current ? activeOpenedAppRef.current.name : (typeof activeOpenedAppRef.current === 'string' ? activeOpenedAppRef.current : ''),
                   installedAppsCount: realInstalledAppsRef.current.length || curApps.length,
@@ -1137,6 +1163,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   brightness: hwStatus.brightness,
                 },
                 sensorValues: freshSensors,
+                ...(netInfo ? { networkInfo: netInfo } : {}),
+                ...(realMediaState ? { mediaPlayback: realMediaState } : {}),
               }, curChild.name);
 
               // 3. Send execution ACK back to Parent
@@ -1543,6 +1571,35 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             sendNativeMediaKey(mediaCmd).catch(() => {});
           }
           showToast(`🎵 Điều khiển nhạc từ xa: [${mediaCmd}]`);
+
+          // Read real media status after dispatching key
+          setTimeout(async () => {
+            try {
+              const freshMedia = await getNativeMediaStatus().catch(() => null);
+              if (freshMedia) {
+                uploadChildTelemetryToCloud(
+                  activeParentId,
+                  targetChildId,
+                  {
+                    mediaPlayback: {
+                      isPlaying: freshMedia.isPlaying,
+                      volume: freshMedia.volume,
+                      trackTitle: freshMedia.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát',
+                      artist: 'Máy con',
+                      album: '',
+                      artUrl: '',
+                      positionSeconds: 0,
+                      durationSeconds: 0,
+                      appName: 'Media Player',
+                    },
+                  },
+                  true,
+                  curChild.name
+                ).catch(() => {});
+              }
+            } catch (_) {}
+          }, 300);
+
           sendRemoteCommandAck(activeParentId, targetChildId, {
             id: cmdId,
             command: 'media_control',
@@ -2068,6 +2125,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           );
       }
 
+      const [nativeNet, nativeSensors, nativeMedia] = await Promise.all([
+        getNativeNetworkInfo().catch(() => null),
+        getNativeSensorData().catch(() => null),
+        getNativeMediaStatus().catch(() => null),
+      ]);
+
       const baseSensorsData = curTargetSettings.sensorValues || {
         noiseLevel: 35,
         ambientLight: 280,
@@ -2076,25 +2139,47 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       };
       const sensorsData = {
         ...baseSensorsData,
-        ...sensorValuesRef.current
+        ...sensorValuesRef.current,
+        ...(nativeSensors ? {
+          stepCount: nativeSensors.stepCount || sensorValuesRef.current.stepCount || 0,
+          lightLux: nativeSensors.lightLux,
+          pressureHpa: nativeSensors.pressureHpa,
+          proximityNear: nativeSensors.proximityNear,
+        } : {}),
       };
 
       const conn = typeof navigator !== 'undefined' ? (navigator as any)?.connection : null;
       const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
       const effectiveType = conn?.effectiveType || '4g';
       const isWifi = conn?.type === 'wifi' || (!conn?.type && effectiveType === '4g' && isOnline);
-      const networkInfo = {
+      const networkInfo = nativeNet || {
         online: isOnline,
         wifiConnected: isWifi && isOnline,
-        wifiSSID: isWifi ? (curTargetSettings.networkInfo?.wifiSSID || 'WiFi Đang kết nối') : 'Chưa kết nối',
+        wifiSSID: isWifi ? 'WiFi Đang kết nối' : 'Chưa kết nối',
         wifiSignalDbm: isWifi ? -58 : -100,
+        carrierName: isOnline ? 'Mạng di động' : 'Không có SIM',
         cellConnected: !isWifi && isOnline,
         cellType: (effectiveType === '4g' ? '4G' : effectiveType === '3g' ? '3G' : effectiveType === '2g' ? '2G' : '4G') as '2G' | '3G' | '4G' | '5G' | 'N/A',
         cellBars: isOnline ? (effectiveType === '4g' ? 4 : 3) : 0,
         connectionType: effectiveType || 'wifi/cellular',
-        nearbyWifis: curTargetSettings.networkInfo?.nearbyWifis || [],
-        nearbyBluetooth: curTargetSettings.networkInfo?.nearbyBluetooth || [],
+        nearbyWifis: [],
+        nearbyBluetooth: [],
       };
+
+      const realMediaPlayback = nativeMedia ? {
+        ...(curTargetSettings.mediaPlayback || {
+          trackTitle: 'Chưa có bài hát nào đang phát',
+          artist: 'Chưa phát media',
+          album: '',
+          artUrl: '',
+          positionSeconds: 0,
+          durationSeconds: 0,
+          appName: 'Trình phát nhạc',
+        }),
+        isPlaying: nativeMedia.isPlaying,
+        volume: nativeMedia.volume,
+        trackTitle: nativeMedia.isPlaying ? (curTargetSettings.mediaPlayback?.trackTitle && curTargetSettings.mediaPlayback.trackTitle !== 'Chưa có bài hát nào đang phát' ? curTargetSettings.mediaPlayback.trackTitle : 'Đang phát âm thanh trên máy') : 'Chưa có bài hát nào đang phát',
+      } : undefined;
 
       const isDeviceLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked);
       const effectiveLockType = lockChallengeRef.current?.lockType || targetSettingsRef.current?.lockType || (isDeviceLocked ? 'instant' : undefined);
@@ -2121,6 +2206,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             model: curPairedInfo?.model,
             sensors: isSensorOn ? sensorsData : null,
             network: isNetworkOn ? networkInfo : null,
+            mediaPlayback: realMediaPlayback,
             screenTimeUsedMinutes: isAppUsageOn ? (curScreenTime?.todayTotalMinutes || 0) : undefined,
             activeOpenedApp: isAppUsageOn && isScreenStateOn ? (typeof curActiveApp === 'object' && curActiveApp ? curActiveApp.name : (typeof curActiveApp === 'string' ? curActiveApp : '')) : '',
             installedAppsCount: isAppUsageOn ? (curRealApps.length || curApps.length) : undefined,

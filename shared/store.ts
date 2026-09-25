@@ -1397,6 +1397,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
                     hasUsageAccessPermission: telemetry.hasUsageAccessPermission,
                     sensors: telemetry.sensors,
                     network: telemetry.network,
+                    mediaPlayback: telemetry.mediaPlayback,
                     lastActive: new Date().toISOString(),
                     updatedAt: Date.now(),
                   },
@@ -1444,6 +1445,8 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
           const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
           const nextSettings = {
             ...curSettings,
+            ...(telemetry.network ? { networkInfo: { ...curSettings.networkInfo, ...telemetry.network } } : {}),
+            ...(telemetry.mediaPlayback ? { mediaPlayback: { ...curSettings.mediaPlayback, ...telemetry.mediaPlayback } } : {}),
             ...(telemetry.sensors ? { sensorValues: { ...curSettings.sensorValues, ...telemetry.sensors } } : {}),
             ...(telemetry.screenTimeUsedMinutes !== undefined ? { screenTime: { ...curSettings.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes } } : {}),
             ...(telemetry.isLocked !== undefined ? {

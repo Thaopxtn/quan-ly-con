@@ -20,6 +20,14 @@ interface NetworkMonitorScreenProps {
   onBack?: () => void;
 }
 
+function getSignalQuality(signal: number): string {
+  if (signal >= -55) return "Rất tốt";
+  if (signal >= -67) return "Tốt";
+  if (signal >= -78) return "Trung bình";
+  if (signal >= -88) return "Yếu";
+  return "Rất yếu";
+}
+
 function WifiSignalBars({ signal }: { signal: number }) {
   const level = signal >= -55 ? 4 : signal >= -67 ? 3 : signal >= -78 ? 2 : signal >= -89 ? 1 : 0;
   return (
@@ -197,7 +205,7 @@ export const NetworkMonitorScreen: React.FC<NetworkMonitorScreenProps> = ({ onBa
                     </div>
                     <p className="text-sm font-black text-slate-800 mt-0.5">{net.wifiSSID}</p>
                     <p className="text-[11px] text-slate-500">
-                      Cường độ tín hiệu: {net.wifiSignalDbm} dBm (Rất tốt)
+                      Cường độ tín hiệu: {net.wifiSignalDbm} dBm ({getSignalQuality(net.wifiSignalDbm)})
                     </p>
                   </div>
                 </div>
@@ -216,11 +224,11 @@ export const NetworkMonitorScreen: React.FC<NetworkMonitorScreenProps> = ({ onBa
                     <div className="flex items-center space-x-2">
                       <h4 className="text-xs font-bold text-slate-900">Sóng Mạng Di Động</h4>
                       <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.2 rounded-full font-bold">
-                        {net.cellType} LTE
+                        {net.cellType}
                       </span>
                     </div>
-                    <p className="text-sm font-black text-slate-800 mt-0.5">Viettel Telecom</p>
-                    <p className="text-[11px] text-slate-500">{net.cellBars}/4 vạch • Đầy đủ băng thông</p>
+                    <p className="text-sm font-black text-slate-800 mt-0.5">{net.carrierName || (net.cellConnected ? "Mạng di động" : "Không có SIM")}</p>
+                    <p className="text-[11px] text-slate-500">{net.cellBars}/4 vạch • {net.cellConnected ? "Đã kết nối dữ liệu di động" : "Chưa kết nối dữ liệu"}</p>
                   </div>
                 </div>
                 <CellBars bars={net.cellBars} />
@@ -265,60 +273,70 @@ export const NetworkMonitorScreen: React.FC<NetworkMonitorScreenProps> = ({ onBa
             <p className="text-[11px] text-slate-500 font-medium px-1">
               Danh sách các mạng WiFi máy con đang thu được trong phạm vi:
             </p>
-            {net.nearbyWifis.map((wifi, idx) => (
-              <div
-                key={`${wifi.ssid}-${idx}`}
-                className={`p-3.5 rounded-2xl border transition flex items-center justify-between ${
-                  wifi.isConnected
-                    ? "bg-emerald-50/50 border-emerald-200 shadow-xs"
-                    : "bg-white border-slate-100 hover:bg-slate-50"
-                }`}
-              >
-                <div className="flex items-center space-x-3 min-w-0">
-                  <div
-                    className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-                      wifi.isConnected
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    <Wifi size={18} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center space-x-1.5">
-                      <p
-                        className={`text-xs font-bold truncate ${
-                          wifi.isConnected ? "text-emerald-900" : "text-slate-800"
-                        }`}
-                      >
-                        {wifi.ssid}
-                      </p>
-                      {wifi.isConnected && (
-                        <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-black shrink-0">
-                          ĐANG DÙNG
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
-                      <span>{wifi.signal} dBm</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-0.5">
-                        {wifi.isSecured ? (
-                          <>
-                            <Lock size={10} className="text-slate-400" /> WPA2 Bảo Mật
-                          </>
-                        ) : (
-                          <>
-                            <Unlock size={10} className="text-amber-500" /> Mạng Mở
-                          </>
-                        )}
-                      </span>
-                    </p>
-                  </div>
-                </div>
-                <WifiSignalBars signal={wifi.signal} />
+            {net.nearbyWifis.length === 0 ? (
+              <div className="bg-white rounded-2xl p-8 text-center border border-slate-100 shadow-xs space-y-2">
+                <Wifi size={32} className="mx-auto text-slate-300" />
+                <p className="text-sm font-bold text-slate-700">Chưa có danh sách WiFi xung quanh</p>
+                <p className="text-xs text-slate-400">
+                  Nhấn nút "Quét lại" ở góc trên để yêu cầu máy con quét các điểm WiFi lân cận.
+                </p>
               </div>
-            ))}
+            ) : (
+              net.nearbyWifis.map((wifi, idx) => (
+                <div
+                  key={`${wifi.ssid}-${idx}`}
+                  className={`p-3.5 rounded-2xl border transition flex items-center justify-between ${
+                    wifi.isConnected
+                      ? "bg-emerald-50/50 border-emerald-200 shadow-xs"
+                      : "bg-white border-slate-100 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div
+                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                        wifi.isConnected
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      <Wifi size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-1.5">
+                        <p
+                          className={`text-xs font-bold truncate ${
+                            wifi.isConnected ? "text-emerald-900" : "text-slate-800"
+                          }`}
+                        >
+                          {wifi.ssid}
+                        </p>
+                        {wifi.isConnected && (
+                          <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-black shrink-0">
+                            ĐANG DÙNG
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                        <span>{wifi.signal} dBm</span>
+                        <span>•</span>
+                        <span className="flex items-center gap-0.5">
+                          {wifi.isSecured ? (
+                            <>
+                              <Lock size={10} className="text-slate-400" /> WPA2 Bảo Mật
+                            </>
+                          ) : (
+                            <>
+                              <Unlock size={10} className="text-amber-500" /> Mạng Mở
+                            </>
+                          )}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                  <WifiSignalBars signal={wifi.signal} />
+                </div>
+              ))
+            )}
           </div>
         )}
 
@@ -327,56 +345,66 @@ export const NetworkMonitorScreen: React.FC<NetworkMonitorScreenProps> = ({ onBa
             <p className="text-[11px] text-slate-500 font-medium px-1">
               Các phụ kiện & thiết bị Bluetooth xung quanh điện thoại con:
             </p>
-            {net.nearbyBluetooth.map((bt, idx) => (
-              <div
-                key={`${bt.name}-${idx}`}
-                className={`p-3.5 rounded-2xl border transition flex items-center justify-between ${
-                  bt.isPaired
-                    ? "bg-indigo-50/50 border-indigo-200 shadow-xs"
-                    : "bg-white border-slate-100 hover:bg-slate-50"
-                }`}
-              >
-                <div className="flex items-center space-x-3 min-w-0">
-                  <div
-                    className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-                      bt.isPaired ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {getBtIcon(bt.type)}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center space-x-1.5">
-                      <p
-                        className={`text-xs font-bold truncate ${
-                          bt.isPaired ? "text-indigo-900" : "text-slate-800"
-                        }`}
-                      >
-                        {bt.name}
-                      </p>
-                      {bt.isPaired && (
-                        <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded font-black shrink-0">
-                          ĐÃ GHÉP NỐI
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Cường độ sóng RSSI: {bt.rssi} dBm
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      bt.isPaired
-                        ? "bg-indigo-100 text-indigo-700"
-                        : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {bt.isPaired ? "Đã liên kết" : "Khả dụng"}
-                  </span>
-                </div>
+            {net.nearbyBluetooth.length === 0 ? (
+              <div className="bg-white rounded-2xl p-8 text-center border border-slate-100 shadow-xs space-y-2">
+                <Bluetooth size={32} className="mx-auto text-slate-300" />
+                <p className="text-sm font-bold text-slate-700">Chưa phát hiện thiết bị Bluetooth</p>
+                <p className="text-xs text-slate-400">
+                  Điện thoại con hiện chưa ghép nối hoặc chưa bật Bluetooth quét phụ kiện gần đó.
+                </p>
               </div>
-            ))}
+            ) : (
+              net.nearbyBluetooth.map((bt, idx) => (
+                <div
+                  key={`${bt.name}-${idx}`}
+                  className={`p-3.5 rounded-2xl border transition flex items-center justify-between ${
+                    bt.isPaired
+                      ? "bg-indigo-50/50 border-indigo-200 shadow-xs"
+                      : "bg-white border-slate-100 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div
+                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                        bt.isPaired ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {getBtIcon(bt.type)}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-1.5">
+                        <p
+                          className={`text-xs font-bold truncate ${
+                            bt.isPaired ? "text-indigo-900" : "text-slate-800"
+                          }`}
+                        >
+                          {bt.name}
+                        </p>
+                        {bt.isPaired && (
+                          <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded font-black shrink-0">
+                            ĐÃ GHÉP NỐI
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Cường độ sóng RSSI: {bt.rssi} dBm
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        bt.isPaired
+                          ? "bg-indigo-100 text-indigo-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {bt.isPaired ? "Đã liên kết" : "Khả dụng"}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>

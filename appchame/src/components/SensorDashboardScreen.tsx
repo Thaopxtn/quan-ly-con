@@ -175,16 +175,16 @@ export const SensorDashboardScreen: React.FC<SensorDashboardScreenProps> = ({ on
     gyroX: 0,
     gyroY: 0,
     gyroZ: 0,
-    magnetX: 20,
-    magnetY: -10,
-    magnetZ: 40,
-    pitch: 75,
-    roll: 2,
-    yaw: 120,
-    pressureHpa: 1013.2,
-    lightLux: 350,
+    magnetX: 0,
+    magnetY: 0,
+    magnetZ: 0,
+    pitch: 0,
+    roll: 0,
+    yaw: 0,
+    pressureHpa: 1013.25,
+    lightLux: 250,
     proximityNear: false,
-    stepCount: 2840,
+    stepCount: 0,
   };
 
   const [tab, setTab] = useState<"3d" | "motion" | "environment">("3d");
@@ -324,7 +324,7 @@ export const SensorDashboardScreen: React.FC<SensorDashboardScreenProps> = ({ on
               <button
                 onClick={() =>
                   updateSensorValues(targetChildId, {
-                    pitch: 80,
+                    pitch: 0,
                     roll: 0,
                     yaw: 0,
                   })

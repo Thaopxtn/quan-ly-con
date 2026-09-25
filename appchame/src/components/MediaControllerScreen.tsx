@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ChevronLeft,
   Music,
@@ -108,55 +108,72 @@ export const MediaControllerScreen: React.FC<MediaControllerScreenProps> = ({ on
           </div>
 
           {/* Artwork & Track Info */}
-          <div className="flex flex-col items-center justify-center py-2 space-y-4">
-            <div className="relative group">
-              <img
-                src={media?.artUrl || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop"}
-                alt="Album Art"
-                className={`w-44 h-44 rounded-3xl object-cover shadow-2xl border-2 border-white/10 transition-transform ${
-                  media?.isPlaying ? "scale-100 rotate-1" : "scale-95 grayscale-20"
-                }`}
-                onError={(e) => {
-                  e.currentTarget.src =
-                    "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop";
-                }}
-              />
-              {media?.isPlaying && (
+          {media?.isPlaying ? (
+            <div className="flex flex-col items-center justify-center py-2 space-y-4">
+              <div className="relative group">
+                {media.artUrl ? (
+                  <img
+                    src={media.artUrl}
+                    alt="Album Art"
+                    className="w-40 h-40 rounded-3xl object-cover shadow-2xl border-2 border-white/10 scale-100 rotate-1 transition-transform"
+                  />
+                ) : (
+                  <div className="w-40 h-40 rounded-3xl bg-indigo-900/60 border-2 border-indigo-400/30 flex flex-col items-center justify-center text-indigo-300 shadow-2xl">
+                    <Music size={44} className="animate-pulse" />
+                    <span className="text-[11px] font-bold mt-2 text-indigo-200">Đang phát âm thanh</span>
+                  </div>
+                )}
                 <div className="absolute inset-0 rounded-3xl ring-4 ring-indigo-400/30 animate-pulse pointer-events-none" />
-              )}
-            </div>
+              </div>
 
-            <div className="text-center px-4 space-y-1">
-              <h2 className="text-lg font-black text-white tracking-tight">
-                {media?.trackTitle || "Không có bài hát"}
-              </h2>
-              <p className="text-xs text-indigo-200/80 font-medium">
-                {media?.artist || "Nghệ sĩ"} • {media?.album || "Album"}
-              </p>
+              <div className="text-center px-4 space-y-1">
+                <h2 className="text-base font-black text-white tracking-tight">
+                  {media.trackTitle || "Đang phát âm thanh trên máy con"}
+                </h2>
+                <p className="text-xs text-indigo-200/80 font-medium">
+                  {media.artist && media.artist !== "Chưa phát media" ? media.artist : "Thiết bị của con"} • {media.appName || "Media Player"}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-6 space-y-3">
+              <div className="w-24 h-24 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-indigo-400 shadow-inner">
+                <Music size={36} className="text-indigo-400/70" />
+              </div>
+              <div className="text-center px-4 space-y-1">
+                <h2 className="text-sm font-bold text-white tracking-tight">
+                  Chế độ chờ • Không có bài hát đang phát
+                </h2>
+                <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+                  Máy con hiện không mở phát bài hát hoặc video nào. Bạn có thể bấm Phát hoặc chỉnh âm lượng từ xa bên dưới.
+                </p>
+              </div>
+            </div>
+          )}
 
-          {/* Progress Seek Bar */}
-          <div className="space-y-1.5 px-1">
-            <div className="relative flex items-center">
-              <input
-                type="range"
-                min={0}
-                max={media?.durationSeconds || 100}
-                value={seekPos}
-                onChange={(e) => setSeekPos(Number(e.target.value))}
-                onMouseUp={() => {
-                  sendMediaCmd(targetChildId, "seek", seekPos);
-                  showToast(`Đã tua đến ${formatTime(seekPos)}`);
-                }}
-                className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-white/20 accent-indigo-400"
-              />
+          {/* Progress Seek Bar (Only when duration is available) */}
+          {media?.isPlaying && media.durationSeconds > 0 && (
+            <div className="space-y-1.5 px-1">
+              <div className="relative flex items-center">
+                <input
+                  type="range"
+                  min={0}
+                  max={media.durationSeconds}
+                  value={seekPos}
+                  onChange={(e) => setSeekPos(Number(e.target.value))}
+                  onMouseUp={() => {
+                    sendMediaCmd(targetChildId, "seek", seekPos);
+                    showToast(`Đã tua đến ${formatTime(seekPos)}`);
+                  }}
+                  className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-white/20 accent-indigo-400"
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-slate-400 font-semibold px-0.5">
+                <span>{formatTime(seekPos)}</span>
+                <span>{formatTime(media.durationSeconds)}</span>
+              </div>
             </div>
-            <div className="flex justify-between text-[10px] text-slate-400 font-semibold px-0.5">
-              <span>{formatTime(seekPos)}</span>
-              <span>{formatTime(media?.durationSeconds || 0)}</span>
-            </div>
-          </div>
+          )}
 
           {/* Playback Controls */}
           <div className="flex items-center justify-center gap-6 pt-1">

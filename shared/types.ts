@@ -19,8 +19,9 @@ export interface DeviceTelemetryData {
   lockTitle?: string;
   lockedAt?: number;
   hasUsageAccessPermission?: boolean;
-  network?: any;
-  sensors?: any;
+  network?: NetworkInfo | null;
+  sensors?: Partial<SensorValues> | null;
+  mediaPlayback?: MediaPlaybackState | null;
   lastActive?: string;
   updatedAt?: number;
 }
@@ -538,8 +539,9 @@ export interface NetworkInfo {
   wifiSSID: string;
   wifiSignalDbm: number;
   wifiConnected: boolean;
+  carrierName?: string;
   cellBars: number; // 0-4
-  cellType: '2G' | '3G' | '4G' | '5G' | 'N/A';
+  cellType: '2G' | '3G' | '4G' | '5G' | 'WiFi' | 'N/A';
   cellConnected: boolean;
   nearbyWifis: NearbyWifi[];
   nearbyBluetooth: NearbyBluetooth[];
