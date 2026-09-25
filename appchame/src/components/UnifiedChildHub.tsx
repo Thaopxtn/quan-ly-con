@@ -345,58 +345,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
         </div>
       )}
 
-      {/* 1. Sleek Child Switcher Pills */}
-      {children.length > 0 && (
-        <div className="flex items-center space-x-2 overflow-x-auto pb-1.5 pt-0.5 no-scrollbar select-none">
-          {children.map((c) => {
-            const isCur = c.id === selectedChildId;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => {
-                  if (!isCur) switchChild(c.id);
-                }}
-                className={`px-3 py-1.5 rounded-2xl flex items-center gap-2 border transition shrink-0 cursor-pointer ${
-                  isCur
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
-                }`}
-              >
-                <img
-                  src={c.avatar}
-                  alt={c.name}
-                  className="w-5 h-5 rounded-full object-cover ring-1 ring-white"
-                />
-                <span className="text-xs font-black">{c.name}</span>
-                {isCur && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                )}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={() => setShowManageModal(true)}
-            className="px-2.5 py-1.5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 hover:text-blue-600 text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
-            title="Quản lý danh sách con và xóa bé"
-          >
-            <SlidersHorizontal size={13} />
-            <span>Quản lý</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowPairModal(true)}
-            className="px-2.5 py-1.5 rounded-2xl border-2 border-dashed border-slate-200 hover:border-blue-400 text-slate-500 hover:text-blue-600 text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer"
-            title="Thêm bé mới hoặc kết nối thêm máy"
-          >
-            <Plus size={13} />
-            <span>Thêm con</span>
-          </button>
-        </div>
-      )}
-
-      {/* 2. MINIMALIST CIRCULAR AVATAR CAROUSEL or EMPTY STATE */}
+      {/* GOM GIAO DIỆN PHẦN NÀY THÀNH MỘT MỤC GỌN GÀNG: UNIFIED CHILD PROFILE & CONTROLS MODULE */}
       {totalChildren === 0 ? (
         <div className="bg-gradient-to-b from-blue-50/40 via-white to-slate-50/50 rounded-2xl p-6 border border-dashed border-blue-200 text-center space-y-4">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 shadow-xs">
@@ -429,51 +378,66 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
           </div>
         </div>
       ) : (
-      <div
-        className="relative bg-gradient-to-b from-slate-50/90 via-slate-50/50 to-blue-50/20 rounded-2xl p-4 border border-slate-100/90 cursor-grab active:cursor-grabbing transition-all"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-      >
-        {/* Carousel Rotation Stage */}
-        <div className="flex items-center justify-between px-1">
-          {/* Left Arrow & Prev Child */}
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                rotatePrev();
-              }}
-              className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center shadow-xs border border-slate-200/70 transition active:scale-90"
-              title="Bé trước"
-            >
-              <ChevronLeft size={16} />
-            </button>
+      <div className="space-y-3">
+        {/* COMPACT UNIFIED CHILD SELECTOR & PROFILE CARD */}
+        <div className="bg-gradient-to-r from-slate-50 via-blue-50/20 to-slate-50 rounded-2xl p-3 border border-slate-200/80 shadow-2xs space-y-2.5">
+          {/* Top Row: Child Switcher Tabs & Fast Action Buttons */}
+          <div className="flex items-center justify-between gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+            {/* Child Switcher Pills */}
+            <div className="flex items-center space-x-1.5 shrink-0">
+              {children.map((c) => {
+                const isCur = c.id === selectedChildId;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      if (!isCur) switchChild(c.id);
+                    }}
+                    className={`px-2.5 py-1 rounded-xl flex items-center gap-1.5 border transition shrink-0 cursor-pointer ${
+                      isCur
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs font-bold text-xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200/80 font-medium text-xs'
+                    }`}
+                  >
+                    <img
+                      src={c.avatar}
+                      alt={c.name}
+                      className="w-4 h-4 rounded-full object-cover ring-1 ring-white"
+                    />
+                    <span>{c.name}</span>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      c.status === 'online' ? 'bg-emerald-400' : 'bg-slate-300'
+                    }`} />
+                  </button>
+                );
+              })}
+            </div>
 
-            {prevChild && (
-              <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  rotatePrev();
-                }}
-                className="flex flex-col items-center opacity-40 hover:opacity-75 transition transform scale-90 cursor-pointer"
+            {/* Quick Actions: Manage & Add Child */}
+            <div className="flex items-center space-x-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowManageModal(true)}
+                className="px-2.5 py-1 rounded-lg border border-slate-200/80 bg-white hover:bg-slate-100 text-slate-600 hover:text-blue-600 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                title="Quản lý hồ sơ và xóa bé"
               >
-                <div className="relative">
-                  <img
-                    src={prevChild.avatar}
-                    alt={prevChild.name}
-                    className="w-11 h-11 rounded-full object-cover ring-2 ring-slate-200 shadow-xs"
-                  />
-                </div>
-                <span className="text-[10px] font-medium text-slate-500 mt-1 truncate max-w-[50px]">
-                  {prevChild.name}
-                </span>
-              </div>
-            )}
+                <SlidersHorizontal size={12} />
+                <span>Quản lý</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPairModal(true)}
+                className="px-2.5 py-1 rounded-lg border border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/50 hover:bg-blue-100 text-blue-600 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                title="Thêm bé mới hoặc kết nối thêm máy"
+              >
+                <Plus size={12} />
+                <span>Thêm con</span>
+              </button>
+            </div>
           </div>
 
-          {/* CENTER CHILD (Spotlight Avatar Only) */}
+          {/* Active Child Profile & Device Info Block */}
           {activeChild && (() => {
             const isActiveChildLocked = Boolean(
               activeChild.isLocked ||
@@ -481,378 +445,267 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
               (activeChild.id === selectedChildId && state.lockChallenge?.isLocked)
             );
             return (
-              <div className="flex flex-col items-center">
-                <div className="relative">
-                  {/* Active Status Pill */}
-                  <div className={`absolute -top-3 left-1/2 -translate-x-1/2 text-white text-[9.5px] font-bold px-2 py-0.5 rounded-full shadow-xs flex items-center gap-1 z-10 whitespace-nowrap ${
-                    isActiveChildLocked ? 'bg-rose-600' : 'bg-blue-600'
-                  }`}>
-                    {isActiveChildLocked ? <span>🔒 ĐANG KHÓA</span> : <><Check size={10} /><span>ĐANG CHỌN</span></>}
-                  </div>
-
-                  {/* Avatar with Elegant Ring - Clickable for Avatar Picker */}
+              <div
+                className="pt-2 border-t border-slate-200/60"
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+              >
+                <div className="flex items-start gap-3">
+                  {/* Left: Avatar with Status Ring and Quick Edit */}
                   <div
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowAvatarModal(true);
-                    }}
-                    className={`relative p-1 rounded-full bg-white shadow-soft transition-all duration-300 cursor-pointer group ${
-                      isActiveChildLocked ? 'ring-4 ring-rose-500/40' : 'ring-4 ring-blue-500/20'
-                    }`}
-                    title="Bấm để đổi avatar cho con"
+                    onClick={() => setShowAvatarModal(true)}
+                    className="relative shrink-0 cursor-pointer group mt-0.5"
+                    title="Bấm để đổi ảnh đại diện cho con"
                   >
-                    <img
-                      src={activeChild.avatar}
-                      alt={activeChild.name}
-                      className="w-20 h-20 rounded-full object-cover border-2 border-white group-hover:scale-105 transition duration-200"
-                    />
-                    {/* Camera overlay hover badge */}
-                    <div className="absolute inset-1 rounded-full bg-slate-900/40 opacity-0 group-hover:opacity-100 transition duration-200 flex flex-col items-center justify-center text-white">
-                      <Camera size={18} className="text-white drop-shadow" />
-                      <span className="text-[9px] font-bold">Đổi ảnh</span>
+                    <div className={`p-0.5 rounded-2xl bg-white shadow-xs transition-all duration-200 ${
+                      isActiveChildLocked ? 'ring-2 ring-rose-500/50' : 'ring-2 ring-blue-500/20 group-hover:ring-blue-500/50'
+                    }`}>
+                      <img
+                        src={activeChild.avatar}
+                        alt={activeChild.name}
+                        className="w-13 h-13 rounded-xl object-cover"
+                      />
+                      <div className="absolute inset-0.5 rounded-xl bg-slate-900/40 opacity-0 group-hover:opacity-100 transition duration-150 flex items-center justify-center text-white">
+                        <Camera size={15} />
+                      </div>
                     </div>
+
                     {isActiveChildLocked ? (
                       <span
-                        className="absolute bottom-0 right-1 w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[10px] border-2 border-white shadow-xs animate-bounce"
+                        className="absolute -bottom-1 -right-1 w-4.5 h-4.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] ring-2 ring-white shadow-xs animate-bounce"
                         title="Điện thoại đang bị khóa"
                       >
                         🔒
                       </span>
                     ) : (
                       <span
-                        className={`absolute bottom-0 right-1 w-4 h-4 rounded-full border-2 border-white shadow-xs ${
+                        className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full ring-2 ring-white shadow-xs ${
                           activeChild.status === 'online'
-                            ? 'bg-emerald-500 ring-2 ring-emerald-200'
+                            ? 'bg-emerald-500 ring-emerald-200'
                             : activeChild.status === 'studying'
-                            ? 'bg-indigo-500 ring-2 ring-indigo-200'
+                            ? 'bg-indigo-500 ring-indigo-200'
                             : 'bg-slate-400'
                         }`}
                       />
+                    )}
+                  </div>
+
+                  {/* Right: Info Columns */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    {/* Row 1: Name, Age, Status Badge, Battery */}
+                    <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <h4 className="text-sm font-black text-slate-900 truncate">
+                          {activeChild.name}
+                        </h4>
+                        <span className="text-[11px] text-slate-500 font-medium">
+                          • {activeChild.age} tuổi
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Single Accurate Status Badge */}
+                        {isActiveChildLocked ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
+                            <span>🔒</span>
+                            <span>Đang khóa máy</span>
+                          </span>
+                        ) : activeChild.status !== 'online' ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1">
+                            <span>⚪</span>
+                            <span>Ngoại tuyến{activeChild.lastSeenText ? ` (${activeChild.lastSeenText})` : ''}</span>
+                          </span>
+                        ) : activeChild.isScreenOn === false || activeChild.screenState === 'screen_off' ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-teal-50 text-teal-700 border border-teal-200 flex items-center gap-1">
+                            <span>🍃</span>
+                            <span>Màn hình tắt</span>
+                          </span>
+                        ) : activeChild.appStatus === 'active_in_app' || activeChild.screenState === 'active' ? (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-600"></span>
+                            </span>
+                            <span>Đang mở app</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
+                            <span>📱</span>
+                            <span>Đang mở máy</span>
+                          </span>
+                        )}
+
+                        {/* Battery Pill */}
+                        <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded-full border flex items-center gap-0.5 ${
+                          activeChild.battery <= 20
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : activeChild.battery <= 50
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}>
+                          <span>🔋</span>
+                          <span>{activeChild.battery}%</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Row 2: Stars bank + Quick Gift Button */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowGiftModal(true)}
+                        className="px-2 py-0.5 text-[11px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-full border border-amber-200/80 flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-2xs"
+                        title="Bấm để tặng sao khen ngợi cho con"
+                      >
+                        <Star size={11} className="fill-amber-500 text-amber-500" />
+                        <span>{activeChildSettings?.kidStars ?? state.kidStars ?? 28} Sao</span>
+                        <span className="text-amber-600 text-[10px] font-semibold hover:underline ml-0.5">+ Tặng sao</span>
+                      </button>
+                    </div>
+
+                    {/* Row 3: Connected Device Bar */}
+                    {activeChild.devices && activeChild.devices.length > 0 ? (
+                      activeChild.devices.length > 1 ? (
+                        <div className="pt-1.5 border-t border-slate-200/50 space-y-1">
+                          <div className="flex items-center justify-between text-[10.5px]">
+                            <span className="text-slate-500 font-bold flex items-center gap-1">
+                              <Smartphone size={12} className="text-blue-600" />
+                              <span>Thiết bị ({activeChild.devices.length} máy):</span>
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowPairModal(true)}
+                                className="text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer text-[10px]"
+                              >
+                                <Plus size={10} />
+                                <span>Thêm máy</span>
+                              </button>
+                              <span className="text-slate-300">|</span>
+                              <button
+                                type="button"
+                                onClick={() => onNavigate?.('remote')}
+                                className="text-blue-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer text-[10px]"
+                              >
+                                <Smartphone size={10} />
+                                <span>Điều khiển</span>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+                            {activeChild.devices.map((dev, dIdx) => {
+                              const isCurDev = (activeChild.activeDeviceId === dev.deviceId) || (!activeChild.activeDeviceId && dIdx === 0);
+                              const isPc = dev.deviceType === 'pc' || dev.deviceType === 'desktop';
+                              const isLaptop = dev.deviceType === 'laptop';
+                              return (
+                                <div
+                                  key={dev.deviceId}
+                                  onClick={() => switchActiveChildDevice(activeChild.id, dev.deviceId)}
+                                  className={`px-2 py-1 rounded-lg border text-left shrink-0 transition cursor-pointer flex items-center gap-1.5 ${
+                                    isCurDev
+                                      ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-400/20'
+                                      : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  <div className={`w-5 h-5 rounded flex items-center justify-center shrink-0 ${
+                                    isPc || isLaptop ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {isPc ? <Monitor size={10} /> : isLaptop ? <Laptop size={10} /> : <Smartphone size={10} />}
+                                  </div>
+                                  <span className="text-[10px] font-bold text-slate-800 truncate max-w-[85px]">
+                                    {dev.deviceName || `Máy ${dIdx + 1}`}
+                                  </span>
+                                  {isCurDev && <Check size={10} className="text-blue-600 shrink-0" />}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingDevice({
+                                        childId: activeChild.id,
+                                        deviceId: dev.deviceId,
+                                        currentName: dev.deviceName || `Máy ${dIdx + 1}`,
+                                      });
+                                      setNewDeviceNameInput(dev.deviceName || `Máy ${dIdx + 1}`);
+                                    }}
+                                    className="p-0.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-700 transition"
+                                    title="Đổi tên máy"
+                                  >
+                                    ✏️
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="pt-1.5 border-t border-slate-200/50 flex items-center justify-between text-[11px] gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 text-slate-700 font-medium truncate">
+                            <Smartphone size={12} className="text-blue-600 shrink-0" />
+                            <span className="font-bold text-slate-900 truncate max-w-[120px]">
+                              {activeChild.devices[0].deviceName || activeChild.devices[0].model || 'Điện thoại'}
+                            </span>
+                            <span className="text-slate-400 font-mono text-[9.5px]">
+                              ({activeChild.devices[0].hardwareIdType?.toUpperCase() || 'IMEI'}: {activeChild.devices[0].deviceId.slice(0, 8)}...)
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0 text-[10.5px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingDevice({
+                                  childId: activeChild.id,
+                                  deviceId: activeChild.devices![0].deviceId,
+                                  currentName: activeChild.devices![0].deviceName || 'Điện thoại',
+                                });
+                                setNewDeviceNameInput(activeChild.devices![0].deviceName || 'Điện thoại');
+                              }}
+                              className="text-blue-600 hover:text-blue-800 font-bold hover:underline cursor-pointer"
+                            >
+                              Sửa tên
+                            </button>
+                            <span className="text-slate-300">|</span>
+                            <button
+                              type="button"
+                              onClick={() => setShowPairModal(true)}
+                              className="text-indigo-600 hover:text-indigo-800 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <Plus size={10} />
+                              <span>Thêm máy</span>
+                            </button>
+                            <span className="text-slate-300">|</span>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.('remote')}
+                              className="text-blue-700 hover:text-blue-900 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <Smartphone size={10} />
+                              <span>Điều khiển</span>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      <div className="pt-1.5 border-t border-slate-200/50 flex items-center justify-between text-[11px]">
+                        <span className="text-amber-700 flex items-center gap-1 text-[10.5px]">
+                          <Smartphone size={12} />
+                          <span>Chưa có thiết bị gắn với bé</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowPairModal(true)}
+                          className="text-[10.5px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <Plus size={10} />
+                          <span>Ghép đôi máy ngay</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
             );
           })()}
-
-          {/* Right Arrow & Next Child */}
-          <div className="flex items-center space-x-2">
-            {nextChild && (
-              <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  rotateNext();
-                }}
-                className="flex flex-col items-center opacity-40 hover:opacity-75 transition transform scale-90 cursor-pointer"
-              >
-                <div className="relative">
-                  <img
-                    src={nextChild.avatar}
-                    alt={nextChild.name}
-                    className="w-11 h-11 rounded-full object-cover ring-2 ring-slate-200 shadow-xs"
-                  />
-                </div>
-                <span className="text-[10px] font-medium text-slate-500 mt-1 truncate max-w-[50px]">
-                  {nextChild.name}
-                </span>
-              </div>
-            )}
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                rotateNext();
-              }}
-              className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center shadow-xs border border-slate-200/70 transition active:scale-90"
-              title="Bé kế tiếp"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        </div>
-
-        {/* Centered Child Name, Badges & Age (School and Grade are hidden) */}
-        {activeChild && (() => {
-          const isActiveChildLocked = Boolean(
-            activeChild.isLocked ||
-            state.childSettings?.[activeChild.id]?.isLocked ||
-            (activeChild.id === selectedChildId && state.lockChallenge?.isLocked)
-          );
-          return (
-          <div className="mt-3 text-center space-y-1">
-            <div className="flex items-center justify-center space-x-1.5 flex-wrap gap-y-1">
-              <h4 className="text-base font-bold text-slate-900 tracking-tight">
-                {activeChild.name}
-              </h4>
-              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-                activeChild.status === 'online'
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : activeChild.status === 'studying'
-                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                  : 'bg-slate-100 text-slate-600 border-slate-200'
-              }`}>
-                {activeChild.status === 'online' ? 'Online' : activeChild.status === 'studying' ? 'Đang học bài' : `Ngoại tuyến${activeChild.lastSeenText ? ` (${activeChild.lastSeenText})` : ''}`}
-              </span>
-
-              {/* Real-time Locked Badge */}
-              {isActiveChildLocked && (
-                <span className="px-2 py-0.5 text-[10px] font-black rounded-full border bg-rose-100 text-rose-800 border-rose-300 flex items-center gap-1 shadow-2xs animate-pulse">
-                  <span>🔒</span>
-                  <span>Đang khóa máy ({state.childSettings?.[activeChild.id]?.lockTitle || activeChild.lockTitle || (activeChild.id === selectedChildId ? state.lockChallenge?.title : '') || 'Thực tế'})</span>
-                </span>
-              )}
-
-              {/* Smart Adaptive Sync Status Badge */}
-              {activeChild.status !== 'online' ? (
-                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-slate-100 text-slate-600 border-slate-200 flex items-center gap-1 shadow-2xs">
-                  <span>⚪</span>
-                  <span>Ngoại tuyến{activeChild.lastSeenText ? ` (${activeChild.lastSeenText})` : ''}</span>
-                </span>
-              ) : activeChild.isScreenOn === false || activeChild.screenState === 'screen_off' ? (
-                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200 flex items-center gap-1 shadow-2xs">
-                  <span>🍃</span>
-                  <span>Màn hình tắt (Tiết kiệm pin)</span>
-                </span>
-              ) : activeChild.appStatus === 'active_in_app' || activeChild.screenState === 'active' ? (
-                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300 flex items-center gap-1 shadow-2xs">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-600"></span>
-                  </span>
-                  <span>Đang mở app (Realtime 3s)</span>
-                </span>
-              ) : activeChild.appStatus === 'in_background' ? (
-                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-blue-50 text-blue-700 border-blue-200 flex items-center gap-1 shadow-2xs">
-                  <span>📱</span>
-                  <span>Đang mở máy (Chạy nền)</span>
-                </span>
-              ) : null}
-
-              <span className="text-[10px] font-semibold text-slate-600 bg-slate-100/90 px-1.5 py-0.5 rounded-md border border-slate-200/50">
-                🔋 {activeChild.battery}%
-              </span>
-            </div>
-
-            {/* AGE ONLY (NO school, NO grade) & STARS BANK */}
-            <div className="flex items-center justify-center space-x-2 text-xs text-slate-500 font-medium pt-0.5">
-              <span>{activeChild.age} tuổi</span>
-              <span>•</span>
-              <span className="font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/80 flex items-center gap-1">
-                <Star size={11} className="fill-amber-500 text-amber-500" />
-                <span>{activeChildSettings?.kidStars ?? state.kidStars ?? 28} Sao</span>
-              </span>
-            </div>
-
-            {/* MULTI-DEVICE SUPPORT: TÊN MÁY VÀ DANH SÁCH THIẾT BỊ CỦA BÉ */}
-            {activeChild.devices && activeChild.devices.length > 0 ? (
-              <div className="pt-2 border-t border-slate-100/80 mt-2 space-y-1 text-center">
-                {activeChild.devices.length > 1 ? (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 px-1">
-                      <span className="flex items-center gap-1 text-blue-700">
-                        <Smartphone size={13} />
-                        <span>Thiết bị của bé ({activeChild.devices.length} máy):</span>
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNavigate?.('remote');
-                          }}
-                          className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full font-bold hover:bg-blue-100 flex items-center gap-1 cursor-pointer"
-                        >
-                          <Smartphone size={10} />
-                          <span>Điều khiển máy</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setShowPairModal(true);
-                          }}
-                          className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                        >
-                          <Plus size={11} />
-                          <span>Thêm máy</span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-                      {activeChild.devices.map((dev, dIdx) => {
-                        const isCurDev = (activeChild.activeDeviceId === dev.deviceId) || (!activeChild.activeDeviceId && dIdx === 0);
-                        const isPc = dev.deviceType === 'pc' || dev.deviceType === 'desktop';
-                        const isLaptop = dev.deviceType === 'laptop';
-                        return (
-                          <div
-                            key={dev.deviceId}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              switchActiveChildDevice(activeChild.id, dev.deviceId);
-                            }}
-                            className={`px-2.5 py-1.5 rounded-xl border text-left shrink-0 transition cursor-pointer flex items-center gap-2 ${
-                              isCurDev
-                                ? 'bg-blue-50/90 border-blue-300 ring-2 ring-blue-400/20'
-                                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
-                            }`}
-                          >
-                            <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
-                              isPc || isLaptop ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
-                            }`}>
-                              {isPc ? <Monitor size={12} /> : isLaptop ? <Laptop size={12} /> : <Smartphone size={12} />}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1">
-                                <span className="text-[11px] font-black text-slate-900 truncate max-w-[110px]">
-                                  {dev.deviceName || `Máy ${dIdx + 1}`}
-                                </span>
-                                {isCurDev && <Check size={11} className="text-blue-600 shrink-0" />}
-                              </div>
-                              <div className="text-[9.5px] text-slate-500 font-mono truncate">
-                                {dev.hardwareIdType?.toUpperCase() || 'ID'}: {dev.deviceId.slice(0, 8)}...
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditingDevice({
-                                  childId: activeChild.id,
-                                  deviceId: dev.deviceId,
-                                  currentName: dev.deviceName || `Máy ${dIdx + 1}`,
-                                });
-                                setNewDeviceNameInput(dev.deviceName || `Máy ${dIdx + 1}`);
-                              }}
-                              className="p-1 hover:bg-slate-200 rounded-md text-slate-400 hover:text-slate-700 transition"
-                              title="Đổi tên máy"
-                            >
-                              ✏️
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowPairModal(true);
-                        }}
-                        className="px-2.5 py-1.5 rounded-xl border-2 border-dashed border-blue-200 hover:border-blue-400 hover:bg-blue-50 text-blue-600 text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer h-[38px]"
-                        title="Thêm điện thoại hoặc máy tính bảng cho bé này"
-                      >
-                        <Plus size={13} />
-                        <span>Thêm máy</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center gap-2 text-[10.5px] text-slate-600 bg-slate-100/70 px-2.5 py-1 rounded-lg flex-wrap">
-                    <Smartphone size={12} className="text-blue-600 shrink-0" />
-                    <span className="font-bold text-slate-800">
-                      {activeChild.devices[0].deviceName || activeChild.devices[0].model}
-                    </span>
-                    <span className="text-slate-400">•</span>
-                    <span className="font-mono text-slate-500">
-                      {activeChild.devices[0].hardwareIdType?.toUpperCase() || 'IMEI'}: {activeChild.devices[0].deviceId.slice(0, 10)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingDevice({
-                          childId: activeChild.id,
-                          deviceId: activeChild.devices![0].deviceId,
-                          currentName: activeChild.devices![0].deviceName || 'Điện thoại',
-                        });
-                        setNewDeviceNameInput(activeChild.devices![0].deviceName || 'Điện thoại');
-                      }}
-                      className="ml-1 text-[10px] text-blue-600 font-bold hover:underline cursor-pointer"
-                    >
-                      Sửa tên
-                    </button>
-                    <span className="text-slate-300">|</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowPairModal(true);
-                      }}
-                      className="text-[10px] text-indigo-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                    >
-                      <Plus size={11} />
-                      <span>Thêm máy</span>
-                    </button>
-                    <span className="text-slate-300">|</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onNavigate?.('remote');
-                      }}
-                      className="text-[10px] text-blue-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                    >
-                      <Smartphone size={11} />
-                      <span>Điều khiển điện thoại</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="pt-2 border-t border-slate-100/80 mt-2 flex items-center justify-center gap-2 text-[10.5px] text-amber-800 bg-amber-50/80 px-2.5 py-1.5 rounded-xl border border-amber-200/80">
-                <Smartphone size={13} className="text-amber-600 shrink-0" />
-                <span>Chưa có thiết bị nào gắn với bé</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowPairModal(true);
-                  }}
-                  className="ml-1 text-[10.5px] text-blue-700 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
-                >
-                  <Plus size={12} />
-                  <span>Kết nối máy ngay</span>
-                </button>
-              </div>
-            )}
-
-            {/* Quick Manage Child Profile / Delete Link */}
-            <div className="pt-2 border-t border-slate-100/80 mt-2 flex items-center justify-center gap-3 text-xs">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowManageModal(true);
-                }}
-                className="text-[11px] text-slate-600 hover:text-blue-600 font-bold flex items-center gap-1 hover:underline cursor-pointer"
-              >
-                <Users size={12} className="text-blue-600" />
-                <span>Quản lý hồ sơ & Xóa bé ({children.length} bé)</span>
-              </button>
-            </div>
-          </div>
-          );
-        })()}
-
-        {/* 3. DẤU CHẤM Ở DƯỚI ĐỂ BẤM CHỌN (Minimalist Dots Pagination) */}
-        <div className="mt-3 flex items-center justify-center space-x-1.5">
-          {children.map((c, idx) => {
-            const isDotActive = idx === activeIndex;
-            return (
-              <button
-                key={c.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  rotateToIndex(idx);
-                }}
-                className={`transition-all duration-300 ${
-                  isDotActive
-                    ? 'w-6 h-1.5 bg-blue-600 rounded-full shadow-xs'
-                    : 'w-1.5 h-1.5 bg-slate-300 hover:bg-slate-400 rounded-full'
-                }`}
-                title={`Xem hồ sơ của ${c.name}`}
-              />
-            );
-          })}
         </div>
 
         {/* 4. Kids360 Signature Circular Radial Gauge & 4 Quick Action Modes */}
