@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { ChevronLeft, Bot, Send, Sparkles, Lightbulb, Shield, BarChart3 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronLeft, Bot, Send, Sparkles, Lightbulb, Shield, BarChart3, Settings, Key, AlertTriangle } from 'lucide-react';
 import { AIMessage } from '@shared/types';
 import { useAppState } from '@shared/store';
+import { serverApiClient } from '@shared/services/serverApiClient';
 
 interface AIAssistantScreenProps {
   onBack: () => void;
@@ -11,7 +12,7 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
   const { state } = useAppState();
   const currentChild = state.children?.find((c) => c.id === state.selectedChildId) || state.child;
   const childName = currentChild?.name || 'con';
-  const childSettings = state.childSettings?.[currentChild?.id];
+  const childSettings = state.childSettings?.[currentChild?.id || ''];
   const usedMins = childSettings?.screenTime?.todayTotalMinutes ?? state.screenTime?.todayTotalMinutes ?? 0;
   const limitMins = childSettings?.screenTimeLimitMinutes ?? 135;
   const apps = childSettings?.apps || state.apps || [];
@@ -27,6 +28,26 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
   ]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState('');
+
+  useEffect(() => {
+    serverApiClient.checkAIConfig().then(hasKey => {
+      setHasApiKey(hasKey);
+      if (!hasKey) setShowConfig(true);
+    });
+  }, []);
+
+  const handleSaveConfig = async () => {
+    if (!apiKeyValue.trim()) return;
+    const ok = await serverApiClient.saveAIConfig(apiKeyValue.trim());
+    if (ok) {
+      setHasApiKey(true);
+      setShowConfig(false);
+      setApiKeyValue('');
+    }
+  };
 
   const quickPrompts = [
     { label: 'Gợi ý lịch học phù hợp', icon: Lightbulb },
@@ -34,9 +55,14 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
     { label: 'Phân tích thói quen sử dụng thiết bị', icon: BarChart3 },
   ];
 
-  const handleSend = (textToSend?: string) => {
+  const handleSend = async (textToSend?: string) => {
     const text = textToSend || inputText;
     if (!text.trim()) return;
+
+    if (!hasApiKey) {
+      setShowConfig(true);
+      return;
+    }
 
     const userMsg: AIMessage = {
       id: 'm_' + Date.now(),
@@ -45,42 +71,48 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
       timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInputText('');
     setIsTyping(true);
 
-    // AI smart response synthesized from actual real state
-    setTimeout(() => {
-      let aiReply = '';
-      const lower = text.toLowerCase();
-      if (lower.includes('lịch học') || lower.includes('thời khóa biểu')) {
-        const bedStart = routines?.bedtimeStart || '21:30';
-        aiReply = `Dựa trên lịch sinh hoạt hiện tại của ${childName}, con có giờ đi ngủ bắt đầu lúc ${bedStart}. Tôi đề xuất: 19:30 - 20:30 tập trung học bài & làm bài tập trực tuyến, 20:30 nghỉ ngơi vận động nhẹ hoặc đọc sách cùng gia đình, sau 21:00 cất thiết bị để chuẩn bị đi ngủ đúng giờ.`;
-      } else if (lower.includes('bảo vệ') || lower.includes('mạng') || lower.includes('an toàn')) {
-        const blockedCount = apps.filter(a => a.status === 'blocked').length;
-        aiReply = `Hệ thống hiện đang quản lý ${apps.length} ứng dụng trên máy ${childName} (trong đó đã chặn ${blockedCount} ứng dụng không phù hợp). Để bảo vệ con tốt nhất, hãy nhắc con nguyên tắc: 1. Không chia sẻ mật khẩu/vị trí nhà cho người lạ, 2. Báo ngay cho cha mẹ khi gặp nội dung lạ hoặc bắt nạt trên mạng.`;
-      } else if (lower.includes('thói quen') || lower.includes('thiết bị') || lower.includes('thời gian')) {
-        const usedHours = Math.floor(usedMins / 60);
-        const usedRemainMins = usedMins % 60;
-        const limitHours = Math.floor(limitMins / 60);
-        const limitRemainMins = limitMins % 60;
-        const remainingMins = Math.max(0, limitMins - usedMins);
-        aiReply = `Hôm nay ${childName} đã sử dụng ${usedHours > 0 ? `${usedHours}h ` : ''}${usedRemainMins}p trên tổng hạn mức ${limitHours > 0 ? `${limitHours}h ` : ''}${limitRemainMins}p mà bạn đã đặt (còn lại ${remainingMins} phút). ${usedMins >= limitMins ? 'Thiết bị hiện đã chạm giới hạn an toàn trong ngày.' : 'Thời lượng sử dụng đang được kiểm soát rất tốt!'}`;
-      } else {
-        aiReply = `Cảm ơn bạn đã hỏi. Tôi ghi nhận thắc mắc "${text}" và luôn sẵn sàng phân tích dữ liệu thực tế trên máy con để hỗ trợ bạn đồng hành cùng ${childName} một cách an toàn và khoa học nhất!`;
-      }
+    const childContext = {
+      name: childName,
+      usedMinutesToday: usedMins,
+      dailyLimitMinutes: limitMins,
+      installedApps: apps.length,
+      routinesEnabled: routines?.bedtimeLock || routines?.mealtimeLock,
+    };
 
-      setMessages((prev) => [
+    const result = await serverApiClient.chatWithAI(newMessages, childContext);
+    
+    setIsTyping(false);
+    if (result.success && result.reply) {
+      setMessages(prev => [
         ...prev,
         {
           id: 'ai_' + Date.now(),
           sender: 'ai',
-          text: aiReply,
+          text: result.reply!,
           timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        },
+        }
       ]);
-      setIsTyping(false);
-    }, 700);
+    } else {
+      if (result.error === 'MISSING_API_KEY') {
+        setHasApiKey(false);
+        setShowConfig(true);
+      } else {
+        setMessages(prev => [
+          ...prev,
+          {
+            id: 'ai_' + Date.now(),
+            sender: 'ai',
+            text: `⚠️ Lỗi kết nối AI: ${result.error}`,
+            timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          }
+        ]);
+      }
+    }
   };
 
   return (
@@ -101,7 +133,59 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
             </h2>
           </div>
         </div>
+        <button
+          onClick={() => setShowConfig(true)}
+          className="w-8 h-8 rounded-full bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-500"
+        >
+          <Settings size={18} />
+        </button>
       </div>
+
+      {showConfig && (
+        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-sm p-5 shadow-2xl space-y-4">
+            <div className="flex items-center space-x-3 text-blue-600">
+              <div className="p-2 bg-blue-50 rounded-xl">
+                <Key size={24} />
+              </div>
+              <h3 className="font-bold text-lg">Cấu hình API AI</h3>
+            </div>
+            
+            <p className="text-xs text-slate-500">
+              Để sử dụng tính năng Trợ lý AI thực tế, bạn cần cung cấp một khóa API của Google Gemini (Miễn phí).
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-700">Gemini API Key</label>
+              <input
+                type="password"
+                value={apiKeyValue}
+                onChange={e => setApiKeyValue(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500 transition"
+              />
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:underline block pt-1">
+                Lấy API Key miễn phí tại Google AI Studio
+              </a>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setShowConfig(false)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveConfig}
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-md"
+              >
+                Lưu cấu hình
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages Scroll Area */}
       <div className="flex-1 p-4 space-y-3.5 overflow-y-auto">

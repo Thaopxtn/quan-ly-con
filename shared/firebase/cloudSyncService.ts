@@ -82,6 +82,8 @@ export type RemoteCommandType =
   | "pc_block_app"
   | "live_tracking_start"
   | "live_tracking_stop"
+  | "live_sensor_start"
+  | "live_sensor_stop"
   | "request_usage_permission"
   | "open_usage_settings"
   | "unpair_device"

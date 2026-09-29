@@ -35,6 +35,11 @@ public class MainActivity extends BridgeActivity {
                 settings.setDomStorageEnabled(true);
                 settings.setDatabaseEnabled(true);
                 settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                }
+                // Fix for Emulator MESA virtgpu crash (pthread_mutex_lock on destroyed mutex)
+                bridge.getWebView().setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null);
             }
             bridge.addWebViewListener(new WebViewListener() {
                 @Override

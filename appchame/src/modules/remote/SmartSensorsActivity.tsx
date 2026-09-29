@@ -344,49 +344,6 @@ export const SmartSensorsActivity: React.FC<SmartSensorsActivityProps> = ({ onBa
             )}
           </div>
 
-          {/* Test Buttons */}
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-[11px] font-bold text-slate-600 mb-2">Thử nghiệm phản hồi cảm biến ngay:</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => {
-                  if (!smartRoutines.profanityDetection) {
-                    showToast('⚠️ Cảm biến nói bậy đang TẮT trên máy con nên không kích hoạt khóa phạt!');
-                    return;
-                  }
-                  simulateSensorTrigger('profanity');
-                  showToast('Đã mô phỏng phát hiện nói bậy! Máy con đã bị khóa phạt.');
-                }}
-                className={`p-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1 border ${
-                  smartRoutines.profanityDetection
-                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-                    : 'bg-slate-100 text-slate-400 border-slate-200'
-                }`}
-              >
-                <Zap size={14} />
-                <span>Test Nói bậy {smartRoutines.profanityDetection ? '' : '(Đã tắt)'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  if (!smartRoutines.noiseDetection) {
-                    showToast('⚠️ Cảm biến âm lượng lớn đang TẮT trên máy con nên không kích hoạt khóa phạt!');
-                    return;
-                  }
-                  simulateSensorTrigger('noise');
-                  showToast('Đã mô phỏng âm thanh >85dB!');
-                }}
-                className={`p-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1 border ${
-                  smartRoutines.noiseDetection
-                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
-                    : 'bg-slate-100 text-slate-400 border-slate-200'
-                }`}
-              >
-                <Zap size={14} />
-                <span>Test Tiếng ồn {smartRoutines.noiseDetection ? '' : '(Đã tắt)'}</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Section 3: Instant Reminders */}

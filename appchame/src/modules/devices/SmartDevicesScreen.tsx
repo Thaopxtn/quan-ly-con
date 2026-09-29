@@ -101,13 +101,12 @@ export const SmartDevicesScreen: React.FC<SmartDevicesScreenProps> = ({ onBack }
   const handleToggleConnection = (device: ConnectedDevice) => {
     if (!device.isConnected) {
       setConnectingId(device.id);
-      setTimeout(() => {
-        updateDeviceConnection(device.id, true);
-        setConnectingId(null);
-        if (selectedDevice?.id === device.id) {
-          setSelectedDevice({ ...device, isConnected: true, statusText: 'Đang kết nối • Tín hiệu tốt' });
-        }
-      }, 1000);
+      // Remove fake delay
+      updateDeviceConnection(device.id, true);
+      setConnectingId(null);
+      if (selectedDevice?.id === device.id) {
+        setSelectedDevice({ ...device, isConnected: true, statusText: 'Đang kết nối • Tín hiệu tốt' });
+      }
     } else {
       updateDeviceConnection(device.id, false);
       if (selectedDevice?.id === device.id) {
@@ -125,22 +124,22 @@ export const SmartDevicesScreen: React.FC<SmartDevicesScreenProps> = ({ onBack }
   };
 
   const handleStartPairing = () => {
+    alert('Tính năng quét Bluetooth/Wi-Fi thực tế cần quyền hệ thống. Thiết bị giả lập sẽ được thêm vào mục đích thử nghiệm.');
     setScanStep('scanning');
     setIsScanning(true);
-    setTimeout(() => {
-      setIsScanning(false);
-      setScanStep('success');
-      const newDev: ConnectedDevice = {
-        id: 'dev_' + Date.now(),
-        name: deviceName.trim() || 'Thiết bị mới',
-        type: selectedType,
-        battery: Math.floor(Math.random() * 25) + 75,
-        isConnected: true,
-        statusText: 'Đang kết nối • Tín hiệu tốt',
-        icon: selectedType,
-      };
-      addSmartDevice(newDev);
-    }, 2000);
+    // Bypass delay for now since we don't have real hardware pairing
+    setIsScanning(false);
+    setScanStep('success');
+    const newDev: ConnectedDevice = {
+      id: 'dev_' + Date.now(),
+      name: deviceName.trim() || 'Thiết bị mới',
+      type: selectedType,
+      battery: Math.floor(Math.random() * 25) + 75,
+      isConnected: true,
+      statusText: 'Đang kết nối • Tín hiệu tốt',
+      icon: selectedType,
+    };
+    addSmartDevice(newDev);
   };
 
   return (

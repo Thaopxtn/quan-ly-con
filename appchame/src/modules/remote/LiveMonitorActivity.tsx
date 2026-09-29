@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   Tv,
@@ -12,9 +12,11 @@ import {
   CameraOff,
   Sparkles,
   ShieldCheck,
-  CheckCircle2
+  CheckCircle2,
+  Play
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
+import { WebRTCManager } from '@shared/services/webRtcService';
 
 interface LiveMonitorActivityProps {
   onBack: () => void;
@@ -34,6 +36,35 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
   const { liveMonitoring, kioskMode } = state;
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [isSnapshotSaved, setIsSnapshotSaved] = useState(false);
+
+  const [webrtcState, setWebrtcState] = useState<string>('closed');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const webrtcManagerRef = useRef<WebRTCManager | null>(null);
+
+  useEffect(() => {
+    return () => {
+      webrtcManagerRef.current?.close();
+    };
+  }, []);
+
+  const handleConnectWebRTC = async () => {
+    if (!targetChildId) return;
+    const parentId = 'parent_1'; // Ideally from state.parentId
+    webrtcManagerRef.current?.close();
+    
+    const manager = new WebRTCManager(parentId, targetChildId);
+    webrtcManagerRef.current = manager;
+    
+    manager.onConnectionStateChange = (state) => setWebrtcState(state);
+    manager.onRemoteStream = (stream) => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    };
+    
+    setWebrtcState('connecting');
+    await manager.startCall(true, true);
+  };
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -194,26 +225,50 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
             </div>
           </div>
 
-          {/* Camera Feed Mockup */}
+          {/* WebRTC Camera Feed */}
           <div className="relative aspect-video bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-md flex items-center justify-center">
-            {/* Simulated camera background */}
-            <div className="absolute inset-0 bg-radial from-slate-800/40 via-slate-950 to-black opacity-90"></div>
+            
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className={`absolute inset-0 w-full h-full object-cover z-0 ${webrtcState === 'connected' ? 'opacity-100' : 'opacity-0'}`}
+            />
 
-            <div className="relative z-10 text-center space-y-2 p-4">
-              <div className="w-16 h-16 rounded-full border-2 border-dashed border-purple-400/50 flex items-center justify-center mx-auto">
-                <Video size={28} className="text-purple-300" />
+            {webrtcState !== 'connected' && (
+              <div className="relative z-10 text-center space-y-3 p-4">
+                <div className="w-16 h-16 rounded-full border-2 border-dashed border-slate-500/50 flex items-center justify-center mx-auto bg-slate-900/50">
+                  {webrtcState === 'connecting' ? (
+                    <RefreshCw size={28} className="text-cyan-400 animate-spin" />
+                  ) : (
+                    <CameraOff size={28} className="text-slate-400" />
+                  )}
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
+                    <span>
+                      {webrtcState === 'connecting' ? 'Đang thiết lập kết nối WebRTC...' : 'Chưa kết nối luồng Video'}
+                    </span>
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Yêu cầu thiết bị con cấp quyền truy cập Camera & Internet
+                  </p>
+                </div>
+                
+                {webrtcState === 'closed' && (
+                  <button
+                    onClick={handleConnectWebRTC}
+                    className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-md mx-auto"
+                  >
+                    <Play size={14} />
+                    <span>Mở Livestream</span>
+                  </button>
+                )}
               </div>
-              <div className="space-y-0.5">
-                <p className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
-                  <ShieldCheck size={14} className="text-emerald-400" />
-                  <span>AI: {state.child?.name || 'Bé'} đang ngồi học bài đúng tư thế</span>
-                </p>
-                <p className="text-[10px] text-slate-400">Khoảng cách mắt đến màn hình: 42cm (Đạt chuẩn)</p>
-              </div>
-            </div>
+            )}
 
-            <div className="absolute bottom-2 left-3 text-[10px] text-slate-400 bg-black/60 px-2 py-0.5 rounded-md backdrop-blur-sm">
-              Góc học tập • Ánh sáng phòng tốt
+            <div className="absolute bottom-2 left-3 text-[10px] text-slate-300 bg-black/60 px-2 py-0.5 rounded-md backdrop-blur-sm z-10">
+              {webrtcState === 'connected' ? 'Đã kết nối trực tiếp (P2P)' : 'Đang chờ...'}
             </div>
           </div>
         </div>

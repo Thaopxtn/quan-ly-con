@@ -285,6 +285,8 @@ export const REMOTE_COMMAND_TITLES: Record<string, string> = {
   media_control: 'Điều khiển media & âm nhạc 🎵',
   live_tracking_start: 'Bật định vị tốc độ cao 🛰️',
   live_tracking_stop: 'Tắt định vị tốc độ cao ⏹️',
+  live_sensor_start: 'Bật cảm biến & 3D realtime 📱',
+  live_sensor_stop: 'Tắt cảm biến realtime 📱',
 };
 
 export const SILENT_COMMANDS = new Set<string>([
@@ -292,6 +294,8 @@ export const SILENT_COMMANDS = new Set<string>([
   'ping',
   'live_tracking_start',
   'live_tracking_stop',
+  'live_sensor_start',
+  'live_sensor_stop',
 ]);
 
 export function isSilentRemoteCommand(command?: string, title?: string): boolean {
@@ -796,7 +800,7 @@ function getInitialRealState(): AppState {
       studyHours: 0,
       entertainmentHours: 0,
     },
-    contentFilters: INITIAL_CONTENT_FILTERS,
+    contentFilters: [],
     studySubjects: [],
     exercises: [],
     health: {

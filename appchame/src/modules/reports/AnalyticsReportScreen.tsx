@@ -224,8 +224,7 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
       } else if (isYesterday) {
         mins = yesterdayMinutes;
       } else {
-        const seeds = [160, 140, 190, 125, 180];
-        mins = seeds[i % seeds.length];
+        mins = 0;
       }
 
       list.push({

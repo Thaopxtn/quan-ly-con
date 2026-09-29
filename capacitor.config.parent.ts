@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'ParentPro - Cha Mẹ',
   webDir: 'dist-parent',
   server: {
-    androidScheme: 'https',
+    androidScheme: 'http',
     cleartext: true,
   },
   android: {

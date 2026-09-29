@@ -508,7 +508,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                         {isActiveChildLocked ? (
                           <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
                             <span>🔒</span>
-                            <span>Đang khóa máy</span>
+                            <span>Đang khóa toàn bộ</span>
                           </span>
                         ) : activeChild.status !== 'online' ? (
                           <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1">

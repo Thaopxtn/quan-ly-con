@@ -103,6 +103,15 @@ const DEFAULT_CONFIG = [
     instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Truy cập dữ liệu sử dụng > KidCare > Cho phép.",
   },
   {
+    id: "notification_listener",
+    name: "Quyền Đọc Thông Báo & Media (Notification Access)",
+    desc: "Cho phép cha mẹ xem tên bài hát, video (YouTube, Spotify...) đang phát trên thiết bị của con.",
+    icon: <FileText size={20} />,
+    iconBg: "bg-pink-100 text-pink-700",
+    defaultGranted: false,
+    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Truy cập thông báo > KidCare > Cho phép.",
+  },
+  {
     id: "activity_recognition",
     name: "Quyền Sức Khỏe & Đếm Bước Chân (Health & Activity)",
     desc: "Nhận diện hoạt động thể chất và đếm số bước chân con di chuyển mỗi ngày để khuyến khích vận động.",

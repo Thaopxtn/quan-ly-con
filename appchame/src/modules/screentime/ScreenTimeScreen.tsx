@@ -40,7 +40,23 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
   }, [child.id, state.childSettings]);
 
   const hourlyLabels = ['6h', '9h', '12h', '15h', '18h', '21h', '24h'];
-  const sampleHeights = [15, 45, 80, 50, 30, 65, 10]; // percentage heights
+  
+  // Calculate dynamic heights from hourlyUsage if available, else 0
+  const getBlockMaxPercent = (hours: number[]) => {
+    if (!screenTime.hourlyUsage) return 0;
+    const maxMins = Math.max(...hours.map(h => screenTime.hourlyUsage[h] || 0));
+    return Math.min(100, Math.round((maxMins / 60) * 100));
+  };
+
+  const sampleHeights = [
+    getBlockMaxPercent([6, 7, 8]),
+    getBlockMaxPercent([9, 10, 11]),
+    getBlockMaxPercent([12, 13, 14]),
+    getBlockMaxPercent([15, 16, 17]),
+    getBlockMaxPercent([18, 19, 20]),
+    getBlockMaxPercent([21, 22, 23]),
+    getBlockMaxPercent([0, 1, 2, 3, 4, 5]),
+  ];
 
   const totalUsedHours = Math.floor(screenTime.todayTotalMinutes / 60);
   const totalUsedMins = screenTime.todayTotalMinutes % 60;

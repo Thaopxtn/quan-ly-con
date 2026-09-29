@@ -335,6 +335,42 @@ function broadcastRealtime(event, payload) {
   }
 }
 
+let pendingSensorsUpdate = {};
+let sensorsFlushTimer = null;
+
+function queueSensorsUpdate(childId, sensors) {
+  if (!childId || !sensors) return;
+  pendingSensorsUpdate[childId] = {
+    ...(pendingSensorsUpdate[childId] || {}),
+    ...sensors,
+  };
+  if (!sensorsFlushTimer) {
+    sensorsFlushTimer = setTimeout(() => {
+      sensorsFlushTimer = null;
+      try {
+        const settingsDb = readDb('settings') || {};
+        let changed = false;
+        for (const [cId, sVals] of Object.entries(pendingSensorsUpdate)) {
+          if (settingsDb[cId]) {
+            settingsDb[cId].sensorValues = {
+              ...(settingsDb[cId].sensorValues || {}),
+              ...sVals,
+            };
+            settingsDb[cId].updatedAt = Date.now();
+            changed = true;
+          }
+        }
+        if (changed) {
+          writeDb('settings', settingsDb);
+        }
+      } catch (err) {
+        console.warn('[server.cjs] Error flushing sensor values:', err.message);
+      }
+      pendingSensorsUpdate = {};
+    }, 4000);
+  }
+}
+
 function formatTimeAgoHelper(timestampMs) {
   if (!timestampMs || timestampMs <= 0) return 'Chưa có tín hiệu';
   const diffSec = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
@@ -1034,6 +1070,30 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // 3b. High-Speed Sensor Stream API (Orientation 3D, Gyro, Accel, Compass from Kid to Parent)
+  if (pathname === '/api/sensor-stream') {
+    if (req.method === 'POST') {
+      const data = await parseJsonBody(req);
+      if (data && data.childId && data.sensors) {
+        broadcastRealtime('sensor_stream', {
+          childId: data.childId,
+          sensors: data.sensors,
+          timestamp: data.timestamp || Date.now(),
+        });
+        queueSensorsUpdate(data.childId, data.sensors);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing childId or sensors' }));
+      return;
+    }
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+    return;
+  }
+
   // 4. Remote Command API (Parent sends lock/buzz -> stored on PC -> sent to Kid)
   if (pathname === '/api/command') {
     if (req.method === 'POST') {
@@ -1235,6 +1295,88 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Missing commandId or id' }));
+      return;
+    }
+  }
+
+  // 4.2 WebRTC Signaling API
+  if (pathname === '/api/webrtc/signal') {
+    if (req.method === 'POST') {
+      const signal = await parseJsonBody(req);
+      if (signal && signal.type && signal.toId && signal.fromId) {
+        // Broadcast the WebRTC signal (offer/answer/candidate) directly to SSE clients
+        broadcastRealtime('webrtc_signal', signal);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, signaled: true }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing type, toId, or fromId' }));
+      return;
+    }
+  }
+
+  // 4.3 AI Assistant (Gemini) Proxy API
+  if (pathname === '/api/ai/chat') {
+    if (req.method === 'POST') {
+      const data = await parseJsonBody(req);
+      const aiConfig = readDb('ai_config') || {};
+      if (!aiConfig.geminiApiKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'MISSING_API_KEY' }));
+        return;
+      }
+      
+      try {
+        const { messages, childContext } = data;
+        const systemPrompt = `Bạn là ParentPro Copilot - Trợ lý AI tư vấn giáo dục và an toàn trẻ em trên không gian mạng. 
+Hãy trả lời ngắn gọn, thân thiện, và hữu ích.
+Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
+        
+        const formattedMessages = messages.map((m) => ({
+          role: m.sender === 'user' ? 'user' : 'model',
+          parts: [{ text: m.text }]
+        }));
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${aiConfig.geminiApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            contents: formattedMessages
+          })
+        });
+
+        const result = await response.json();
+        if (result.error) {
+           throw new Error(result.error.message || 'Lỗi API Gemini');
+        }
+
+        const replyText = result.candidates?.[0]?.content?.parts?.[0]?.text || 'Tôi chưa hiểu ý bạn, bạn nói lại nhé.';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, reply: replyText }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+      return;
+    }
+  }
+
+  if (pathname === '/api/ai/config') {
+    if (req.method === 'POST') {
+      const data = await parseJsonBody(req);
+      if (data && data.geminiApiKey) {
+        writeDb('ai_config', { geminiApiKey: data.geminiApiKey });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+        return;
+      }
+    }
+    if (req.method === 'GET') {
+      const aiConfig = readDb('ai_config') || {};
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ hasApiKey: !!aiConfig.geminiApiKey }));
       return;
     }
   }

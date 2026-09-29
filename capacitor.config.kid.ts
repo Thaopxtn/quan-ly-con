@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'KidCare - Con Cái',
   webDir: 'dist-kid',
   server: {
-    androidScheme: 'https',
+    androidScheme: 'http',
     cleartext: true,
   },
   android: {

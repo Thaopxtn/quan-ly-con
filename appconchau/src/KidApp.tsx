@@ -1113,10 +1113,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               const realMediaState = mediaStatus ? {
                 isPlaying: mediaStatus.isPlaying,
                 volume: mediaStatus.volume,
-                trackTitle: mediaStatus.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát',
-                artist: 'Máy con',
+                trackTitle: mediaStatus.trackTitle || (mediaStatus.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát'),
+                artist: mediaStatus.trackArtist || 'Máy con',
                 album: '',
-                artUrl: '',
+                artUrl: mediaStatus.albumArt || '',
                 positionSeconds: 0,
                 durationSeconds: 0,
                 appName: 'Media Player',
@@ -1584,10 +1584,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     mediaPlayback: {
                       isPlaying: freshMedia.isPlaying,
                       volume: freshMedia.volume,
-                      trackTitle: freshMedia.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát',
-                      artist: 'Máy con',
+                      trackTitle: freshMedia.trackTitle || (freshMedia.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát'),
+                      artist: freshMedia.trackArtist || 'Máy con',
                       album: '',
-                      artUrl: '',
+                      artUrl: freshMedia.albumArt || '',
                       positionSeconds: 0,
                       durationSeconds: 0,
                       appName: 'Media Player',
@@ -2178,7 +2178,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         }),
         isPlaying: nativeMedia.isPlaying,
         volume: nativeMedia.volume,
-        trackTitle: nativeMedia.isPlaying ? (curTargetSettings.mediaPlayback?.trackTitle && curTargetSettings.mediaPlayback.trackTitle !== 'Chưa có bài hát nào đang phát' ? curTargetSettings.mediaPlayback.trackTitle : 'Đang phát âm thanh trên máy') : 'Chưa có bài hát nào đang phát',
+        trackTitle: nativeMedia.trackTitle || (nativeMedia.isPlaying ? 'Đang phát âm thanh trên máy' : 'Chưa có bài hát nào đang phát'),
+        artist: nativeMedia.trackArtist || 'Máy con',
+        artUrl: nativeMedia.albumArt || curTargetSettings.mediaPlayback?.artUrl || '',
       } : undefined;
 
       const isDeviceLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked);

@@ -8,11 +8,21 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
@@ -21,6 +31,11 @@ public class KidProtectionService extends Service {
     private static final String CHANNEL_ID = "kidcare_protection_channel";
     private static final int NOTIFICATION_ID = 1001;
     private PowerManager.WakeLock wakeLock;
+
+    private WindowManager windowManager;
+    private View lockOverlayView;
+    private SharedPreferences prefs;
+    private SharedPreferences.OnSharedPreferenceChangeListener prefsListener;
 
     @Override
     public void onCreate() {
@@ -33,11 +48,20 @@ public class KidProtectionService extends Service {
             if (pm != null) {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KidCare::ProtectionWakeLock");
                 wakeLock.acquire();
-                Log.i(TAG, "KidProtectionService: Acquired PARTIAL_WAKE_LOCK to keep network and commands alive when screen is off");
+                Log.i(TAG, "KidProtectionService: Acquired PARTIAL_WAKE_LOCK");
             }
         } catch (Throwable t) {
             Log.w(TAG, "Could not acquire WakeLock: " + t.getMessage());
         }
+
+        prefs = getSharedPreferences("KidCareEnforcement", Context.MODE_PRIVATE);
+        prefsListener = (sharedPreferences, key) -> {
+            if ("is_locked".equals(key)) {
+                updateLockScreenState();
+            }
+        };
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener);
+        updateLockScreenState();
     }
 
     @Override
@@ -68,19 +92,30 @@ public class KidProtectionService extends Service {
             boolean hasLocationPermission = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                                             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasLocationPermission) {
-                int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-                startForeground(NOTIFICATION_ID, notification, fgsType);
-                Log.i(TAG, "KidProtectionService started in foreground with LOCATION type");
-            } else {
-                startForeground(NOTIFICATION_ID, notification);
-                Log.i(TAG, "KidProtectionService started in foreground standard");
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasLocationPermission) {
+                    int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+                    startForeground(NOTIFICATION_ID, notification, fgsType);
+                    Log.i(TAG, "KidProtectionService started in foreground with LOCATION type");
+                } else if (Build.VERSION.SDK_INT >= 34) {
+                    int fgsType = 1073741824; // FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    startForeground(NOTIFICATION_ID, notification, fgsType);
+                    Log.i(TAG, "KidProtectionService started in foreground with SPECIAL_USE type");
+                } else {
+                    startForeground(NOTIFICATION_ID, notification);
+                    Log.i(TAG, "KidProtectionService started in foreground standard");
+                }
+            } catch (SecurityException se) {
+                Log.w(TAG, "Failed to start FGS with location type, falling back to specialUse/standard...", se);
+                if (Build.VERSION.SDK_INT >= 34) {
+                    int fgsType = 1073741824; // FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    startForeground(NOTIFICATION_ID, notification, fgsType);
+                } else {
+                    startForeground(NOTIFICATION_ID, notification);
+                }
             }
         } catch (Throwable t) {
             Log.e(TAG, "Non-fatal error in startForeground: " + t.getMessage(), t);
-            try {
-                stopSelf(startId);
-            } catch (Throwable ignored) {}
         }
 
         return START_STICKY;
@@ -130,6 +165,96 @@ public class KidProtectionService extends Service {
             wakeLock = null;
         }
         super.onDestroy();
+    }
+
+    private void updateLockScreenState() {
+        if (prefs == null) return;
+        boolean isLocked = prefs.getBoolean("is_locked", false);
+        if (isLocked) {
+            showLockScreen();
+        } else {
+            hideLockScreen();
+        }
+    }
+
+    private void showLockScreen() {
+        if (lockOverlayView != null) return;
+
+        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (windowManager == null) return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Log.w(TAG, "Cannot draw overlay: permission denied");
+            return;
+        }
+
+        FrameLayout layout = new FrameLayout(this);
+        layout.setBackgroundColor(Color.parseColor("#FA0ea5e9")); // 98% opacity blue
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setGravity(Gravity.CENTER);
+
+        TextView title = new TextView(this);
+        title.setText("THIẾT BỊ ĐÃ BỊ KHÓA");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(26);
+        title.setGravity(Gravity.CENTER);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("Hãy dành thời gian nghỉ ngơi hoặc làm bài tập nhé!");
+        subtitle.setTextColor(Color.parseColor("#94A3B8")); // slate-400
+        subtitle.setTextSize(16);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0, 30, 0, 0);
+
+        container.addView(title);
+        container.addView(subtitle);
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+        );
+        layout.addView(container, params);
+
+        lockOverlayView = layout;
+
+        int layoutFlag;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+        } else {
+            layoutFlag = WindowManager.LayoutParams.TYPE_PHONE;
+        }
+
+        WindowManager.LayoutParams layoutParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                layoutFlag,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                        | WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                android.graphics.PixelFormat.TRANSLUCENT);
+
+        try {
+            windowManager.addView(lockOverlayView, layoutParams);
+            Log.i(TAG, "Lock screen overlay displayed");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to add lock view", e);
+            lockOverlayView = null;
+        }
+    }
+
+    private void hideLockScreen() {
+        if (lockOverlayView != null && windowManager != null) {
+            try {
+                windowManager.removeView(lockOverlayView);
+                Log.i(TAG, "Lock screen overlay hidden");
+            } catch (Exception ignored) {}
+            lockOverlayView = null;
+        }
     }
 
     @Override

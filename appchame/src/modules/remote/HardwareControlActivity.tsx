@@ -434,7 +434,7 @@ export const HardwareControlActivity: React.FC<HardwareControlActivityProps> = (
                   <span>30 phút</span>
                   <Play size={12} />
                 </div>
-                <p className="text-[10px] text-slate-500">Vol 20% • Khóa máy</p>
+                <p className="text-[10px] text-slate-500">Vol 20% • Cố định</p>
               </button>
 
               <button
@@ -448,7 +448,7 @@ export const HardwareControlActivity: React.FC<HardwareControlActivityProps> = (
                   <span>15 phút</span>
                   <Play size={12} />
                 </div>
-                <p className="text-[10px] text-slate-500">Tắt âm • Khóa máy</p>
+                <p className="text-[10px] text-slate-500">Tắt âm • Cố định</p>
               </button>
 
               <button

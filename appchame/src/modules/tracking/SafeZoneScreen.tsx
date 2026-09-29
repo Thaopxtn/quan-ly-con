@@ -76,8 +76,6 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
 
   // Simulation test state
   const [showSimModal, setShowSimModal] = useState(false);
-  const [simType, setSimType] = useState<'exit' | 'enter'>('exit');
-  const [simulatedZone, setSimulatedZone] = useState<SafeZone | null>(null);
 
   const getIcon = (iconName: string) => {
     switch (iconName) {
@@ -159,8 +157,8 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
         radius: zoneRadius,
         isActive: true,
         address: zoneAddress.trim() || 'Khu vực chỉ định',
-        lat: zoneLat + (Math.random() - 0.5) * 0.002,
-        lng: zoneLng + (Math.random() - 0.5) * 0.002,
+        lat: zoneLat,
+        lng: zoneLng,
         color: preset.color,
         notifyOnEnter,
         notifyOnExit,
@@ -171,12 +169,7 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
     setShowModal(false);
   };
 
-  // Trigger test simulation
-  const handleTestSimulation = (zone: SafeZone, type: 'exit' | 'enter') => {
-    setSimulatedZone(zone);
-    setSimType(type);
-    setShowSimModal(true);
-  };
+
 
   // Preview zone object for live SVG map preview while modal is open
   const previewZoneData = showModal
@@ -311,25 +304,6 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
                         zone.isActive ? 'translate-x-5' : 'translate-x-0'
                       }`}
                     />
-                  </button>
-                </div>
-              </div>
-
-              {/* Simulation Quick Trigger Bar */}
-              <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                <span className="text-slate-400 text-[10px]">Kiểm tra thông báo:</span>
-                <div className="flex items-center space-x-1.5">
-                  <button
-                    onClick={() => handleTestSimulation(zone, 'exit')}
-                    className="px-2 py-0.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg font-bold text-[10px] transition cursor-pointer"
-                  >
-                    Thử báo RỜI vùng
-                  </button>
-                  <button
-                    onClick={() => handleTestSimulation(zone, 'enter')}
-                    className="px-2 py-0.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg font-bold text-[10px] transition cursor-pointer"
-                  >
-                    Thử báo VÀO vùng
                   </button>
                 </div>
               </div>
@@ -514,55 +488,6 @@ export const SafeZoneScreen: React.FC<SafeZoneScreenProps> = ({ onBack }) => {
         </div>
       )}
 
-      {/* Geofence Alert Simulation Modal */}
-      {showSimModal && simulatedZone && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in zoom-in-95">
-          <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl border border-slate-100 space-y-4">
-            <div className="flex items-center space-x-3">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                simType === 'exit' ? 'bg-rose-100 text-rose-600 animate-pulse' : 'bg-emerald-100 text-emerald-600'
-              }`}>
-                {simType === 'exit' ? <AlertTriangle size={24} /> : <CheckCircle2 size={24} />}
-              </div>
-              <div>
-                <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                  simType === 'exit' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
-                }`}>
-                  {simType === 'exit' ? 'Cảnh báo Rời Vùng' : 'Thông báo Vào Vùng'}
-                </span>
-                <h3 className="text-sm font-bold text-slate-900 mt-1">
-                  Bé {currentChild.name} vừa {simType === 'exit' ? 'rời khỏi' : 'đến'} {simulatedZone.name}
-                </h3>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/70 text-xs space-y-1.5 text-slate-700">
-              <p>📍 <strong>Khu vực:</strong> {simulatedZone.name} (Bán kính {simulatedZone.radius}m)</p>
-              <p>📌 <strong>Địa chỉ:</strong> {simulatedZone.address}</p>
-              <p>⏱️ <strong>Thời gian:</strong> {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-              <p>⚡ <strong>Tốc độ hiện tại:</strong> {currentChild.speed || 16} km/h • Pin: {currentChild.battery}%</p>
-            </div>
-
-            <div className="flex items-center space-x-2 pt-1">
-              <button
-                type="button"
-                onClick={() => makePhoneCall(currentChild.phone || '0987654321')}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5 shadow-md shadow-emerald-500/20 transition cursor-pointer"
-              >
-                <PhoneCall size={14} />
-                <span>Gọi cho con</span>
-              </button>
-
-              <button
-                onClick={() => setShowSimModal(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
-              >
-                Đã hiểu
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -61,13 +61,29 @@ public class ParentMonitorService extends Service {
                     .setCategory(NotificationCompat.CATEGORY_SERVICE)
                     .build();
 
-            startForeground(NOTIFICATION_ID, notification);
-            Log.i(TAG, "ParentMonitorService started in foreground");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                int fgsType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+                startForeground(NOTIFICATION_ID, notification, fgsType);
+                Log.i(TAG, "ParentMonitorService started in foreground with DATA_SYNC type");
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+                Log.i(TAG, "ParentMonitorService started in foreground standard");
+            }
         } catch (Throwable t) {
             Log.e(TAG, "Error in startForeground: " + t.getMessage(), t);
         }
 
         return START_STICKY;
+    }
+
+    // Android 15+ (API 35+) FGS timeout handler - gracefully stops service without throwing system crash
+    public void onTimeout(int startId, int fgsType) {
+        Log.w(TAG, "Foreground service timeout reached for fgsType=" + fgsType + ". Stopping service gracefully.");
+        try {
+            stopSelf(startId);
+        } catch (Throwable ignored) {
+            stopSelf();
+        }
     }
 
     @Override

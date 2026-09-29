@@ -179,7 +179,7 @@ function syncParent() {
     appName: 'ParentPro - Cha Mẹ',
     webDir: 'dist-parent',
     server: {
-      androidScheme: 'https',
+      androidScheme: 'http',
       cleartext: true
     },
     android: {
@@ -192,6 +192,17 @@ function syncParent() {
       }
     }
   };
+  fs.writeFileSync(capConfigFile, JSON.stringify(capConfigContent, null, 2));
+
+  const capParentPluginsFile = path.join(root, 'android-parent', 'app', 'src', 'main', 'assets', 'capacitor.plugins.json');
+  const capParentPluginsContent = [
+    {
+      pkg: '@capacitor-firebase/authentication',
+      classpath: 'io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin'
+    }
+  ];
+  fs.writeFileSync(capParentPluginsFile, JSON.stringify(capParentPluginsContent, null, 2));
+
   // Copy 4G server discovery configuration files
   const serverUrlTxt = path.join(root, 'server-url.txt');
   const serverUrlJson = path.join(root, 'server-url.json');
@@ -244,7 +255,7 @@ function syncKid() {
     appName: 'KidCare - Con Cái',
     webDir: 'dist-kid',
     server: {
-      androidScheme: 'https',
+      androidScheme: 'http',
       cleartext: true
     },
     android: {
@@ -271,6 +282,37 @@ function syncKid() {
   console.log('✅ Đã đồng bộ dist-kid -> android-kid/app/src/main/assets/public/');
 }
 
+function patchFirebasePlugin() {
+  const pluginFile = path.join(
+    root,
+    'node_modules',
+    '@capacitor-firebase',
+    'authentication',
+    'android',
+    'src',
+    'main',
+    'java',
+    'io',
+    'capawesome',
+    'capacitorjs',
+    'plugins',
+    'firebase',
+    'authentication',
+    'FirebaseAuthenticationPlugin.java'
+  );
+  if (fs.existsSync(pluginFile)) {
+    let content = fs.readFileSync(pluginFile, 'utf8');
+    const oldMethod = 'public void handleIdTokenChange() {\n        NonEmptyResultCallback callback';
+    const newMethod = 'public void handleIdTokenChange() {\n        if (implementation.getCurrentUser() == null) {\n            return;\n        }\n        NonEmptyResultCallback callback';
+    if (content.includes(oldMethod)) {
+      content = content.replace(oldMethod, newMethod);
+      fs.writeFileSync(pluginFile, content, 'utf8');
+      console.log('🔧 [Patch] Đã vá lỗi harmless "No user is signed in" trong FirebaseAuthenticationPlugin.java');
+    }
+  }
+}
 
+patchFirebasePlugin();
 if (target === 'parent' || target === 'all') syncParent();
 if (target === 'kid' || target === 'all') syncKid();
+

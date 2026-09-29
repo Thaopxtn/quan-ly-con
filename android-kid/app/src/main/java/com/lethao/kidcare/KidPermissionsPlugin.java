@@ -34,6 +34,8 @@ import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 import android.hardware.camera2.CameraManager;
 import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.media.AudioManager;
 import android.view.KeyEvent;
@@ -60,10 +62,204 @@ public class KidPermissionsPlugin extends Plugin {
     private static final String TAG = "KidPermissionsPlugin";
     private BroadcastReceiver screenStateReceiver;
 
+    // Real-time hardware sensors
+    private SensorManager sensorManager;
+    private SensorEventListener hardwareSensorListener;
+    private volatile float currentPitch = 0f;
+    private volatile float currentRoll = 0f;
+    private volatile float currentYaw = 0f;
+    private volatile float currentAccelX = 0f;
+    private volatile float currentAccelY = 9.8f;
+    private volatile float currentAccelZ = 0f;
+    private volatile float currentGyroX = 0f;
+    private volatile float currentGyroY = 0f;
+    private volatile float currentGyroZ = 0f;
+    private volatile float currentMagnetX = 0f;
+    private volatile float currentMagnetY = 0f;
+    private volatile float currentMagnetZ = 0f;
+    private volatile float currentLightLux = 250f;
+    private volatile float currentPressureHpa = 1013.25f;
+    private volatile boolean currentProximityNear = false;
+    private volatile boolean hasRotationVectorSensor = false;
+    private volatile boolean hasLightSensor = false;
+    private volatile boolean hasAccelSensor = false;
+    private volatile boolean hasGyroSensor = false;
+    private volatile boolean hasPressureSensor = false;
+    private volatile boolean hasProximitySensor = false;
+    private volatile boolean hasMagnetSensor = false;
+    private volatile boolean isSensorStreamingActive = false;
+    private long lastStreamEmitMs = 0;
+
     @Override
     public void load() {
         super.load();
         registerScreenStateReceiver();
+        initHardwareSensors(false);
+    }
+
+    private void initHardwareSensors(boolean highFrequency) {
+        try {
+            if (sensorManager == null) {
+                sensorManager = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+            }
+            if (sensorManager == null) return;
+
+            if (hardwareSensorListener != null) {
+                try {
+                    sensorManager.unregisterListener(hardwareSensorListener);
+                } catch (Exception ignored) {}
+            }
+
+            Sensor rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+            hasRotationVectorSensor = rotationSensor != null;
+            Sensor accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            hasAccelSensor = accelSensor != null;
+            Sensor gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+            hasGyroSensor = gyroSensor != null;
+            Sensor magnetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+            hasMagnetSensor = magnetSensor != null;
+            Sensor lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+            hasLightSensor = lightSensor != null;
+            Sensor pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE);
+            hasPressureSensor = pressureSensor != null;
+            Sensor proxSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+            hasProximitySensor = proxSensor != null;
+
+            int delay = highFrequency ? SensorManager.SENSOR_DELAY_GAME : SensorManager.SENSOR_DELAY_NORMAL;
+
+            final float[] lastAccel = new float[3];
+            final float[] lastMagnet = new float[3];
+            final boolean[] hasAccelVal = {false};
+            final boolean[] hasMagnetVal = {false};
+
+            hardwareSensorListener = new SensorEventListener() {
+                @Override
+                public void onSensorChanged(SensorEvent event) {
+                    if (event == null || event.values == null) return;
+                    int type = event.sensor.getType();
+
+                    if (type == Sensor.TYPE_ROTATION_VECTOR) {
+                        try {
+                            float[] rMat = new float[9];
+                            SensorManager.getRotationMatrixFromVector(rMat, event.values);
+                            float[] orient = new float[3];
+                            SensorManager.getOrientation(rMat, orient);
+                            float yawDeg = (float) Math.toDegrees(orient[0]);
+                            if (yawDeg < 0) yawDeg += 360f;
+                            currentYaw = Math.round(yawDeg * 10f) / 10f;
+                            currentPitch = Math.round((float) Math.toDegrees(orient[1]) * 10f) / 10f;
+                            currentRoll = Math.round((float) Math.toDegrees(orient[2]) * 10f) / 10f;
+                        } catch (Exception ignored) {}
+                    } else if (type == Sensor.TYPE_ACCELEROMETER) {
+                        currentAccelX = Math.round(event.values[0] * 100f) / 100f;
+                        currentAccelY = Math.round(event.values[1] * 100f) / 100f;
+                        currentAccelZ = Math.round(event.values[2] * 100f) / 100f;
+                        lastAccel[0] = event.values[0];
+                        lastAccel[1] = event.values[1];
+                        lastAccel[2] = event.values[2];
+                        hasAccelVal[0] = true;
+
+                        // Fallback orientation if no ROTATION_VECTOR sensor is present
+                        if (!hasRotationVectorSensor && hasMagnetVal[0]) {
+                            float[] rMat = new float[9];
+                            float[] iMat = new float[9];
+                            if (SensorManager.getRotationMatrix(rMat, iMat, lastAccel, lastMagnet)) {
+                                float[] orient = new float[3];
+                                SensorManager.getOrientation(rMat, orient);
+                                float yawDeg = (float) Math.toDegrees(orient[0]);
+                                if (yawDeg < 0) yawDeg += 360f;
+                                currentYaw = Math.round(yawDeg * 10f) / 10f;
+                                currentPitch = Math.round((float) Math.toDegrees(orient[1]) * 10f) / 10f;
+                                currentRoll = Math.round((float) Math.toDegrees(orient[2]) * 10f) / 10f;
+                            }
+                        }
+                    } else if (type == Sensor.TYPE_MAGNETIC_FIELD) {
+                        currentMagnetX = Math.round(event.values[0] * 10f) / 10f;
+                        currentMagnetY = Math.round(event.values[1] * 10f) / 10f;
+                        currentMagnetZ = Math.round(event.values[2] * 10f) / 10f;
+                        lastMagnet[0] = event.values[0];
+                        lastMagnet[1] = event.values[1];
+                        lastMagnet[2] = event.values[2];
+                        hasMagnetVal[0] = true;
+                    } else if (type == Sensor.TYPE_GYROSCOPE) {
+                        currentGyroX = Math.round(event.values[0] * 1000f) / 1000f;
+                        currentGyroY = Math.round(event.values[1] * 1000f) / 1000f;
+                        currentGyroZ = Math.round(event.values[2] * 1000f) / 1000f;
+                    } else if (type == Sensor.TYPE_LIGHT) {
+                        currentLightLux = Math.round(event.values[0] * 10f) / 10f;
+                    } else if (type == Sensor.TYPE_PRESSURE) {
+                        currentPressureHpa = Math.round(event.values[0] * 10f) / 10f;
+                    } else if (type == Sensor.TYPE_PROXIMITY) {
+                        float maxR = event.sensor.getMaximumRange();
+                        currentProximityNear = event.values[0] < Math.min(maxR, 5.0f);
+                    }
+
+                    // Emit event if high-frequency stream is active (throttled to ~80ms)
+                    if (isSensorStreamingActive) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastStreamEmitMs >= 80) {
+                            lastStreamEmitMs = now;
+                            notifyListeners("sensorStreamUpdate", buildSensorDataJson(), true);
+                        }
+                    }
+                }
+
+                @Override
+                public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+            };
+
+            if (rotationSensor != null) sensorManager.registerListener(hardwareSensorListener, rotationSensor, delay);
+            if (accelSensor != null) sensorManager.registerListener(hardwareSensorListener, accelSensor, delay);
+            if (gyroSensor != null) sensorManager.registerListener(hardwareSensorListener, gyroSensor, delay);
+            if (magnetSensor != null) sensorManager.registerListener(hardwareSensorListener, magnetSensor, delay);
+            if (lightSensor != null) sensorManager.registerListener(hardwareSensorListener, lightSensor, delay);
+            if (pressureSensor != null) sensorManager.registerListener(hardwareSensorListener, pressureSensor, delay);
+            if (proxSensor != null) sensorManager.registerListener(hardwareSensorListener, proxSensor, delay);
+
+            Log.i(TAG, "Hardware sensors initialized successfully. HighFreq=" + highFrequency);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to init hardware sensors: " + e.getMessage());
+        }
+    }
+
+    private JSObject buildSensorDataJson() {
+        JSObject ret = new JSObject();
+        Context context = getContext();
+        int steps = 0;
+        try {
+            android.content.SharedPreferences sp = context.getSharedPreferences("KidCareHealth", Context.MODE_PRIVATE);
+            steps = sp.getInt("daily_steps", 0);
+        } catch (Exception ignored) {}
+
+        ret.put("hasLightSensor", hasLightSensor);
+        ret.put("hasAccelSensor", hasAccelSensor);
+        ret.put("hasGyroSensor", hasGyroSensor);
+        ret.put("hasMagnetSensor", hasMagnetSensor);
+        ret.put("hasRotationSensor", hasRotationVectorSensor);
+        ret.put("hasPressureSensor", hasPressureSensor);
+        ret.put("hasProximitySensor", hasProximitySensor);
+
+        ret.put("stepCount", steps);
+        ret.put("lightLux", (double) currentLightLux);
+        ret.put("pressureHpa", (double) currentPressureHpa);
+        ret.put("proximityNear", currentProximityNear);
+
+        ret.put("pitch", (double) currentPitch);
+        ret.put("roll", (double) currentRoll);
+        ret.put("yaw", (double) currentYaw);
+
+        ret.put("accelX", (double) currentAccelX);
+        ret.put("accelY", (double) currentAccelY);
+        ret.put("accelZ", (double) currentAccelZ);
+
+        ret.put("gyroX", (double) currentGyroX);
+        ret.put("gyroY", (double) currentGyroY);
+        ret.put("gyroZ", (double) currentGyroZ);
+
+        ret.put("magnetX", (double) currentMagnetX);
+        ret.put("magnetY", (double) currentMagnetY);
+        ret.put("magnetZ", (double) currentMagnetZ);
+        return ret;
     }
 
     private void registerScreenStateReceiver() {
@@ -99,6 +295,12 @@ public class KidPermissionsPlugin extends Plugin {
                 getContext().unregisterReceiver(screenStateReceiver);
             } catch (Exception ignored) {}
             screenStateReceiver = null;
+        }
+        if (sensorManager != null && hardwareSensorListener != null) {
+            try {
+                sensorManager.unregisterListener(hardwareSensorListener);
+            } catch (Exception ignored) {}
+            hardwareSensorListener = null;
         }
         super.handleOnDestroy();
     }
@@ -284,6 +486,7 @@ public class KidPermissionsPlugin extends Plugin {
         boolean activityRecognition = isActivityRecognitionPermissionGranted(context);
         boolean calendar = isCalendarPermissionGranted(context);
         boolean audio = isAudioPermissionGranted(context);
+        boolean notificationListener = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.getPackageName());
 
         ret.put("overlay", overlay);
         ret.put("accessibility", accessibility);
@@ -296,7 +499,8 @@ public class KidPermissionsPlugin extends Plugin {
         ret.put("activity_recognition", activityRecognition);
         ret.put("calendar", calendar);
         ret.put("audio", audio);
-        ret.put("isAllGranted", overlay && accessibility && deviceAdmin && location && battery && usageStats);
+        ret.put("notification_listener", notificationListener);
+        ret.put("isAllGranted", overlay && accessibility && deviceAdmin && location && battery && usageStats && notificationListener);
 
         call.resolve(ret);
     }
@@ -367,6 +571,13 @@ public class KidPermissionsPlugin extends Plugin {
                 case "dnd":
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         intent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
+                    }
+                    break;
+                case "notification_listener":
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                        intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                    } else {
+                        intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
                     }
                     break;
                 case "home_launcher":
@@ -1248,29 +1459,38 @@ public class KidPermissionsPlugin extends Plugin {
 
     @PluginMethod
     public void getSensorData(PluginCall call) {
-        Context context = getContext();
-        JSObject ret = new JSObject();
         try {
-            SensorManager sm = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
-            android.content.SharedPreferences sp = context.getSharedPreferences("KidCareHealth", Context.MODE_PRIVATE);
-            int steps = sp.getInt("daily_steps", 0);
-
-            if (sm != null) {
-                Sensor lightSensor = sm.getDefaultSensor(Sensor.TYPE_LIGHT);
-                ret.put("hasLightSensor", lightSensor != null);
-                Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-                ret.put("hasAccelSensor", accelSensor != null);
-                Sensor gyroSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-                ret.put("hasGyroSensor", gyroSensor != null);
-            }
-
-            ret.put("stepCount", steps);
-            ret.put("lightLux", 250);
-            ret.put("pressureHpa", 1013.25);
-            ret.put("proximityNear", false);
-            call.resolve(ret);
+            call.resolve(buildSensorDataJson());
         } catch (Exception e) {
             call.reject("Error getting sensor data: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void startSensorStream(PluginCall call) {
+        try {
+            isSensorStreamingActive = true;
+            initHardwareSensors(true);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("streaming", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error starting sensor stream: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void stopSensorStream(PluginCall call) {
+        try {
+            isSensorStreamingActive = false;
+            initHardwareSensors(false);
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("streaming", false);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error stopping sensor stream: " + e.getMessage());
         }
     }
 
@@ -1292,6 +1512,56 @@ public class KidPermissionsPlugin extends Plugin {
             }
             ret.put("isPlaying", isMusicActive);
             ret.put("volume", volumePercent);
+
+            KidNotificationListenerService notifService = KidNotificationListenerService.getInstance();
+            if (notifService != null) {
+                ret.put("notificationListenerEnabled", true);
+                android.media.session.MediaController controller = notifService.getActiveMediaController();
+                if (controller != null) {
+                    android.media.MediaMetadata metadata = controller.getMetadata();
+                    if (metadata != null) {
+                        String title = metadata.getString(android.media.MediaMetadata.METADATA_KEY_TITLE);
+                        if (title == null) title = metadata.getString(android.media.MediaMetadata.METADATA_KEY_DISPLAY_TITLE);
+                        
+                        String artist = metadata.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST);
+                        if (artist == null) artist = metadata.getString(android.media.MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE);
+                        if (artist == null) artist = metadata.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
+
+                        if (title != null) ret.put("trackTitle", title);
+                        if (artist != null) ret.put("trackArtist", artist);
+                        
+                        android.graphics.Bitmap art = metadata.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART);
+                        if (art == null) {
+                            art = metadata.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART);
+                        }
+                        if (art != null) {
+                            try {
+                                int maxWidth = 256;
+                                int width = art.getWidth();
+                                int height = art.getHeight();
+                                if (width > maxWidth || height > maxWidth) {
+                                    float ratio = Math.min((float) maxWidth / width, (float) maxWidth / height);
+                                    width = Math.round((float) width * ratio);
+                                    height = Math.round((float) height * ratio);
+                                    art = android.graphics.Bitmap.createScaledBitmap(art, width, height, true);
+                                }
+                                java.io.ByteArrayOutputStream stream = new java.io.ByteArrayOutputStream();
+                                art.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, stream);
+                                byte[] byteArray = stream.toByteArray();
+                                String base64 = android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP);
+                                ret.put("albumArt", "data:image/jpeg;base64," + base64);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    android.media.session.PlaybackState state = controller.getPlaybackState();
+                    if (state != null) {
+                        ret.put("isPlaying", state.getState() == android.media.session.PlaybackState.STATE_PLAYING || state.getState() == android.media.session.PlaybackState.STATE_BUFFERING);
+                    }
+                }
+            } else {
+                ret.put("notificationListenerEnabled", false);
+            }
+
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Error getting media status: " + e.getMessage());

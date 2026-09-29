@@ -441,6 +441,7 @@ export class ServerApiClient {
         'pc_config',
         'pc_telemetry',
         'pc_command',
+        'sensor_stream',
       ];
 
       registeredEvents.forEach(evtName => {
@@ -601,6 +602,15 @@ export class ServerApiClient {
 
   public async uploadTelemetry(data: any): Promise<boolean> {
     const res = await this.request('/api/telemetry', 'POST', data);
+    return Boolean(res && res.success);
+  }
+
+  public async sendSensorStream(childId: string, sensors: any): Promise<boolean> {
+    const res = await this.request('/api/sensor-stream', 'POST', {
+      childId,
+      sensors,
+      timestamp: Date.now(),
+    });
     return Boolean(res && res.success);
   }
 
@@ -822,6 +832,33 @@ export class ServerApiClient {
 
   public async uploadPcTelemetry(childId: string, telemetry: any): Promise<boolean> {
     const res = await this.request('/api/pc/telemetry', 'POST', { childId, telemetry });
+    return Boolean(res && res.success);
+  }
+
+  // ─── WebRTC Signaling ───────────────────────────────────────────────────
+
+  public async sendWebRTCSignal(signal: any): Promise<boolean> {
+    const res = await this.request('/api/webrtc/signal', 'POST', signal);
+    return Boolean(res && res.success);
+  }
+
+  // ─── AI Assistant (Gemini) ──────────────────────────────────────────────
+
+  public async chatWithAI(messages: any[], childContext: any): Promise<{ success: boolean; reply?: string; error?: string }> {
+    const res = await this.request('/api/ai/chat', 'POST', { messages, childContext });
+    if (res && res.success) {
+      return { success: true, reply: res.reply };
+    }
+    return { success: false, error: res?.error || 'Unknown error' };
+  }
+
+  public async checkAIConfig(): Promise<boolean> {
+    const res = await this.request('/api/ai/config', 'GET');
+    return Boolean(res && res.hasApiKey);
+  }
+
+  public async saveAIConfig(geminiApiKey: string): Promise<boolean> {
+    const res = await this.request('/api/ai/config', 'POST', { geminiApiKey });
     return Boolean(res && res.success);
   }
 }

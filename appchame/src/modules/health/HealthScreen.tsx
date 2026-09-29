@@ -220,8 +220,14 @@ export const HealthScreen: React.FC<HealthScreenProps> = ({ onBack }) => {
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 font-medium">Nhịp tim</span>
-                <p className="text-sm font-extrabold text-slate-900">{health.heartRate} bpm</p>
-                <span className="text-[9.5px] text-emerald-600 font-bold">Bình thường</span>
+                {health.heartRate > 0 ? (
+                  <>
+                    <p className="text-sm font-extrabold text-slate-900">{health.heartRate} bpm</p>
+                    <span className="text-[9.5px] text-emerald-600 font-bold">Bình thường</span>
+                  </>
+                ) : (
+                  <p className="text-sm font-extrabold text-slate-900">-- bpm</p>
+                )}
               </div>
             </div>
 
@@ -232,10 +238,16 @@ export const HealthScreen: React.FC<HealthScreenProps> = ({ onBack }) => {
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 font-medium">Giấc ngủ đêm qua</span>
-                <p className="text-sm font-extrabold text-slate-900">
-                  {health.sleepHours}h {health.sleepMinutes}p
-                </p>
-                <span className="text-[9.5px] text-indigo-600 font-bold">Ngủ sâu 85%</span>
+                {health.sleepHours > 0 || health.sleepMinutes > 0 ? (
+                  <>
+                    <p className="text-sm font-extrabold text-slate-900">
+                      {health.sleepHours}h {health.sleepMinutes}p
+                    </p>
+                    <span className="text-[9.5px] text-indigo-600 font-bold">Dữ liệu tham khảo</span>
+                  </>
+                ) : (
+                  <p className="text-sm font-extrabold text-slate-900">-- h -- p</p>
+                )}
               </div>
             </div>
           </div>
@@ -248,7 +260,7 @@ export const HealthScreen: React.FC<HealthScreenProps> = ({ onBack }) => {
             <span>Đánh giá sức khỏe tổng thể AI:</span>
           </span>
           <p className="text-emerald-900 leading-relaxed">
-            {health.aiSuggestion || `${child?.name || 'Bé'} có nhịp sinh hoạt rất điều độ, năng lượng vận động tốt và ngủ đủ giấc. Nên duy trì uống nước đều đặn khi học bài.`}
+            {health.aiSuggestion || (health.steps > 0 ? "Chưa có đủ dữ liệu để AI phân tích toàn diện." : "Chưa có dữ liệu vận động. Hãy kết nối thiết bị đeo để theo dõi sức khỏe cho bé.")}
           </p>
         </div>
       </div>

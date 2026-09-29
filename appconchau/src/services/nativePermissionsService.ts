@@ -12,6 +12,7 @@ export interface KidPermissionsStatus {
   activity_recognition?: boolean;
   calendar?: boolean;
   audio?: boolean;
+  notification_listener?: boolean;
   isAllGranted: boolean;
 }
 
@@ -28,6 +29,7 @@ export type PermissionSettingType =
   | 'calendar'
   | 'audio'
   | 'notification_policy'
+  | 'notification_listener'
   | 'home_launcher'
   | 'app_details';
 
@@ -87,15 +89,35 @@ export interface NativeSensorDataResult {
   hasLightSensor: boolean;
   hasAccelSensor: boolean;
   hasGyroSensor: boolean;
+  hasMagnetSensor?: boolean;
+  hasRotationSensor?: boolean;
+  hasPressureSensor?: boolean;
+  hasProximitySensor?: boolean;
   stepCount: number;
   lightLux: number;
   pressureHpa: number;
   proximityNear: boolean;
+  pitch?: number;
+  roll?: number;
+  yaw?: number;
+  accelX?: number;
+  accelY?: number;
+  accelZ?: number;
+  gyroX?: number;
+  gyroY?: number;
+  gyroZ?: number;
+  magnetX?: number;
+  magnetY?: number;
+  magnetZ?: number;
 }
 
 export interface NativeMediaStatusResult {
   isPlaying: boolean;
   volume: number;
+  trackTitle?: string;
+  trackArtist?: string;
+  albumArt?: string;
+  notificationListenerEnabled?: boolean;
 }
 
 export interface KidPermissionsPluginInterface {
@@ -124,11 +146,17 @@ export interface KidPermissionsPluginInterface {
   getBatteryInfo(): Promise<{ level: number; isCharging: boolean }>;
   getNetworkInfo(): Promise<NativeNetworkInfoResult>;
   getSensorData(): Promise<NativeSensorDataResult>;
+  startSensorStream(): Promise<{ success: boolean; streaming: boolean }>;
+  stopSensorStream(): Promise<{ success: boolean; streaming: boolean }>;
   getMediaStatus(): Promise<NativeMediaStatusResult>;
   requestAllAppPermissions(): Promise<{ requested: boolean }>;
   addListener(
     eventName: 'screenStateChange',
     listenerFunc: (data: { isScreenOn: boolean; action?: string }) => void
+  ): Promise<PluginListenerHandle> & PluginListenerHandle;
+  addListener(
+    eventName: 'sensorStreamUpdate',
+    listenerFunc: (data: NativeSensorDataResult) => void
   ): Promise<PluginListenerHandle> & PluginListenerHandle;
 }
 
@@ -572,10 +600,26 @@ export async function getNativeSensorData(): Promise<NativeSensorDataResult> {
           hasLightSensor: Boolean(res.hasLightSensor),
           hasAccelSensor: Boolean(res.hasAccelSensor),
           hasGyroSensor: Boolean(res.hasGyroSensor),
+          hasMagnetSensor: Boolean(res.hasMagnetSensor),
+          hasRotationSensor: Boolean(res.hasRotationSensor),
+          hasPressureSensor: Boolean(res.hasPressureSensor),
+          hasProximitySensor: Boolean(res.hasProximitySensor),
           stepCount: typeof res.stepCount === 'number' ? res.stepCount : 0,
           lightLux: typeof res.lightLux === 'number' ? res.lightLux : 250,
           pressureHpa: typeof res.pressureHpa === 'number' ? res.pressureHpa : 1013.25,
           proximityNear: Boolean(res.proximityNear),
+          pitch: typeof res.pitch === 'number' ? res.pitch : 0,
+          roll: typeof res.roll === 'number' ? res.roll : 0,
+          yaw: typeof res.yaw === 'number' ? res.yaw : 0,
+          accelX: typeof res.accelX === 'number' ? res.accelX : 0,
+          accelY: typeof res.accelY === 'number' ? res.accelY : 9.8,
+          accelZ: typeof res.accelZ === 'number' ? res.accelZ : 0,
+          gyroX: typeof res.gyroX === 'number' ? res.gyroX : 0,
+          gyroY: typeof res.gyroY === 'number' ? res.gyroY : 0,
+          gyroZ: typeof res.gyroZ === 'number' ? res.gyroZ : 0,
+          magnetX: typeof res.magnetX === 'number' ? res.magnetX : 0,
+          magnetY: typeof res.magnetY === 'number' ? res.magnetY : 0,
+          magnetZ: typeof res.magnetZ === 'number' ? res.magnetZ : 0,
         };
       }
     } catch (err) {
@@ -591,6 +635,69 @@ export async function getNativeSensorData(): Promise<NativeSensorDataResult> {
     lightLux: 250,
     pressureHpa: 1013.25,
     proximityNear: false,
+    pitch: 0,
+    roll: 0,
+    yaw: 0,
+    accelX: 0,
+    accelY: 9.8,
+    accelZ: 0,
+    gyroX: 0,
+    gyroY: 0,
+    gyroZ: 0,
+    magnetX: 0,
+    magnetY: 0,
+    magnetZ: 0,
+  };
+}
+
+export async function startNativeSensorStream(): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.startSensorStream();
+      return !!res?.success;
+    } catch (err) {
+      console.warn('startNativeSensorStream error:', err);
+    }
+  }
+  return false;
+}
+
+export async function stopNativeSensorStream(): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.stopSensorStream();
+      return !!res?.success;
+    } catch (err) {
+      console.warn('stopNativeSensorStream error:', err);
+    }
+  }
+  return false;
+}
+
+export function addNativeSensorStreamListener(callback: (data: NativeSensorDataResult) => void): (() => void) {
+  let unsubNative: (() => void) | null = null;
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const handle = (KidPermissionsPlugin as any).addListener('sensorStreamUpdate', (data: NativeSensorDataResult) => {
+        if (data) {
+          callback(data);
+        }
+      });
+      if (handle && typeof handle.then === 'function') {
+        handle.then((h: any) => {
+          unsubNative = () => h?.remove?.();
+        }).catch((err: any) => {
+          console.warn('Native sensor stream listener setup error:', err);
+        });
+      } else if (handle && handle.remove) {
+        unsubNative = () => handle.remove();
+      }
+    } catch (e) {
+      console.warn('Native sensor stream listener registration error:', e);
+    }
+  }
+  return () => {
+    if (unsubNative) unsubNative();
   };
 }
 
@@ -602,6 +709,10 @@ export async function getNativeMediaStatus(): Promise<NativeMediaStatusResult> {
         return {
           isPlaying: Boolean(res.isPlaying),
           volume: typeof res.volume === 'number' ? res.volume : 50,
+          trackTitle: res.trackTitle,
+          trackArtist: res.trackArtist,
+          albumArt: res.albumArt,
+          notificationListenerEnabled: res.notificationListenerEnabled,
         };
       }
     } catch (err) {

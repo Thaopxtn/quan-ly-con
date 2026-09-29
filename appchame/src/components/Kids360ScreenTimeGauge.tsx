@@ -340,17 +340,17 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
               <>
                 <div className="flex items-center gap-1.5">
                   <Unlock size={16} strokeWidth={2.5} />
-                  <span className="leading-tight">Mở Khóa Máy</span>
+                  <span className="leading-tight">Mở Khóa Toàn Bộ</span>
                 </div>
                 <span className="text-[9.5px] opacity-80 font-semibold">
-                  Máy con: Đang khóa 🔒
+                  Máy con: Đang bị khóa 🔒
                 </span>
               </>
             ) : (
               <>
                 <div className="flex items-center gap-1.5">
                   <Lock size={16} strokeWidth={2.5} />
-                  <span className="leading-tight">Khóa Máy Ngay</span>
+                  <span className="leading-tight">Khóa Toàn Bộ Máy</span>
                 </div>
                 <span className="text-[9.5px] opacity-80 font-semibold">
                   Máy con: Đang mở 🟢

@@ -63,6 +63,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
     (currentChild?.id === selectedChildId ? state.lockChallenge?.title : '') ||
     'Thiết bị đang bị khóa từ xa';
 
+  const childSpecificSettings = currentChild ? state.childSettings?.[currentChild.id] : null;
+  const isHwLocked = Boolean(childSpecificSettings?.hardwareControls?.isHardwareLocked);
+  const blockedAppsCount = childSpecificSettings?.apps?.filter(a => a.isBlocked).length || 0;
+
   const lockReasonType =
     currentChild?.lockType ||
     state.childSettings?.[currentChild?.id]?.lockType ||
@@ -222,7 +226,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="px-2 py-0.5 rounded-full bg-white text-rose-700 text-[10px] font-black uppercase tracking-wider shadow-xs">
-                    🔒 ĐANG KHÓA MÁY THỰC TẾ
+                    🔒 ĐANG KHÓA TOÀN BỘ MÁY
                   </span>
                   <span className="text-[10px] font-bold text-rose-100">
                     • {currentChild?.name || 'Bé'}
@@ -238,7 +242,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
                     ? 'Đang khóa theo lịch giờ đi ngủ 🌙'
                     : lockReasonType === 'screentime'
                     ? 'Đã dùng hết thời gian màn hình trong ngày ⏱️'
-                    : 'Thiết bị của con hiện đang ở trạng thái khóa.'}
+                    : 'Thiết bị của con hiện đang ở trạng thái khóa chặn.'}
                 </p>
               </div>
             </div>
@@ -264,7 +268,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
               ) : (
                 <>
                   <Unlock size={14} />
-                  <span>Mở khóa ngay</span>
+                  <span>Mở khóa toàn bộ</span>
                 </>
               )}
             </button>
@@ -291,6 +295,58 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
                 </>
               )}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ⚠️ CỐ ĐỊNH PHẦN CỨNG BANNER */}
+      {!isTargetChildLocked && isHwLocked && (
+        <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+            <Lock size={14} />
+          </div>
+          <div>
+            <h4 className="text-[11px] font-bold text-indigo-900">Âm lượng & Độ sáng đang cố định</h4>
+            <p className="text-[10px] text-indigo-700">Con không thể tự điều chỉnh phần cứng.</p>
+          </div>
+        </div>
+      )}
+
+      {/* 🚫 CHẶN ỨNG DỤNG BANNER */}
+      {!isTargetChildLocked && blockedAppsCount > 0 && (
+        <div className="p-3 rounded-2xl bg-orange-50 border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+            <Lock size={14} />
+          </div>
+          <div>
+            <h4 className="text-[11px] font-bold text-orange-900">Có {blockedAppsCount} ứng dụng bị chặn</h4>
+            <p className="text-[10px] text-orange-700">Con không thể mở các ứng dụng này.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ⚠️ CỐ ĐỊNH PHẦN CỨNG BANNER */}
+      {!isTargetChildLocked && isHwLocked && (
+        <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+            <Lock size={14} />
+          </div>
+          <div>
+            <h4 className="text-[11px] font-bold text-indigo-900">Âm lượng & Độ sáng đang cố định</h4>
+            <p className="text-[10px] text-indigo-700">Con không thể tự điều chỉnh phần cứng.</p>
+          </div>
+        </div>
+      )}
+
+      {/* 🚫 CHẶN ỨNG DỤNG BANNER */}
+      {!isTargetChildLocked && blockedAppsCount > 0 && (
+        <div className="p-3 rounded-2xl bg-orange-50 border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+            <Lock size={14} />
+          </div>
+          <div>
+            <h4 className="text-[11px] font-bold text-orange-900">Có {blockedAppsCount} ứng dụng bị chặn</h4>
+            <p className="text-[10px] text-orange-700">Con không thể mở các ứng dụng này.</p>
           </div>
         </div>
       )}

@@ -49,14 +49,12 @@ export const PremiumScreen: React.FC<PremiumScreenProps> = ({ onBack }) => {
   ];
 
   const handleCheckout = () => {
-    setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      setIsActivated(true);
-      if (activatePremiumSubscription) {
-        activatePremiumSubscription(selectedPlan);
-      }
-    }, 1800);
+    alert('Tính năng thanh toán thật đang được tích hợp. Hệ thống sẽ kích hoạt dùng thử tạm thời cho tài khoản của bạn.');
+    setIsProcessing(false);
+    setIsActivated(true);
+    if (activatePremiumSubscription) {
+      activatePremiumSubscription(selectedPlan);
+    }
   };
 
   return (

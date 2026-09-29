@@ -75,7 +75,7 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
   // Get active route points based on selected day (Real cloud points prioritized for today)
   const activeRoutePoints: RoutePoint[] =
     selectedDay === 'today'
-      ? (cloudRoutePoints.length > 0 ? cloudRoutePoints : safeRouteHistory)
+      ? cloudRoutePoints
       : [];
 
   // Playback timer
@@ -178,9 +178,9 @@ export const RouteHistoryScreen: React.FC<RouteHistoryScreenProps> = ({ onBack }
   };
 
   // Route statistics calculation
-  const totalDistanceKm = selectedDay === 'today' ? 8.6 : selectedDay === 'yesterday' ? 6.2 : 11.4;
-  const totalTravelTime = selectedDay === 'today' ? '1 giờ 25 phút' : selectedDay === 'yesterday' ? '55 phút' : '1 giờ 45 phút';
-  const maxSpeedKmH = selectedDay === 'today' ? 32 : selectedDay === 'yesterday' ? 24 : 45;
+  const totalDistanceKm = activeRoutePoints.length > 1 ? (activeRoutePoints.length * 0.5).toFixed(1) : 0;
+  const totalTravelTime = activeRoutePoints.length > 1 ? `${activeRoutePoints.length * 10} phút` : '0 phút';
+  const maxSpeedKmH = activeRoutePoints.reduce((max, pt) => Math.max(max, pt.speed || 0), 0) || 0;
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50 select-none pb-6 overflow-y-auto">
