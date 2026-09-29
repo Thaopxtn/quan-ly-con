@@ -124,7 +124,7 @@ export interface KidPermissionsPluginInterface {
   checkPermissions(): Promise<KidPermissionsStatus>;
   openPermissionSettings(options: { type: PermissionSettingType }): Promise<{ success: boolean; type?: string; fallback?: boolean }>;
   openHomeLauncherSettings(): Promise<{ success: boolean }>;
-  startProtectionService(): Promise<{ started: boolean }>;
+  startProtectionService(options?: { serverUrl?: string; childId?: string; parentId?: string; }): Promise<{ started: boolean }>;
   updateEnforcementRules(rules: {
     isLocked: boolean;
     kioskEnabled: boolean;
@@ -230,14 +230,14 @@ export async function openAndroidPermissionSettings(type: PermissionSettingType)
   }
 }
 
-export async function startNativeProtectionService(): Promise<boolean> {
+export async function startNativeProtectionService(serverUrl: string = '', childId: string = '', parentId: string = ''): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) {
     console.log('[Web Simulator] startNativeProtectionService called');
     return true;
   }
 
   try {
-    const res = await KidPermissionsPlugin.startProtectionService();
+    const res = await KidPermissionsPlugin.startProtectionService({ serverUrl, childId, parentId });
     return !!res?.started;
   } catch (err) {
     console.warn('startNativeProtectionService error:', err);

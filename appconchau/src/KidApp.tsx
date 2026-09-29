@@ -911,7 +911,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
   // Start Android Native 24/7 Foreground Protection Service on boot/mount
   useEffect(() => {
-    startNativeProtectionService().catch((e) => console.warn('Protection service startup error:', e));
+    
+
+
   }, []);
 
   // Helper to map managed app items to Android package keywords/identifiers

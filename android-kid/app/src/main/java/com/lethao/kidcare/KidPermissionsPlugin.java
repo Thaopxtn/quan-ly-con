@@ -660,6 +660,16 @@ public class KidPermissionsPlugin extends Plugin {
     public void startProtectionService(PluginCall call) {
         Context context = getContext();
         try {
+            String serverUrl = call.getString("serverUrl", "");
+            String childId = call.getString("childId", "");
+            String parentId = call.getString("parentId", "");
+
+            android.content.SharedPreferences.Editor editor = context.getSharedPreferences("KidCareEnforcement", Context.MODE_PRIVATE).edit();
+            if (!serverUrl.isEmpty()) editor.putString("serverUrl", serverUrl);
+            if (!childId.isEmpty()) editor.putString("childId", childId);
+            if (!parentId.isEmpty()) editor.putString("parentId", parentId);
+            editor.apply();
+
             Intent serviceIntent = new Intent(context, KidProtectionService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent);
