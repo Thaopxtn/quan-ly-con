@@ -701,6 +701,28 @@ export function addNativeSensorStreamListener(callback: (data: NativeSensorDataR
   };
 }
 
+export interface NativeNotificationLog {
+  packageName: string;
+  title: string;
+  text: string;
+  postTime: number;
+  id: string;
+}
+
+export async function getRecentNotifications(): Promise<NativeNotificationLog[]> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.getRecentNotifications();
+      if (res && Array.isArray(res.notifications)) {
+        return res.notifications;
+      }
+    } catch (err) {
+      console.warn('getRecentNotifications error:', err);
+    }
+  }
+  return [];
+}
+
 export async function getNativeMediaStatus(): Promise<NativeMediaStatusResult> {
   if (Capacitor.isNativePlatform()) {
     try {

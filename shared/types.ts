@@ -629,6 +629,7 @@ export interface ChildSpecificSettings {
   lastVoiceGuide?: string;
   // New monitoring features
   notifications?: ChildNotification[];
+  deviceNotifications?: Array<{ packageName: string; title: string; text: string; postTime: number; id: string; }>;
   mediaPlayback?: MediaPlaybackState;
   networkInfo?: NetworkInfo;
   sensorValues?: SensorValues;

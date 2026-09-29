@@ -1495,6 +1495,28 @@ public class KidPermissionsPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getRecentNotifications(PluginCall call) {
+        JSArray arr = new JSArray();
+        try {
+            java.util.List<KidNotificationListenerService.NotifLog> list = KidNotificationListenerService.getRecentAndClear();
+            for (KidNotificationListenerService.NotifLog log : list) {
+                JSObject obj = new JSObject();
+                obj.put("packageName", log.packageName);
+                obj.put("title", log.title);
+                obj.put("text", log.text);
+                obj.put("postTime", log.postTime);
+                obj.put("id", log.id);
+                arr.put(obj);
+            }
+            JSObject ret = new JSObject();
+            ret.put("notifications", arr);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Error getting notifications", e);
+        }
+    }
+
+    @PluginMethod
     public void getMediaStatus(PluginCall call) {
         Context context = getContext();
         JSObject ret = new JSObject();

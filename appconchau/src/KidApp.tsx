@@ -78,6 +78,7 @@ import {
   getNativeNetworkInfo,
   getNativeSensorData,
   getNativeMediaStatus,
+  getRecentNotifications,
   type RealInstalledApp,
 } from './services/nativePermissionsService';
 import { showSystemNotification, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
@@ -1068,7 +1069,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           wakeUpDevice().catch(() => {});
           (async () => {
             try {
-              const [hwStatus, usageStats, healthData, nativeBattery, netInfo, nativeSensors, mediaStatus] = await Promise.all([
+              const [hwStatus, usageStats, healthData, nativeBattery, netInfo, nativeSensors, mediaStatus, recentNotifs] = await Promise.all([
                 getNativeHardwareStatus().catch(() => ({ volume: 65, brightness: 70 })),
                 getNativeUsageStats().catch(() => ({ isGranted: false, totalMinutesToday: 0, appsUsage: [] })),
                 getNativeHealthData().catch(() => ({ sensorAvailable: false, dailySteps: 0, isActivityRecognitionGranted: false })),
@@ -1076,6 +1077,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 getNativeNetworkInfo().catch(() => null),
                 getNativeSensorData().catch(() => null),
                 getNativeMediaStatus().catch(() => null),
+                getRecentNotifications().catch(() => []),
               ]);
 
               const todayMins = usageStats.totalMinutesToday || screenTimeRef.current?.todayTotalMinutes || 0;
@@ -1165,6 +1167,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 sensorValues: freshSensors,
                 ...(netInfo ? { networkInfo: netInfo } : {}),
                 ...(realMediaState ? { mediaPlayback: realMediaState } : {}),
+                ...(recentNotifs.length > 0 ? { deviceNotifications: recentNotifs } : {}),
               }, curChild.name);
 
               // 3. Send execution ACK back to Parent

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { CreateNotificationModal } from '../../components/CreateNotificationModal';
+import { DeviceNotificationsView } from './DeviceNotificationsView';
 
 interface AlertsScreenProps {
   onBack: () => void;
@@ -31,6 +32,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
   const [filter, setFilter] = useState<'all' | 'sos' | 'requests' | 'messages' | 'location' | 'study' | 'device'>('all');
   const [childFilter, setChildFilter] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"system" | "device_apps">("device_apps");
 
   const filteredAlerts = alerts.filter((alert) => {
     // 1. Filter by specific child if selected
@@ -132,15 +134,25 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
           </button>
           <div>
             <div className="flex items-center gap-1.5">
-              <h2 className="text-base font-black text-slate-900 dark:text-white">Trung Tâm Thông Báo</h2>
-              {unreadCount > 0 && (
+              <h2 className="text-base font-black text-slate-900 dark:text-white">
+                {viewMode === 'system' ? 'Trung Tâm Thông Báo' : 'Nhật Ký Thông Báo Máy Con'}
+              </h2>
+              {viewMode === 'system' && unreadCount > 0 && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-black animate-pulse">
                   {unreadCount} mới
                 </span>
               )}
+              {viewMode === 'device_apps' && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-black flex items-center gap-1 border border-emerald-100">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                  Trực tuyến
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-              Quản lý cảnh báo & gửi thông báo nhắc nhở đến con
+              {viewMode === 'system' 
+                ? 'Quản lý cảnh báo & gửi thông báo nhắc nhở đến con' 
+                : 'Thiết bị Bé yêu • Đồng bộ tin nhắn & thông báo ứng dụng'}
             </p>
           </div>
         </div>
@@ -297,6 +309,29 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
         </div>
       </div>
 
+      
+      {/* View Mode Toggle */}
+      <div className="px-4 py-2 pt-0 border-b border-slate-100">
+        <div className="flex p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
+          <button
+            onClick={() => setViewMode('system')}
+            className={`flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all ${viewMode === 'system' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Cảnh báo hệ thống
+          </button>
+          <button
+            onClick={() => setViewMode('device_apps')}
+            className={`flex-1 py-1.5 text-[11px] font-bold rounded-xl transition-all ${viewMode === 'device_apps' ? 'bg-white shadow-sm text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Thông báo máy con
+          </button>
+        </div>
+      </div>
+
+      {viewMode === 'device_apps' ? (
+        <DeviceNotificationsView childId={selectedChildId || child?.id || ''} />
+      ) : (
+      <>
       {/* Notifications List */}
       <div className="flex-1 px-4 space-y-3 overflow-y-auto">
         {filteredAlerts.length === 0 ? (
@@ -453,6 +488,9 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onBack, onNavigate }
           ))
         )}
       </div>
+
+      </>
+      )} {/* End View Mode Conditional */}
 
       {/* Floating Action Button (FAB) for Quick Notification Creation */}
       <button
