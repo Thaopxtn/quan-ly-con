@@ -618,6 +618,7 @@ export async function uploadChildTelemetryToCloud(
     network?: any;
     mediaPlayback?: any;
     screenTimeUsedMinutes?: number;
+    screenTimeDate?: string;
     activeOpenedApp?: string;
     installedAppsCount?: number;
     childName?: string;

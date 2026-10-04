@@ -18,6 +18,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
+import { useConnectionStatus } from '@shared/services/connectionMonitorService';
 import { haptics } from '@shared/utils/haptics';
 import { UsageAccessPermissionAlert } from './UsageAccessPermissionAlert';
 import type { ChildProfile, ChildSpecificSettings } from '@shared/types';
@@ -43,7 +44,7 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   limitMinutes,
   isLocked = false,
   isStudyMode = false,
-  battery = 100,
+  battery,
   onNavigate,
   onOpenLimitModal,
   child,
@@ -100,28 +101,37 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
     }, 1000);
   };
 
-  // Calculations
-  const remainingMinutes = Math.max(0, limitMinutes - usedMinutes);
-  const percent = limitMinutes > 0 ? Math.min(100, Math.round((usedMinutes / limitMinutes) * 100)) : 0;
+  // Monitor status for live latency
+  const conn = useConnectionStatus();
 
-  const usedH = Math.floor(usedMinutes / 60);
-  const usedM = usedMinutes % 60;
+  // Calculations
+  const safeUsedMinutes = Math.max(0, Math.round(usedMinutes || 0));
+  const hasLimit = limitMinutes > 0;
+  const remainingMinutes = hasLimit ? Math.max(0, limitMinutes - safeUsedMinutes) : 0;
+  const percent = hasLimit ? Math.min(100, Math.round((safeUsedMinutes / limitMinutes) * 100)) : 0;
+
+  const usedH = Math.floor(safeUsedMinutes / 60);
+  const usedM = safeUsedMinutes % 60;
   const usedStr = `${usedH > 0 ? `${usedH}h ` : ''}${usedM}p`;
 
   const limitH = Math.floor(limitMinutes / 60);
   const limitM = limitMinutes % 60;
-  const limitStr = `${limitH > 0 ? `${limitH}h ` : ''}${limitM > 0 ? `${limitM}p` : ''}`;
+  const limitStr = hasLimit
+    ? (`${limitH > 0 ? `${limitH}h ` : ''}${limitM > 0 ? `${limitM}p` : ''}`.trim() || '0p')
+    : 'Không giới hạn';
 
   const remH = Math.floor(remainingMinutes / 60);
   const remM = remainingMinutes % 60;
-  const remainingStr = remainingMinutes === 0
+  const remainingStr = !hasLimit
+    ? 'Không giới hạn'
+    : remainingMinutes === 0
     ? 'Hết giờ'
     : `${remH > 0 ? `${remH}h ` : ''}${remM}p`;
 
   // SVG circular properties
   const radius = 64;
   const circumference = 2 * Math.PI * radius; // ~402.12
-  const strokeDashoffset = circumference - (percent / 100) * circumference;
+  const strokeDashoffset = hasLimit ? circumference - (percent / 100) * circumference : 0;
 
   // Determine theme colors based on state
   let gaugeColor = '#10B981'; // Emerald
@@ -156,7 +166,7 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   const networkInfo = localChildSettings?.networkInfo;
   const isWifiConnected = Boolean(networkInfo?.wifiConnected || (networkInfo?.wifiSSID && networkInfo.wifiSSID !== 'Chưa kết nối'));
   const wifiSSID = isWifiConnected ? (networkInfo?.wifiSSID || 'Wi-Fi Gia Đình') : (networkInfo?.cellConnected ? (networkInfo?.carrierName || 'Dữ liệu 4G/LTE') : 'Chưa kết nối Wi-Fi');
-  const wifiSignal = networkInfo?.wifiSignalDbm ?? -65;
+  const wifiSignal = networkInfo?.wifiSignalDbm;
 
   // Fast action handlers with Anti-Spam protection
   const handleToggleLock = (e: React.MouseEvent) => {
@@ -263,11 +273,11 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
               <span className="text-xs font-black text-slate-800 leading-tight">
                 {isWifiConnected ? `Wi-Fi: ${wifiSSID}` : wifiSSID}
               </span>
-              {isWifiConnected && (
+              {isWifiConnected && networkInfo?.frequency ? (
                 <span className="text-[9.5px] font-bold text-sky-700 bg-sky-100/70 px-1.5 py-0.2 rounded-md">
-                  {networkInfo?.cellType === 'WiFi' ? '5GHz' : '2.4/5GHz'}
+                  {networkInfo.frequency > 4000 ? '5GHz' : '2.4GHz'}
                 </span>
-              )}
+              ) : null}
             </div>
 
             <div className="flex items-center gap-2 mt-1">
@@ -286,9 +296,9 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
                 {isWifiConnected ? 'Đã kết nối' : 'Ngoại tuyến / Chưa kết nối'}
               </span>
 
-              {isWifiConnected && (
+              {isWifiConnected && conn.server.online && conn.server.latencyMs > 0 && (
                 <span className="inline-flex items-center gap-1 text-[9.5px] font-semibold text-slate-600 bg-white/90 border border-slate-200/60 px-1.5 py-0.2 rounded-md">
-                  ⚡ 15ms
+                  ⚡ {conn.server.latencyMs}ms
                 </span>
               )}
             </div>
@@ -299,16 +309,18 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
         <div className="flex items-end gap-0.5 h-4.5 px-1 shrink-0" title="Cường độ sóng">
           {[1, 2, 3, 4].map((bar) => {
             const activeLevel =
-              wifiSignal >= -55
-                ? 4
-                : wifiSignal >= -68
-                ? 3
-                : wifiSignal >= -80
-                ? 2
-                : wifiSignal >= -92
-                ? 1
+              wifiSignal !== undefined && wifiSignal !== null
+                ? wifiSignal >= -55
+                  ? 4
+                  : wifiSignal >= -68
+                  ? 3
+                  : wifiSignal >= -80
+                  ? 2
+                  : wifiSignal >= -92
+                  ? 1
+                  : 0
                 : 0;
-            const isLit = isWifiConnected && bar <= activeLevel;
+            const isLit = isWifiConnected && wifiSignal !== undefined && bar <= activeLevel;
             return (
               <span
                 key={bar}
@@ -388,7 +400,7 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
             </div>
             <div className="flex items-center justify-between text-slate-600">
               <span>Pin máy:</span>
-              <strong className="text-emerald-700 font-extrabold">🔋 {battery}%</strong>
+              <strong className="text-emerald-700 font-extrabold">🔋 {battery !== undefined && battery !== null ? `${battery}%` : '--'}</strong>
             </div>
           </div>
         </div>
@@ -519,11 +531,12 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
             <div className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-center">
               <div className="text-[10px] text-slate-500 font-bold">Pin</div>
               <div className={`text-sm font-black ${
-                (child.battery ?? 100) <= 20 ? 'text-rose-600'
-                : (child.battery ?? 100) <= 50 ? 'text-amber-600'
+                child.battery === undefined || child.battery === null ? 'text-slate-500'
+                : child.battery <= 20 ? 'text-rose-600'
+                : child.battery <= 50 ? 'text-amber-600'
                 : 'text-emerald-600'
               }`}>
-                {child.battery ?? '--'}%
+                {child.battery !== undefined && child.battery !== null ? `${child.battery}%` : '--'}
               </div>
               <div className="text-[9px] text-slate-400">
                 {child.isCharging ? '⚡ Sạc' : 'Dùng pin'}

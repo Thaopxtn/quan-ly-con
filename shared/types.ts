@@ -14,6 +14,8 @@ export interface DeviceTelemetryData {
   syncMode?: 'realtime' | 'balanced' | 'power_saving';
   activeOpenedApp?: string;
   screenTimeUsedMinutes?: number;
+  /** Ngày địa phương (YYYY-MM-DD) của screenTimeUsedMinutes */
+  screenTimeDate?: string;
   isLocked?: boolean;
   lockType?: string;
   lockTitle?: string;
@@ -207,6 +209,10 @@ export interface ScreenTimeData {
   entertainmentHours?: number;
   dailyLimitMinutes?: number;
   appUsage?: Record<string, number>;
+  /** Ngày địa phương (YYYY-MM-DD) mà todayTotalMinutes / hourlyUsage / appUsage thuộc về */
+  usageDate?: string;
+  /** Lịch sử tổng phút theo ngày (tối đa 30 ngày gần nhất): { '2026-10-02': 95 } */
+  dailyHistory?: Record<string, number>;
 }
 
 export interface ContentFilterCategory {
@@ -564,6 +570,7 @@ export interface NetworkInfo {
   cellBars: number; // 0-4
   cellType: '2G' | '3G' | '4G' | '5G' | 'WiFi' | 'N/A';
   cellConnected: boolean;
+  frequency?: number; // e.g. 2412 or 5180 MHz
   nearbyWifis: NearbyWifi[];
   nearbyBluetooth: NearbyBluetooth[];
 }

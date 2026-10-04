@@ -8,9 +8,11 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -59,11 +61,40 @@ public class KidProtectionService extends Service {
                     
                     if (serverUrl.isEmpty() || childId.isEmpty()) continue;
 
-                    URL url = new URL(serverUrl + "/api/command?childId=" + childId);
+                    String cleanServerUrl = serverUrl.replaceAll("/+$", "");
+                    if (!cleanServerUrl.startsWith("http://") && !cleanServerUrl.startsWith("https://")) {
+                        cleanServerUrl = "https://" + cleanServerUrl;
+                    }
+
+                    // Get current battery level
+                    int batteryPct = 100;
+                    try {
+                        IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+                        Intent batteryStatus = registerReceiver(null, ifilter);
+                        if (batteryStatus != null) {
+                            int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                            int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                            if (level >= 0 && scale > 0) {
+                                batteryPct = (int) ((level / (float) scale) * 100);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+
+                    // Get screen state (interactive = screen is ON, false = screen is locked/off)
+                    boolean isScreenOn = false;
+                    try {
+                        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                        if (pm != null) {
+                            isScreenOn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH ? pm.isInteractive() : pm.isScreenOn();
+                        }
+                    } catch (Exception ignored) {}
+
+                    URL url = new URL(cleanServerUrl + "/api/command?childId=" + childId + "&battery=" + batteryPct + "&screenOn=" + isScreenOn);
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                     conn.setRequestMethod("GET");
                     conn.setConnectTimeout(5000);
                     conn.setReadTimeout(5000);
+                    conn.setRequestProperty("Authorization", "Bearer parent_master_secret_2026");
 
                     if (conn.getResponseCode() == 200) {
                         BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
@@ -133,6 +164,7 @@ public class KidProtectionService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "KidProtectionService onStartCommand called (startId=" + startId + ")");
+        startCommandPoller();
 
         try {
             Intent notificationIntent = new Intent(this, MainActivity.class);

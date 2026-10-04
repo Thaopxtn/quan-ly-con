@@ -15,7 +15,7 @@ import {
   CheckCircle2,
   Play
 } from 'lucide-react';
-import { useAppState } from '@shared/store';
+import { useAppState, getTodayScreenTime } from '@shared/store';
 import { WebRTCManager } from '@shared/services/webRtcService';
 
 interface LiveMonitorActivityProps {
@@ -81,7 +81,7 @@ export const LiveMonitorActivity: React.FC<LiveMonitorActivityProps> = ({ onBack
   const isScreenOn = currentChild?.isScreenOn !== false;
   const activeApp = currentChild?.activeOpenedApp || childSettings?.activeOpenedApp || state.activeOpenedApp;
   const activeAppName = typeof activeApp === 'object' && activeApp ? activeApp.name : (typeof activeApp === 'string' ? activeApp : '');
-  const screenTimeUsed = childSettings?.screenTime?.todayTotalMinutes ?? currentChild?.screenTimeUsedMinutes ?? state.screenTime?.todayTotalMinutes ?? 0;
+  const screenTimeUsed = getTodayScreenTime(childSettings?.screenTime).todayTotalMinutes ?? currentChild?.screenTimeUsedMinutes ?? 0;
   const isLocked = Boolean(currentChild?.isLocked || childSettings?.isLocked || childSettings?.lockChallenge?.isLocked);
 
   return (

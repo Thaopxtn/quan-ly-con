@@ -36,6 +36,10 @@ import android.telephony.SignalStrength;
 import android.app.AppOpsManager;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
+import android.app.usage.UsageEvents;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import android.hardware.camera2.CameraManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -1321,66 +1325,123 @@ public class KidPermissionsPlugin extends Plugin {
                         long startTime = cal.getTimeInMillis();
                         long endTime = System.currentTimeMillis();
 
-                        Map<String, UsageStats> statsMap = null;
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            statsMap = usm.queryAndAggregateUsageStats(startTime, endTime);
-                        }
-                        JSArray appUsageList = new JSArray();
-                        long totalMinutesToday = 0;
-                        String myPkg = context.getPackageName();
+                        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+                        String usageDate = sdf.format(new Date(startTime));
 
-                        if (statsMap != null && !statsMap.isEmpty()) {
-                            for (UsageStats u : statsMap.values()) {
-                                String pkg = u.getPackageName();
-                                if (pkg == null || pkg.equals("com.android.systemui") || pkg.contains("inputmethod")) {
-                                    continue;
-                                }
-                                long totalTimeMillis = u.getTotalTimeInForeground();
-                                if (totalTimeMillis > 30000) {
-                                    long mins = Math.max(1, totalTimeMillis / 60000);
-                                    totalMinutesToday += mins;
-                                    if (!pkg.equals(myPkg)) {
-                                        JSObject item = new JSObject();
-                                        item.put("packageName", pkg);
-                                        item.put("usedMinutes", mins);
-                                        item.put("lastTimeUsed", u.getLastTimeUsed());
-                                        appUsageList.put(item);
-                                    }
-                                }
+                        String myPkg = context.getPackageName();
+                        String launcherPkg = "";
+                        try {
+                            Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+                            homeIntent.addCategory(Intent.CATEGORY_HOME);
+                            ResolveInfo defaultLauncher = context.getPackageManager().resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY);
+                            if (defaultLauncher != null && defaultLauncher.activityInfo != null) {
+                                launcherPkg = defaultLauncher.activityInfo.packageName;
                             }
-                        } else {
-                            List<UsageStats> stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
-                            Map<String, Long> deduplicated = new HashMap<>();
-                            Map<String, Long> lastUsedMap = new HashMap<>();
-                            if (stats != null) {
-                                for (UsageStats u : stats) {
-                                    String pkg = u.getPackageName();
-                                    if (pkg == null || pkg.equals("com.android.systemui") || pkg.contains("inputmethod")) {
+                        } catch (Exception ignored) {}
+
+                        Map<String, Long> appUsageMillis = new HashMap<>();
+                        Map<String, Long> lastUsedMap = new HashMap<>();
+                        long[] hourlyMillis = new long[24];
+                        boolean queryEventsSuccess = false;
+
+                        try {
+                            UsageEvents events = usm.queryEvents(startTime, endTime);
+                            if (events != null && events.hasNextEvent()) {
+                                Map<String, Long> activeSessions = new HashMap<>();
+                                UsageEvents.Event event = new UsageEvents.Event();
+
+                                while (events.hasNextEvent()) {
+                                    events.getNextEvent(event);
+                                    String pkg = event.getPackageName();
+                                    if (pkg == null || pkg.equals("com.android.systemui") || pkg.contains("inputmethod") || pkg.equals(launcherPkg)) {
                                         continue;
                                     }
-                                    long time = u.getTotalTimeInForeground();
-                                    deduplicated.put(pkg, deduplicated.getOrDefault(pkg, 0L) + time);
-                                    long last = Math.max(lastUsedMap.getOrDefault(pkg, 0L), u.getLastTimeUsed());
-                                    lastUsedMap.put(pkg, last);
-                                }
-                                for (Map.Entry<String, Long> entry : deduplicated.entrySet()) {
-                                    if (entry.getValue() > 30000) {
-                                        long mins = Math.max(1, entry.getValue() / 60000);
-                                        totalMinutesToday += mins;
-                                        if (!entry.getKey().equals(myPkg)) {
-                                            JSObject item = new JSObject();
-                                            item.put("packageName", entry.getKey());
-                                            item.put("usedMinutes", mins);
-                                            item.put("lastTimeUsed", lastUsedMap.getOrDefault(entry.getKey(), 0L));
-                                            appUsageList.put(item);
+
+                                    int eventType = event.getEventType();
+                                    long timestamp = event.getTimeStamp();
+
+                                    if (eventType == UsageEvents.Event.ACTIVITY_RESUMED || eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                                        activeSessions.put(pkg, timestamp);
+                                        lastUsedMap.put(pkg, Math.max(lastUsedMap.getOrDefault(pkg, 0L), timestamp));
+                                    } else if (eventType == UsageEvents.Event.ACTIVITY_PAUSED || eventType == UsageEvents.Event.MOVE_TO_BACKGROUND) {
+                                        Long start = activeSessions.remove(pkg);
+                                        if (start != null && timestamp > start) {
+                                            long clampedStart = Math.max(start, startTime);
+                                            long clampedEnd = Math.min(timestamp, endTime);
+                                            if (clampedEnd > clampedStart) {
+                                                long duration = clampedEnd - clampedStart;
+                                                appUsageMillis.put(pkg, appUsageMillis.getOrDefault(pkg, 0L) + duration);
+                                                lastUsedMap.put(pkg, Math.max(lastUsedMap.getOrDefault(pkg, 0L), timestamp));
+                                                distributeHourly(clampedStart, clampedEnd, hourlyMillis, startTime);
+                                            }
                                         }
                                     }
                                 }
+
+                                for (Map.Entry<String, Long> entry : activeSessions.entrySet()) {
+                                    String pkg = entry.getKey();
+                                    long start = entry.getValue();
+                                    long clampedStart = Math.max(start, startTime);
+                                    if (endTime > clampedStart) {
+                                        long duration = endTime - clampedStart;
+                                        appUsageMillis.put(pkg, appUsageMillis.getOrDefault(pkg, 0L) + duration);
+                                        lastUsedMap.put(pkg, Math.max(lastUsedMap.getOrDefault(pkg, 0L), endTime));
+                                        distributeHourly(clampedStart, endTime, hourlyMillis, startTime);
+                                    }
+                                }
+                                queryEventsSuccess = true;
                             }
+                        } catch (Exception eEvents) {
+                            Log.w(TAG, "queryEvents fallback: " + eEvents.getMessage());
+                        }
+
+                        if (!queryEventsSuccess) {
+                            Map<String, UsageStats> statsMap = usm.queryAndAggregateUsageStats(startTime, endTime);
+                            if (statsMap != null && !statsMap.isEmpty()) {
+                                for (UsageStats u : statsMap.values()) {
+                                    String pkg = u.getPackageName();
+                                    if (pkg == null || pkg.equals("com.android.systemui") || pkg.contains("inputmethod") || pkg.equals(launcherPkg)) {
+                                        continue;
+                                    }
+                                    long totalTimeMillis = u.getTotalTimeInForeground();
+                                    if (totalTimeMillis > 0) {
+                                        appUsageMillis.put(pkg, totalTimeMillis);
+                                        lastUsedMap.put(pkg, u.getLastTimeUsed());
+                                    }
+                                }
+                            }
+                        }
+
+                        JSArray appUsageList = new JSArray();
+                        long totalDurationMillis = 0;
+
+                        for (Map.Entry<String, Long> entry : appUsageMillis.entrySet()) {
+                            String pkg = entry.getKey();
+                            long duration = entry.getValue();
+                            if (duration > 30000) {
+                                long mins = Math.max(1, duration / 60000);
+                                totalDurationMillis += duration;
+                                if (!pkg.equals(myPkg)) {
+                                    JSObject item = new JSObject();
+                                    item.put("packageName", pkg);
+                                    item.put("usedMinutes", mins);
+                                    item.put("lastTimeUsed", lastUsedMap.getOrDefault(pkg, 0L));
+                                    appUsageList.put(item);
+                                }
+                            }
+                        }
+
+                        long totalMinutesToday = totalDurationMillis / 60000;
+
+                        JSArray hourlyArray = new JSArray();
+                        for (int h = 0; h < 24; h++) {
+                            hourlyArray.put(hourlyMillis[h] / 60000);
                         }
 
                         ret.put("isGranted", isUsageStatsPermissionGranted(context));
                         ret.put("totalMinutesToday", totalMinutesToday);
+                        ret.put("usageDate", usageDate);
+                        ret.put("hourlyUsage", hourlyArray);
                         ret.put("appsUsage", appUsageList);
                         call.resolve(ret);
                         return;
@@ -1394,6 +1455,19 @@ public class KidPermissionsPlugin extends Plugin {
             ret.put("appsUsage", new JSArray());
             call.resolve(ret);
         }).start();
+    }
+
+    private void distributeHourly(long startMs, long endMs, long[] hourlyMillis, long dayStartMs) {
+        long hourMs = 3600000L;
+        for (int h = 0; h < 24; h++) {
+            long binStart = dayStartMs + h * hourMs;
+            long binEnd = binStart + hourMs;
+            long overlapStart = Math.max(startMs, binStart);
+            long overlapEnd = Math.min(endMs, binEnd);
+            if (overlapEnd > overlapStart) {
+                hourlyMillis[h] += (overlapEnd - overlapStart);
+            }
+        }
     }
 
     @PluginMethod

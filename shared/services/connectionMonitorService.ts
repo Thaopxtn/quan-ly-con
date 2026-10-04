@@ -266,18 +266,18 @@ class ConnectionMonitorService {
 
       // Find newest telemetry for this child
       const tele = recentTelemetry.find(t => t.childId === kidId) || {};
-      const lastUpdatedMs = tele.lastUpdated || tele.timestamp || (k.lastUpdated ? new Date(k.lastUpdated).getTime() : 0);
-      const isLive = Boolean(lastUpdatedMs && (Date.now() - lastUpdatedMs < 60000)); // Online if telemetry < 60s
+      const lastUpdatedMs = tele.lastUpdated || tele.timestamp || (k.lastSeenMs ? Number(k.lastSeenMs) : 0) || (k.updatedAt ? Number(k.updatedAt) : 0) || (k.lastUpdated ? new Date(k.lastUpdated).getTime() : 0);
+      const isLive = Boolean((lastUpdatedMs && (Date.now() - lastUpdatedMs < 180000)) || k.status === 'online' || k.isOnline === true);
 
       const batteryLevel = typeof tele.battery === 'number' ? tele.battery : (typeof k.battery === 'number' ? k.battery : 100);
       const isCharging = Boolean(tele.isCharging);
       const isLocked = Boolean(k.isLocked || tele.isLocked);
-      const screenOn = tele.isScreenOn !== undefined ? Boolean(tele.isScreenOn) : true;
+      const screenOn = tele.isScreenOn !== undefined ? Boolean(tele.isScreenOn) : (k.isScreenOn !== undefined ? Boolean(k.isScreenOn) : true);
 
       let screenState: 'active' | 'screen_off' | 'locked' = 'active';
       if (isLocked) {
         screenState = 'locked';
-      } else if (!screenOn || tele.screenState === 'screen_off') {
+      } else if (!screenOn || tele.screenState === 'screen_off' || k.screenState === 'screen_off') {
         screenState = 'screen_off';
       }
 

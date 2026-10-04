@@ -384,16 +384,23 @@ function formatTimeAgoHelper(timestampMs) {
   return `${diffDays} ngày trước`;
 }
 
+// Active child background polling timestamps to track 24/7 online devices
+const activeChildPollTimestamps = new Map(); // childId -> { timestamp, battery, isScreenOn }
+const lastChildDbWriteTimes = new Map(); // childId -> timestamp
+
 function enrichChildWithLiveStatus(child) {
   if (!child || !child.id) return child;
   const telemetryDb = readDb('telemetry');
   // Find newest telemetry for this child
   const lastTele = Array.isArray(telemetryDb) ? telemetryDb.find(t => t && t.childId === child.id) : null;
-  const lastTime = (lastTele && (lastTele.lastUpdated || lastTele.timestamp || (lastTele.savedAt ? new Date(lastTele.savedAt).getTime() : 0)))
-    || (child.updatedAt ? Number(child.updatedAt) : 0);
+  const pollInfo = activeChildPollTimestamps.get(child.id);
+  const pollTime = pollInfo ? pollInfo.timestamp : 0;
+  const teleTime = (lastTele && (lastTele.lastUpdated || lastTele.timestamp || (lastTele.savedAt ? new Date(lastTele.savedAt).getTime() : 0))) || 0;
+  const childUpdateTime = child.updatedAt ? Number(child.updatedAt) : 0;
+  const lastTime = Math.max(pollTime, teleTime, childUpdateTime);
 
   const now = Date.now();
-  const isOnline = Boolean(lastTime && (now - lastTime < 120000)); // 2 minutes threshold
+  const isOnline = Boolean(lastTime && (now - lastTime < 180000)); // 3 minutes threshold (resilient to Android Doze)
   const status = isOnline ? 'online' : 'offline';
 
   // Last known coordinates
@@ -413,6 +420,14 @@ function enrichChildWithLiveStatus(child) {
     currentAddress = currentAddress.replace('Bé đang mở ứng dụng', 'Vị trí sau cùng');
   }
 
+  const effectiveBattery = (pollInfo && typeof pollInfo.battery === 'number')
+    ? pollInfo.battery
+    : ((lastTele && typeof lastTele.battery === 'number') ? lastTele.battery : (child.battery ?? 100));
+
+  const effectiveScreenOn = (pollInfo && pollInfo.isScreenOn !== undefined)
+    ? pollInfo.isScreenOn
+    : ((lastTele && lastTele.isScreenOn !== undefined) ? lastTele.isScreenOn : (child.isScreenOn ?? false));
+
   return {
     ...child,
     status,
@@ -422,12 +437,12 @@ function enrichChildWithLiveStatus(child) {
     lastUpdated: lastTime ? new Date(lastTime).toISOString() : child.lastUpdated,
     lat: effectiveLat,
     lng: effectiveLng,
-    battery: (lastTele && typeof lastTele.battery === 'number') ? lastTele.battery : (child.battery ?? 100),
+    battery: effectiveBattery,
     speed: isOnline ? ((lastTele && typeof lastTele.speed === 'number') ? lastTele.speed : (child.speed || 0)) : 0,
     currentAddress,
-    isScreenOn: (lastTele && lastTele.isScreenOn !== undefined) ? lastTele.isScreenOn : (child.isScreenOn ?? false),
-    screenState: (lastTele && lastTele.screenState) || child.screenState || (isOnline ? 'active' : 'screen_off'),
-    appStatus: (lastTele && lastTele.appStatus) || child.appStatus || (isOnline ? 'active_in_app' : 'screen_off'),
+    isScreenOn: effectiveScreenOn,
+    screenState: !effectiveScreenOn ? 'screen_off' : ((lastTele && lastTele.screenState) || 'active'),
+    appStatus: !effectiveScreenOn ? 'screen_off' : ((lastTele && lastTele.appStatus) || child.appStatus || (isOnline ? 'active_in_app' : 'screen_off')),
   };
 }
 
@@ -543,8 +558,8 @@ function parseJsonBody(req) {
  * Checks whether an endpoint is public (exempt from cryptographic token check)
  */
 function isPublicEndpoint(pathname) {
-  // 1. Health checks (required for 4G cloud auto-discovery and ping)
-  if (pathname === '/api/health' || pathname === '/health') return true;
+  // 1. Health checks & public info (required for 4G cloud auto-discovery, ping, and showcase landing website)
+  if (pathname === '/api/health' || pathname === '/health' || pathname === '/api/public-info') return true;
   // 2. Initial pairing negotiation & device sharing (devices do not possess token yet)
   if (pathname === '/api/pairing' || pathname.startsWith('/api/pairing/') || pathname === '/api/pairing/create' || pathname === '/api/pairing/confirm' || pathname === '/api/sharing' || pathname.startsWith('/api/sharing/')) return true;
   // 3. Auth token exchange
@@ -686,6 +701,59 @@ const server = http.createServer(async (req, res) => {
         dataDir: DATA_DIR,
       },
       activeRealtimeConnections: sseClients.size,
+    }));
+    return;
+  }
+
+  // 1.0 Public Server & App Information (Used by showcase landing page)
+  if (pathname === '/api/public-info') {
+    let tunnelUrl = '';
+    const txtPath = path.join(ROOT_DIR, 'server-url.txt');
+    if (fs.existsSync(txtPath)) {
+      try { tunnelUrl = fs.readFileSync(txtPath, 'utf8').trim(); } catch (_) {}
+    }
+    const localIps = getLocalIpAddresses();
+
+    let parentApkSize = '7.1 MB';
+    let kidApkSize = '6.9 MB';
+    try {
+      const pStat = fs.statSync(path.join(ROOT_DIR, 'ParentPro-AppChaMe.apk'));
+      parentApkSize = (pStat.size / (1024 * 1024)).toFixed(2) + ' MB';
+    } catch (_) {}
+    try {
+      const kStat = fs.statSync(path.join(ROOT_DIR, 'KidCare-AppConCai.apk'));
+      kidApkSize = (kStat.size / (1024 * 1024)).toFixed(2) + ' MB';
+    } catch (_) {}
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'online',
+      version: '2.5 Production',
+      service: 'KidCare & ParentPro Server',
+      uptime: Math.floor(process.uptime()),
+      tunnelUrl,
+      localIps,
+      parentApk: {
+        filename: 'ParentPro-AppChaMe.apk',
+        downloadUrl: '/download/parent',
+        public4gUrl: tunnelUrl ? `${tunnelUrl}/download/parent` : '/download/parent',
+        size: parentApkSize,
+      },
+      kidApk: {
+        filename: 'KidCare-AppConCai.apk',
+        downloadUrl: '/download/kid',
+        public4gUrl: tunnelUrl ? `${tunnelUrl}/download/kid` : '/download/kid',
+        size: kidApkSize,
+      },
+      webApps: {
+        parent: '/parent.html',
+        parent4g: tunnelUrl ? `${tunnelUrl}/parent.html` : '/parent.html',
+        kid: '/kid.html',
+        kid4g: tunnelUrl ? `${tunnelUrl}/kid.html` : '/kid.html',
+        portal: '/portal',
+        portal4g: tunnelUrl ? `${tunnelUrl}/portal` : '/portal',
+      },
+      githubUrl: 'https://github.com/Thaopxtn/quan-ly-con'
     }));
     return;
   }
@@ -1001,7 +1069,15 @@ const server = http.createServer(async (req, res) => {
             const cur = settingsDb[data.childId] || {};
             // BUG-01 FIX: Bảo vệ isLocked khỏi bị telemetry cũ ghi đè sau khi ACK vừa cập nhật
             // Chỉ nhận isLocked từ telemetry nếu telemetry mới hơn lần ACK/settings update gần nhất
-            const usedMinutes = data.screenTimeUsedMinutes != null ? data.screenTimeUsedMinutes : (cur.screenTimeUsedMinutes || (cur.screenTime && cur.screenTime.todayTotalMinutes) || 0);
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const isDataToday = !data.screenTimeDate || data.screenTimeDate === todayStr;
+            const curDate = cur.screenTimeDate || (cur.screenTime && cur.screenTime.usageDate) || '';
+            const isCurToday = curDate === todayStr;
+
+            const usedMinutes = isDataToday && data.screenTimeUsedMinutes != null
+              ? data.screenTimeUsedMinutes
+              : (isCurToday ? (cur.screenTimeUsedMinutes || (cur.screenTime && cur.screenTime.todayTotalMinutes) || 0) : 0);
+
             const limitMinutes = cur.screenTimeLimitMinutes || 135;
             const isScreenTimeExpired = limitMinutes > 0 && usedMinutes >= limitMinutes;
 
@@ -1024,6 +1100,7 @@ const server = http.createServer(async (req, res) => {
               screenState: data.screenState || cur.screenState,
               activeOpenedApp: data.activeOpenedApp || cur.activeOpenedApp,
               screenTimeUsedMinutes: usedMinutes,
+              screenTimeDate: isDataToday ? (data.screenTimeDate || todayStr) : todayStr,
               hasUsageAccessPermission: data.hasUsageAccessPermission != null ? data.hasUsageAccessPermission : cur.hasUsageAccessPermission,
               isLocked: updatedIsLocked,
               lockType: updatedLockType,
@@ -1160,10 +1237,62 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET') {
       const childId = parsedUrl.searchParams.get('childId');
       const status = parsedUrl.searchParams.get('status');
-      const commands = readDb('commands');
+      const batteryParam = parsedUrl.searchParams.get('battery');
+      const screenOnParam = parsedUrl.searchParams.get('screenOn');
 
-      const CMD_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút cho các lệnh thông thường (buzz_siren, sync_request)
       const now = Date.now();
+      if (childId) {
+        let batteryVal = undefined;
+        if (batteryParam !== null && batteryParam !== undefined) {
+          const b = parseInt(batteryParam, 10);
+          if (!isNaN(b)) batteryVal = b;
+        }
+        let screenOnVal = undefined;
+        if (screenOnParam !== null && screenOnParam !== undefined) {
+          screenOnVal = screenOnParam === 'true';
+        }
+
+        activeChildPollTimestamps.set(childId, {
+          timestamp: now,
+          battery: batteryVal,
+          isScreenOn: screenOnVal,
+        });
+
+        // Throttle disk writes to once per 20 seconds per child
+        const lastWriteTime = lastChildDbWriteTimes.get(childId) || 0;
+        if (now - lastWriteTime > 20000) {
+          lastChildDbWriteTimes.set(childId, now);
+          try {
+            const childrenDb = readDb('children');
+            let cModified = false;
+            for (const pId of Object.keys(childrenDb)) {
+              if (Array.isArray(childrenDb[pId])) {
+                for (const ch of childrenDb[pId]) {
+                  if (ch.id === childId || ch.deviceId === childId || ch.childId === childId) {
+                    ch.status = 'online';
+                    ch.isOnline = true;
+                    ch.updatedAt = now;
+                    ch.lastSeenMs = now;
+                    ch.lastUpdated = new Date(now).toISOString();
+                    if (batteryVal !== undefined) ch.battery = batteryVal;
+                    if (screenOnVal !== undefined) {
+                      ch.isScreenOn = screenOnVal;
+                      ch.screenState = screenOnVal ? 'active' : 'screen_off';
+                    }
+                    cModified = true;
+                  }
+                }
+              }
+            }
+            if (cModified) {
+              writeDb('children', childrenDb);
+            }
+          } catch (_) {}
+        }
+      }
+
+      const commands = readDb('commands');
+      const CMD_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút cho các lệnh thông thường (buzz_siren, sync_request)
       let expiredAny = false;
       for (const cmd of commands) {
         const isUnlockOrUnpair = cmd.command === 'unlock_now' || cmd.type === 'unlock_now' || cmd.command === 'unpair_device' || cmd.type === 'unpair_device';
@@ -2412,6 +2541,33 @@ Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
     return;
   }
 
+  // 7.1 Showcase Website & App Downloads Portal Route (/intro, /landing, /about, /download, /downloads, /apps, or root /)
+  const isIntroRoute = (
+    pathname === '/intro' || pathname === '/intro.html' ||
+    pathname === '/landing' || pathname === '/landing.html' ||
+    pathname === '/about' || pathname === '/about.html' ||
+    pathname === '/apps' || pathname === '/apps.html' ||
+    pathname === '/download' || pathname === '/downloads' ||
+    (pathname === '/' && parsedUrl.searchParams.get('app') !== 'parent')
+  );
+
+  if (isIntroRoute) {
+    const introFile = path.join(ROOT_DIR, 'public', 'intro.html');
+    if (fs.existsSync(introFile)) {
+      sendFile(res, introFile, 'text/html; charset=utf-8');
+      return;
+    }
+  }
+
+  // 7.2 Parent App Explicit Route (/parent or /parent.html)
+  if (pathname === '/parent' || pathname === '/parent.html') {
+    const parentFile = path.join(DIST_PARENT, 'parent.html');
+    if (fs.existsSync(parentFile)) {
+      sendFile(res, parentFile, 'text/html; charset=utf-8');
+      return;
+    }
+  }
+
   // 8. Server Management Portal & Full Dashboard
   if (pathname === '/portal' || pathname === '/hub' || pathname === '/dashboard' || pathname === '/admin' || pathname === '/server' || pathname === '/server-admin') {
     const portalFile = path.join(ROOT_DIR, 'public', 'portal.html');
@@ -2426,6 +2582,17 @@ Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
     const iconFile = path.join(ROOT_DIR, 'public', 'app-icon.ico');
     if (fs.existsSync(iconFile)) {
       sendFile(res, iconFile, 'image/x-icon');
+      return;
+    }
+  }
+
+  // Check public directory for images, icons, and static assets
+  let relPath = pathname.replace(/^\//, '');
+  if (relPath) {
+    let publicFile = path.join(ROOT_DIR, 'public', relPath);
+    if (fs.existsSync(publicFile) && fs.statSync(publicFile).isFile()) {
+      const ext = path.extname(publicFile).toLowerCase();
+      sendFile(res, publicFile, MIME_TYPES[ext] || 'application/octet-stream');
       return;
     }
   }
@@ -2458,9 +2625,7 @@ Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
   }
 
   // 10. Parent App & Static Assets Route
-  let relPath = pathname === '/' ? 'parent.html' : pathname.replace(/^\//, '');
-  let targetFile = path.join(DIST_PARENT, relPath);
-
+  let targetFile = path.join(DIST_PARENT, relPath || 'parent.html');
   if (fs.existsSync(targetFile) && fs.statSync(targetFile).isFile()) {
     const ext = path.extname(targetFile).toLowerCase();
     sendFile(res, targetFile, MIME_TYPES[ext] || 'application/octet-stream');

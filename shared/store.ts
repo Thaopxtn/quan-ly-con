@@ -54,6 +54,142 @@ export function getLocalDateString(dateInput?: Date | number | string): string {
   return `${year}-${month}-${day}`;
 }
 
+export const DEFAULT_SCREEN_TIME_LIMIT = 135;
+export const EMPTY_HOURLY = (): number[] => Array(24).fill(0);
+
+/** Trả về screenTime "của hôm nay": nếu dữ liệu thuộc ngày cũ → phút = 0, dời sang yesterday/dailyHistory */
+export function getTodayScreenTime(st?: Partial<ScreenTimeData>, today = getLocalDateString()): ScreenTimeData {
+  if (!st) {
+    return {
+      todayTotalMinutes: 0,
+      yesterdayTotalMinutes: 0,
+      percentChangeVsYesterday: 0,
+      hourlyUsage: EMPTY_HOURLY(),
+      weekTotalHours: 0,
+      studyHours: 0,
+      entertainmentHours: 0,
+      dailyLimitMinutes: DEFAULT_SCREEN_TIME_LIMIT,
+      appUsage: {},
+      usageDate: today,
+      dailyHistory: {},
+    };
+  }
+
+  const usageDate = st.usageDate || today;
+  if (st.usageDate && st.usageDate !== today) {
+    const prevHistory: Record<string, number> = { ...(st.dailyHistory || {}) };
+    if (typeof st.todayTotalMinutes === 'number') {
+      prevHistory[st.usageDate] = st.todayTotalMinutes;
+    }
+    const dates = Object.keys(prevHistory).sort();
+    if (dates.length > 30) {
+      for (const d of dates.slice(0, dates.length - 30)) {
+        delete prevHistory[d];
+      }
+    }
+    const yesterdayMins = st.todayTotalMinutes || 0;
+    return {
+      ...st,
+      todayTotalMinutes: 0,
+      yesterdayTotalMinutes: yesterdayMins,
+      percentChangeVsYesterday: yesterdayMins > 0 ? -100 : 0,
+      hourlyUsage: EMPTY_HOURLY(),
+      appUsage: {},
+      usageDate: today,
+      dailyHistory: prevHistory,
+      dailyLimitMinutes: st.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT,
+    };
+  }
+
+  return {
+    todayTotalMinutes: st.todayTotalMinutes ?? 0,
+    yesterdayTotalMinutes: st.yesterdayTotalMinutes ?? 0,
+    percentChangeVsYesterday: st.percentChangeVsYesterday ?? 0,
+    hourlyUsage: (st.hourlyUsage && st.hourlyUsage.length === 24) ? st.hourlyUsage : EMPTY_HOURLY(),
+    weekTotalHours: st.weekTotalHours ?? 0,
+    studyHours: st.studyHours ?? 0,
+    entertainmentHours: st.entertainmentHours ?? 0,
+    dailyLimitMinutes: st.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT,
+    appUsage: st.appUsage || {},
+    usageDate: usageDate,
+    dailyHistory: st.dailyHistory || {},
+  };
+}
+
+/** Gộp 2 bản screenTime: ngày mới hơn thắng; cùng ngày → max(phút) và max theo từng giờ/app */
+export function mergeScreenTime(
+  a?: Partial<ScreenTimeData>,
+  b?: Partial<ScreenTimeData>,
+  today = getLocalDateString()
+): ScreenTimeData {
+  if (!a && !b) return getTodayScreenTime(undefined, today);
+  if (!a) return getTodayScreenTime(b, today);
+  if (!b) return getTodayScreenTime(a, today);
+
+  const cleanA = getTodayScreenTime(a, today);
+  const cleanB = getTodayScreenTime(b, today);
+
+  const dateA = a.usageDate || cleanA.usageDate || today;
+  const dateB = b.usageDate || cleanB.usageDate || today;
+
+  const mergedHistory: Record<string, number> = {
+    ...(cleanA.dailyHistory || {}),
+    ...(cleanB.dailyHistory || {}),
+  };
+
+  if (dateA !== dateB) {
+    if (dateB > dateA) {
+      if (dateA && typeof cleanA.todayTotalMinutes === 'number') {
+        mergedHistory[dateA] = Math.max(mergedHistory[dateA] || 0, cleanA.todayTotalMinutes);
+      }
+      return {
+        ...cleanB,
+        dailyHistory: mergedHistory,
+      };
+    } else {
+      if (dateB && typeof cleanB.todayTotalMinutes === 'number') {
+        mergedHistory[dateB] = Math.max(mergedHistory[dateB] || 0, cleanB.todayTotalMinutes);
+      }
+      return {
+        ...cleanA,
+        dailyHistory: mergedHistory,
+      };
+    }
+  }
+
+  const todayMinutes = Math.max(cleanA.todayTotalMinutes || 0, cleanB.todayTotalMinutes || 0);
+
+  const mergedHourly = EMPTY_HOURLY();
+  for (let i = 0; i < 24; i++) {
+    mergedHourly[i] = Math.max(cleanA.hourlyUsage?.[i] || 0, cleanB.hourlyUsage?.[i] || 0);
+  }
+
+  const mergedAppUsage: Record<string, number> = { ...(cleanA.appUsage || {}) };
+  if (cleanB.appUsage) {
+    for (const [pkg, mins] of Object.entries(cleanB.appUsage)) {
+      mergedAppUsage[pkg] = Math.max(mergedAppUsage[pkg] || 0, mins);
+    }
+  }
+
+  const yesterdayTotal = cleanB.yesterdayTotalMinutes !== undefined ? cleanB.yesterdayTotalMinutes : cleanA.yesterdayTotalMinutes;
+  const pctChange = yesterdayTotal && yesterdayTotal > 0
+    ? Math.round(((todayMinutes - yesterdayTotal) / yesterdayTotal) * 100)
+    : 0;
+
+  return {
+    ...cleanA,
+    ...cleanB,
+    todayTotalMinutes: todayMinutes,
+    yesterdayTotalMinutes: yesterdayTotal,
+    percentChangeVsYesterday: pctChange,
+    hourlyUsage: mergedHourly,
+    appUsage: mergedAppUsage,
+    dailyLimitMinutes: b.dailyLimitMinutes ?? a.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT,
+    usageDate: today,
+    dailyHistory: mergedHistory,
+  };
+}
+
 export const DEFAULT_TRACKING_CONFIG: TrackingCollectionConfig = {
   isMasterTrackingEnabled: true,
   enableGpsTracking: true,
@@ -410,11 +546,67 @@ export const DEFAULT_PC_CONFIG: ChildPcControlConfig = {
   shutdownScheduledAt: null,
 };
 
+export function sanitizeRealChildSettings<T extends Partial<ChildSpecificSettings>>(
+  settings: T,
+  childId: string
+): T {
+  if (isSimulatorMode() && ['child_1', 'child_2', 'child_3'].includes(childId)) {
+    return settings;
+  }
+
+  const clean = { ...settings };
+  const mockAlarmIds = new Set(['alarm_1', 'alarm_2', 'alarm_3']);
+  const mockEventIds = new Set(['evt_1', 'evt_2']);
+  const mockTaskIds = new Set(['task_1', 'task_2', 'task_3', 'tsk_1', 'tsk_2', 'tsk_3', 'tsk_b1', 'tsk_b2', 'tsk_b3', 'tsk_c1', 'tsk_c2']);
+
+  if (Array.isArray(clean.alarms)) {
+    clean.alarms = clean.alarms.filter((a) => !mockAlarmIds.has(a.id));
+  }
+  if (Array.isArray(clean.scheduleEvents)) {
+    clean.scheduleEvents = clean.scheduleEvents.filter((e) => !mockEventIds.has(e.id));
+  }
+  if (Array.isArray(clean.kidTasks)) {
+    clean.kidTasks = clean.kidTasks.filter((t) => !mockTaskIds.has(t.id));
+  }
+
+  // Clear mock star history & reset stars if it's default 28 from mock
+  if (clean.kidStars === 28 && Array.isArray(clean.starHistory) && clean.starHistory.some((s) => s.id?.startsWith('tx_'))) {
+    clean.kidStars = 0;
+    clean.starHistory = [];
+    clean.redemptions = [];
+  }
+
+  if (clean.emergencyContact?.parentPhone === '0987654321') {
+    clean.emergencyContact = {
+      ...clean.emergencyContact,
+      parentPhone: '',
+    };
+  }
+
+  // Ensure screenTime has usageDate and is rolled over if old
+  clean.screenTime = getTodayScreenTime(clean.screenTime);
+
+  // Clean mock apps if apps were seeded directly from INITIAL_APPS (check if has mock apps with mock minutes)
+  if (Array.isArray(clean.apps)) {
+    const isMockApps = clean.apps.some((a) => (a.id === 'app_youtube' && a.timeUsedMinutes === 80) || (a.id === 'app_tiktok' && a.timeUsedMinutes === 35));
+    if (isMockApps) {
+      clean.apps = clean.apps.map((a) => ({
+        ...a,
+        timeUsedMinutes: 0,
+      }));
+    }
+  }
+
+  return clean;
+}
+
 export const createDefaultChildSettings = (
   childId: string,
   overrides?: Partial<ChildSpecificSettings>
 ): ChildSpecificSettings => {
-  if (childId === 'child_2') {
+  const isDemo = isSimulatorMode() || ['child_1', 'child_2', 'child_3'].includes(childId);
+
+  if (isDemo && childId === 'child_2') {
     // Bé Bình (7 tuổi - Lớp 2)
     return {
       screenTimeLimitMinutes: 60, // 1h
@@ -431,6 +623,7 @@ export const createDefaultChildSettings = (
         weekTotalHours: 7.5,
         studyHours: 5.0,
         entertainmentHours: 2.5,
+        usageDate: getLocalDateString(),
       },
       hardwareControls: {
         ...DEFAULT_HARDWARE_CONTROLS,
@@ -485,7 +678,7 @@ export const createDefaultChildSettings = (
     };
   }
 
-  if (childId === 'child_3') {
+  if (isDemo && childId === 'child_3') {
     // Bé Chi (14 tuổi - Lớp 8)
     return {
       screenTimeLimitMinutes: 180, // 3h
@@ -502,6 +695,7 @@ export const createDefaultChildSettings = (
         weekTotalHours: 21.0,
         studyHours: 12.0,
         entertainmentHours: 9.0,
+        usageDate: getLocalDateString(),
       },
       hardwareControls: {
         ...DEFAULT_HARDWARE_CONTROLS,
@@ -555,21 +749,74 @@ export const createDefaultChildSettings = (
     };
   }
 
-  // Default: child_1 (Bé An) or new child
-  const cleanScreenTime: ScreenTimeData = {
-    todayTotalMinutes: 0,
-    yesterdayTotalMinutes: 0,
-    percentChangeVsYesterday: 0,
-    hourlyUsage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    weekTotalHours: 0,
-    studyHours: 0,
-    entertainmentHours: 0,
-  };
+  // Real child or clean default (NOT demo child_1)
+  const isRealChild = !isDemo || (childId !== 'child_1');
 
+  if (isRealChild) {
+    const today = getLocalDateString();
+    return {
+      screenTimeLimitMinutes: DEFAULT_SCREEN_TIME_LIMIT,
+      apps: [],
+      screenTime: getTodayScreenTime(undefined, today),
+      hardwareControls: DEFAULT_HARDWARE_CONTROLS,
+      kioskMode: { isEnabled: false, pinnedAppId: null, pinnedAppName: null },
+      lockChallenge: {
+        isLocked: false,
+        lockType: 'none',
+        title: '',
+        description: '',
+        mathChallenge: { question: '', answer: 0 },
+        quizChallenge: { question: '', options: [], correctIndex: 0, explanation: '' },
+        movementChallenge: { currentSteps: 0, targetSteps: 50 },
+        countdownChallenge: { initialSeconds: 300, remainingSeconds: 300 },
+      },
+      smartRoutines: {
+        mealtimeLock: false,
+        mealtimeStart: '11:30',
+        mealtimeEnd: '12:30',
+        bedtimeLock: false,
+        bedtimeStart: '21:30',
+        bedtimeEnd: '06:30',
+        continuousLimitMinutes: 45,
+        profanityDetection: true,
+        profanityPenaltyMinutes: 10,
+        noiseDetection: true,
+        noiseThresholdDb: 85,
+        hydrationReminder: true,
+        schoolReminder: true,
+      },
+      kidTasks: [],
+      kidStars: 0,
+      activeOpenedApp: null,
+      activeReminder: null,
+      lastVoiceGuide: '',
+      notifications: [],
+      mediaPlayback: INITIAL_MEDIA_PLAYBACK,
+      networkInfo: INITIAL_NETWORK_INFO,
+      sensorValues: INITIAL_SENSOR_VALUES,
+      alarms: [],
+      timers: [],
+      scheduleEvents: [],
+      emergencyContact: {
+        parentPhone: '',
+        allowedApps: ['phone', 'sms', 'zalo', 'family_chat'],
+      },
+      isLauncherEnabled: false,
+      activeSharedLink: null,
+      trackingConfig: DEFAULT_TRACKING_CONFIG,
+      pcConfig: DEFAULT_PC_CONFIG,
+      ...overrides,
+    };
+  }
+
+  // Demo child_1 (Bé An in simulator mode)
   return {
-    screenTimeLimitMinutes: 135,
+    screenTimeLimitMinutes: DEFAULT_SCREEN_TIME_LIMIT,
     apps: INITIAL_APPS,
-    screenTime: childId === 'child_1' ? INITIAL_SCREEN_TIME : cleanScreenTime,
+    screenTime: {
+      ...INITIAL_SCREEN_TIME,
+      usageDate: getLocalDateString(),
+    },
     hardwareControls: DEFAULT_HARDWARE_CONTROLS,
     kioskMode: { isEnabled: false, pinnedAppId: null, pinnedAppName: null },
     lockChallenge: {
@@ -939,9 +1186,23 @@ function getInitialRealState(): AppState {
         const kidPaired = isKidAppMode() ? getKidDevicePairedInfo() : null;
         const effectiveKidId = kidPaired?.childId;
 
+        const rawChildSettings = parsed.childSettings || {};
+        const sanitizedChildSettings: Record<string, ChildSpecificSettings> = {};
+        for (const [cId, cSet] of Object.entries(rawChildSettings)) {
+          sanitizedChildSettings[cId] = sanitizeRealChildSettings(cSet as ChildSpecificSettings, cId);
+        }
+        const activeSettings = sanitizedChildSettings[effectiveKidId || activeChild.id] || createDefaultChildSettings(effectiveKidId || activeChild.id);
+
         return {
           ...defaultRealState,
           ...parsed,
+          childSettings: sanitizedChildSettings,
+          apps: activeSettings.apps || [],
+          screenTime: activeSettings.screenTime || getTodayScreenTime(undefined),
+          kidTasks: activeSettings.kidTasks || [],
+          kidStars: activeSettings.kidStars || 0,
+          starHistory: activeSettings.starHistory || [],
+          redemptions: activeSettings.redemptions || [],
           activeSOS: false,
           broadcastMessage: null,
           activeReminder: null,
@@ -1081,35 +1342,19 @@ function saveAndNotify(newState: AppState, targetChildId?: string) {
   const activeSelectedId = (isKidAppMode() && effectiveKidChildId ? effectiveKidChildId : newState.selectedChildId);
   const isCurrentChild = !targetChildId || targetChildId === activeSelectedId;
 
-  // Safe screenTime merge: NEVER allow todayTotalMinutes to reset to 0 or undefined if kid device has tracked minutes!
-  const prevTodayMinutes = curSettings.screenTime?.todayTotalMinutes || 0;
-  const newTodayMinutes = newState.screenTime?.todayTotalMinutes;
-  
   const todayDate = getLocalDateString();
-  const prevResetDate = curSettings.lastResetDate || '';
-  
-  let effectiveTodayMinutes;
-  let newResetDate = prevResetDate;
-  
-  if (todayDate !== prevResetDate) {
-    effectiveTodayMinutes = typeof newTodayMinutes === 'number' ? newTodayMinutes : 0;
-    newResetDate = todayDate;
-  } else {
-    effectiveTodayMinutes = Math.max(prevTodayMinutes, typeof newTodayMinutes === 'number' ? newTodayMinutes : 0);
-  }
-
-  const mergedScreenTime = {
-    ...(curSettings.screenTime || {}),
-    ...(isCurrentChild && newState.screenTime ? newState.screenTime : {}),
-    todayTotalMinutes: effectiveTodayMinutes,
-  };
+  const mergedScreenTime = mergeScreenTime(
+    curSettings.screenTime,
+    isCurrentChild ? newState.screenTime : undefined,
+    todayDate
+  );
 
   const updatedChildSettings = {
     ...(newState.childSettings || {}),
     [curId]: {
       ...curSettings,
-      lastResetDate: newResetDate,
-      screenTimeLimitMinutes: curSettings.screenTimeLimitMinutes ?? 135,
+      lastResetDate: todayDate,
+      screenTimeLimitMinutes: curSettings.screenTimeLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT,
       apps: isCurrentChild && newState.apps !== undefined ? newState.apps : (curSettings.apps || createDefaultChildSettings(curId).apps),
       screenTime: mergedScreenTime,
       hardwareControls: isCurrentChild && newState.hardwareControls !== undefined ? newState.hardwareControls : (curSettings.hardwareControls || createDefaultChildSettings(curId).hardwareControls),
@@ -1508,12 +1753,21 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
           const isCur = Boolean(prev.selectedChildId && childId === prev.selectedChildId);
           const updatedChild = updatedChildren.find((c) => c.id === prev.selectedChildId) || prev.child;
           const curSettings = prev.childSettings?.[childId] || createDefaultChildSettings(childId);
+          const today = getLocalDateString();
+          const isTelemetryToday = !telemetry.screenTimeDate || telemetry.screenTimeDate === today;
+          const updatedChildScreenTime = telemetry.screenTimeUsedMinutes !== undefined && isTelemetryToday
+            ? mergeScreenTime(curSettings.screenTime, {
+                todayTotalMinutes: telemetry.screenTimeUsedMinutes,
+                usageDate: telemetry.screenTimeDate || today,
+              }, today)
+            : getTodayScreenTime(curSettings.screenTime, today);
+
           const nextSettings = {
             ...curSettings,
             ...(telemetry.network ? { networkInfo: { ...curSettings.networkInfo, ...telemetry.network } } : {}),
             ...(telemetry.mediaPlayback ? { mediaPlayback: { ...curSettings.mediaPlayback, ...telemetry.mediaPlayback } } : {}),
             ...(telemetry.sensors ? { sensorValues: { ...curSettings.sensorValues, ...telemetry.sensors } } : {}),
-            ...(telemetry.screenTimeUsedMinutes !== undefined ? { screenTime: { ...curSettings.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes } } : {}),
+            screenTime: updatedChildScreenTime,
             ...(telemetry.isLocked !== undefined ? {
               isLocked: telemetry.isLocked,
               lockType: telemetry.lockType,
@@ -1540,9 +1794,7 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
             activeOpenedApp: isCur && telemetry.activeOpenedApp
               ? { id: 'app_active', name: telemetry.activeOpenedApp }
               : prev.activeOpenedApp,
-            screenTime: isCur && telemetry.screenTimeUsedMinutes !== undefined
-              ? { ...prev.screenTime, todayTotalMinutes: telemetry.screenTimeUsedMinutes }
-              : prev.screenTime,
+            screenTime: isCur ? updatedChildScreenTime : prev.screenTime,
             childSettings: {
               ...prev.childSettings,
               [childId]: nextSettings,
@@ -1888,48 +2140,32 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
       if (cloudSettings && Object.keys(cloudSettings).length > 0) {
         applyCloudStateUpdate((prev) => {
           const curSettings = prev.childSettings?.[effectiveChildId] || createDefaultChildSettings(effectiveChildId);
-          
-          // PRESERVE LOCAL SCREEN TIME USAGE MINUTES:
-          // The kid device is the authoritative source for accumulated todayTotalMinutes.
-          // Never allow cloud settings updates to overwrite local minutes with 0 or undefined.
-          const localUsedMinutes = Math.max(
-            curSettings.screenTime?.todayTotalMinutes || 0,
-            prev.screenTime?.todayTotalMinutes || 0
+          const cleanCloudSettings = sanitizeRealChildSettings(cloudSettings, effectiveChildId);
+          const today = getLocalDateString();
+
+          const mergedDailyLimit = cleanCloudSettings.screenTimeLimitMinutes !== undefined
+            ? cleanCloudSettings.screenTimeLimitMinutes
+            : (cleanCloudSettings.screenTime?.dailyLimitMinutes || curSettings.screenTime?.dailyLimitMinutes || curSettings.screenTimeLimitMinutes || DEFAULT_SCREEN_TIME_LIMIT);
+
+          // Kid device is authoritative for local usage on current date
+          const mergedScreenTime = mergeScreenTime(
+            curSettings.screenTime,
+            cleanCloudSettings.screenTime,
+            today
           );
-          const localHourlyUsage = curSettings.screenTime?.hourlyUsage || prev.screenTime?.hourlyUsage;
-
-          const mergedDailyLimit = cloudSettings.screenTimeLimitMinutes !== undefined
-            ? cloudSettings.screenTimeLimitMinutes
-            : (cloudSettings.screenTime?.dailyLimitMinutes || curSettings.screenTime?.dailyLimitMinutes || curSettings.screenTimeLimitMinutes || 135);
-
-          const incomingUsed = (cloudSettings.screenTime && typeof cloudSettings.screenTime.todayTotalMinutes === 'number' && cloudSettings.screenTime.todayTotalMinutes > 0)
-            ? cloudSettings.screenTime.todayTotalMinutes
-            : (typeof (cloudSettings as any).screenTimeUsedMinutes === 'number' && (cloudSettings as any).screenTimeUsedMinutes > 0
-              ? (cloudSettings as any).screenTimeUsedMinutes
-              : 0);
-          const finalUsedMinutes = Math.max(localUsedMinutes, incomingUsed);
-
-          const mergedScreenTime: ScreenTimeData = {
-            dailyLimitMinutes: mergedDailyLimit,
-            todayTotalMinutes: finalUsedMinutes,
-            hourlyUsage: (cloudSettings.screenTime?.hourlyUsage && cloudSettings.screenTime.hourlyUsage.length > 0)
-              ? cloudSettings.screenTime.hourlyUsage
-              : (localHourlyUsage || []),
-            appUsage: (cloudSettings.screenTime?.appUsage && Object.keys(cloudSettings.screenTime.appUsage).length > 0)
-              ? cloudSettings.screenTime.appUsage
-              : ((curSettings.screenTime?.appUsage || {}) as any),
-          };
+          mergedScreenTime.dailyLimitMinutes = mergedDailyLimit;
 
           const mergedSettings = {
             ...curSettings,
-            ...cloudSettings,
+            ...cleanCloudSettings,
             screenTimeLimitMinutes: mergedDailyLimit,
             screenTime: mergedScreenTime,
           };
 
           // CHECK SCREEN TIME EXPIRATION & LOCK STATE:
+          const finalUsedMinutes = mergedScreenTime.todayTotalMinutes;
           const isScreenTimeExpired = mergedDailyLimit > 0 && finalUsedMinutes >= mergedDailyLimit;
-          const isLockedFromCloud = Boolean(cloudSettings.isLocked || cloudSettings.lockChallenge?.isLocked);
+          const isLockedFromCloud = Boolean(cleanCloudSettings.isLocked || cleanCloudSettings.lockChallenge?.isLocked);
           const isLockedLocally = Boolean(curSettings.isLocked || curSettings.lockChallenge?.isLocked);
 
           const localLockedAt = curSettings.lockChallenge?.lockedAt || (curSettings.isLocked ? 1 : 0);
@@ -4301,18 +4537,31 @@ export const useAppState = () => {
     }
   };
 
-  const setScreenTimeUsed = (childId?: string, minutes: number = 0) => {
+  const setScreenTimeUsed = (
+    childId?: string,
+    minutes: number = 0,
+    opts?: { usageDate?: string; hourlyUsage?: number[]; appUsage?: Record<string, number>; forceReset?: boolean }
+  ) => {
     const targetId = childId || state.selectedChildId;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
-    const prevUsed = currentSettings.screenTime?.todayTotalMinutes || 0;
-    const newUsed = Math.max(prevUsed, minutes);
-    if (newUsed === prevUsed && currentSettings.screenTime?.todayTotalMinutes !== undefined) {
+    const today = opts?.usageDate || getLocalDateString();
+    const curScreenTime = getTodayScreenTime(currentSettings.screenTime, today);
+
+    const isDifferentDate = curScreenTime.usageDate !== today || Boolean(opts?.forceReset);
+    const newUsed = isDifferentDate ? Math.max(0, minutes) : Math.max(curScreenTime.todayTotalMinutes, minutes);
+
+    if (!isDifferentDate && newUsed === curScreenTime.todayTotalMinutes && !opts?.hourlyUsage && !opts?.appUsage) {
       return; // Skip no-op to prevent re-render cascade
     }
+
     const updatedScreenTime: ScreenTimeData = {
-      ...currentSettings.screenTime,
+      ...curScreenTime,
       todayTotalMinutes: newUsed,
+      usageDate: today,
+      ...(opts?.hourlyUsage ? { hourlyUsage: opts.hourlyUsage } : {}),
+      ...(opts?.appUsage ? { appUsage: opts.appUsage } : {}),
     };
+
     const isCur = state.selectedChildId === targetId;
     saveAndNotify({
       ...state,
@@ -4330,10 +4579,13 @@ export const useAppState = () => {
   const incrementScreenTimeUsed = (childId?: string, minutes: number = 1) => {
     const targetId = childId || state.selectedChildId;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
-    const newUsed = (currentSettings.screenTime?.todayTotalMinutes || 0) + minutes;
+    const today = getLocalDateString();
+    const curScreenTime = getTodayScreenTime(currentSettings.screenTime, today);
+    const newUsed = curScreenTime.todayTotalMinutes + minutes;
     const updatedScreenTime: ScreenTimeData = {
-      ...currentSettings.screenTime,
+      ...curScreenTime,
       todayTotalMinutes: newUsed,
+      usageDate: today,
     };
     const isCur = state.selectedChildId === targetId;
     saveAndNotify({

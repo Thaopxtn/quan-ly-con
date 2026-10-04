@@ -210,6 +210,19 @@
       background: rgba(239, 68, 68, 0.25);
     }
 
+    .btn-github {
+      background: #24292e;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      text-decoration: none;
+    }
+    .btn-github:hover {
+      background: #2f363d;
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.4);
+      transform: translateY(-1px);
+    }
+
     /* AutoStart Switch Component */
     .autostart-pill {
       display: flex;
@@ -748,18 +761,38 @@
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:center;">
-        <button class="btn btn-primary" onclick="copyTunnelUrl()">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="copyTunnelUrl()" title="Sao chép link trang chủ 4G">
           <span>📋</span> <span>Sao Chép Link 4G</span>
         </button>
-        <button class="btn" onclick="openTunnelUrl()">
-          <span>🌐</span> <span>Mở Trực Tiếp</span>
+        <button class="btn btn-success" onclick="copyApk4g('parent')" title="Sao chép link tải APK Cha Mẹ qua mạng 4G">
+          <span>📋 Tải Cha Mẹ (4G)</span>
         </button>
+        <button class="btn btn-success" onclick="copyApk4g('kid')" title="Sao chép link tải APK Con Cái qua mạng 4G">
+          <span>📋 Tải Con Cái (4G)</span>
+        </button>
+        <button class="btn" onclick="openTunnelUrl()">
+          <span>🌐</span> <span>Mở Web Cha Mẹ</span>
+        </button>
+        <a href="https://github.com/Thaopxtn/quan-ly-con" target="_blank" rel="noopener noreferrer" class="btn btn-github" title="Mã nguồn chính thức KidCare & ParentPro trên GitHub">
+          <svg height="15" width="15" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+          </svg>
+          <span>Mã Nguồn GitHub</span>
+        </a>
       </div>
     </div>
 
     <!-- Quick Launcher Bar -->
     <section class="app-launch-bar">
+      <a href="/" target="_blank" class="launch-card" style="border-left: 4px solid #0ea5e9;">
+        <div class="launch-info">
+          <h4>🌐 Website Giới Thiệu &amp; Tải App</h4>
+          <p>Trang chủ giới thiệu tính năng &amp; mã QR tải APK siêu tốc</p>
+        </div>
+        <div class="launch-icon">🚀</div>
+      </a>
+
       <a href="/parent.html" target="_blank" class="launch-card" style="border-left: 4px solid #2563eb;">
         <div class="launch-info">
           <h4>👨‍👩‍👧 App Cha Mẹ (ParentPro Web)</h4>
@@ -776,21 +809,29 @@
         <div class="launch-icon">➔</div>
       </a>
 
-      <a href="/download/parent" class="launch-card" style="border-left: 4px solid #7c3aed;">
+      <div class="launch-card" style="border-left: 4px solid #7c3aed;">
         <div class="launch-info">
-          <h4>📥 Tải APK Máy Cha Mẹ</h4>
-          <p>ParentPro-AppChaMe.apk (6.76 MB)</p>
+          <h4>📥 Tải APK Cha Mẹ (4G Internet)</h4>
+          <p id="portalParentSpec">ParentPro-AppChaMe.apk (~7.14 MB)</p>
+          <div style="font-size:11px;color:#a78bfa;margin-top:3px;font-family:'JetBrains Mono',monospace;" id="portalParent4gUrlText">Đang tải link 4G...</div>
         </div>
-        <div class="launch-icon">📥</div>
-      </a>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <a id="portalParentDownloadBtn" href="/download/parent" target="_blank" class="btn btn-primary" style="padding:6px 12px;font-size:12px;" title="Tải file APK trực tiếp qua 4G">⚡ Tải 4G</a>
+          <button class="btn" style="padding:6px 10px;font-size:12px;" onclick="copyApk4g('parent')" title="Sao chép link tải 4G">📋 Copy</button>
+        </div>
+      </div>
 
-      <a href="/download/kid" class="launch-card" style="border-left: 4px solid #d97706;">
+      <div class="launch-card" style="border-left: 4px solid #d97706;">
         <div class="launch-info">
-          <h4>📥 Tải APK Máy Con Cái</h4>
-          <p>KidCare-AppConCai.apk (6.40 MB)</p>
+          <h4>📥 Tải APK Con Cái (4G Internet)</h4>
+          <p id="portalKidSpec">KidCare-AppConCai.apk (~6.93 MB)</p>
+          <div style="font-size:11px;color:#fcd34d;margin-top:3px;font-family:'JetBrains Mono',monospace;" id="portalKid4gUrlText">Đang tải link 4G...</div>
         </div>
-        <div class="launch-icon">📥</div>
-      </a>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <a id="portalKidDownloadBtn" href="/download/kid" target="_blank" class="btn btn-primary" style="padding:6px 12px;font-size:12px;" title="Tải file APK trực tiếp qua 4G">⚡ Tải 4G</a>
+          <button class="btn" style="padding:6px 10px;font-size:12px;" onclick="copyApk4g('kid')" title="Sao chép link tải 4G">📋 Copy</button>
+        </div>
+      </div>
     </section>
 
     <!-- Main Navigation Tabs -->
@@ -1134,9 +1175,10 @@
         document.getElementById('valRamDetail').innerText = `${usedGb} GB / ${totalGb} GB (${formatBytes(mem.freeBytes)} trống)`;
       }
 
-      // 4G Tunnel URL
+      // 4G Tunnel URL & APK Download Links
+      const base4g = data.tunnelUrl || window.location.origin;
+      currentTunnelUrl = data.tunnelUrl || '';
       if (data.tunnelUrl) {
-        currentTunnelUrl = data.tunnelUrl;
         document.getElementById('tunnelUrlDisplay').innerText = data.tunnelUrl;
         document.getElementById('valTunnelStatus').innerText = 'TRỰC TUYẾN';
         document.getElementById('valTunnelStatus').style.color = '#34d399';
@@ -1145,6 +1187,19 @@
         document.getElementById('valTunnelStatus').innerText = 'NỘI BỘ LAN';
         document.getElementById('valTunnelStatus').style.color = '#fbbf24';
       }
+
+      // Update APK 4G link elements in Launcher
+      const parent4g = `${base4g}/download/parent`;
+      const kid4g = `${base4g}/download/kid`;
+      const pText = document.getElementById('portalParent4gUrlText');
+      if (pText) pText.innerText = parent4g;
+      const kText = document.getElementById('portalKid4gUrlText');
+      if (kText) kText.innerText = kid4g;
+
+      const pBtn = document.getElementById('portalParentDownloadBtn');
+      if (pBtn) pBtn.href = parent4g;
+      const kBtn = document.getElementById('portalKidDownloadBtn');
+      if (kBtn) kBtn.href = kid4g;
 
       // 2. Render Children Grid
       renderChildren(kids);
@@ -1174,7 +1229,7 @@
       }
 
       container.innerHTML = kids.map(k => {
-        const isOnline = k.status === 'online';
+        const isOnline = k.status === 'online' || k.isOnline === true;
         const battery = k.battery != null ? k.battery : 100;
         const isLocked = Boolean(k.isLocked);
         const avatarStr = k.avatar || '';
@@ -1463,6 +1518,17 @@
         showToast('Đã sao chép link 4G: ' + currentTunnelUrl);
       }).catch(() => {
         prompt('Sao chép liên kết:', currentTunnelUrl);
+      });
+    }
+
+    function copyApk4g(type) {
+      const base4g = currentTunnelUrl || window.location.origin;
+      const url = `${base4g}/download/${type}`;
+      const name = type === 'parent' ? 'ParentPro (Cha Mẹ)' : 'KidCare (Con Cái)';
+      navigator.clipboard.writeText(url).then(() => {
+        showToast(`✅ Đã sao chép Link Tải 4G ${name}!\n${url}`);
+      }).catch(() => {
+        prompt(`Sao chép đường link tải 4G cho ${name}:`, url);
       });
     }
 

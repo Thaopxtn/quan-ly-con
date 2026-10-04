@@ -63,6 +63,27 @@ public class MainActivity extends BridgeActivity {
                 }
             });
         }
+        startProtectionServiceIfConfigured();
+    }
+
+    private void startProtectionServiceIfConfigured() {
+        try {
+            android.content.Intent serviceIntent = new android.content.Intent(this, KidProtectionService.class);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+            Log.i(TAG, "KidProtectionService started from MainActivity");
+        } catch (Exception e) {
+            Log.w(TAG, "Non-fatal: could not auto-start KidProtectionService: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        startProtectionServiceIfConfigured();
     }
 
     @Override

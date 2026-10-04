@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KidCare & ParentPro - Hệ Thống Quản Lý & Bảo Vệ Con Cái Thông Minh</title>
+  <meta name="description" content="Ứng dụng giám sát con cái 24/7, khóa máy từ xa 0ms, định vị GPS lộ trình, bảo vệ con an toàn trên không gian mạng và đời sống hàng ngày.">
+  <link rel="icon" type="image/x-icon" href="/app-icon.ico">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --primary: #0284c7;
+      --primary-hover: #0369a1;
+      --accent: #38bdf8;
+      --parent-color: #2563eb;
+      --kid-color: #059669;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --success: #34d399;
+      --danger: #f87171;
+      --warning: #fbbf24;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+      background-image: 
+        radial-gradient(circle at 15% 20%, rgba(14, 165, 233, 0.12) 0%, transparent 40%),
+        radial-gradient(circle at 85% 60%, rgba(139, 92, 246, 0.1) 0%, transparent 40%),
+        radial-gradient(circle at 50% 90%, rgba(16, 185, 129, 0.08) 0%, transparent 50%);
+      background-attachment: fixed;
+    }
+
+    /* Container */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    /* Header / Nav */
+    header {
+      border-bottom: 1px solid var(--card-border);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(11, 15, 25, 0.85);
+    }
+    .nav-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 0;
+    }
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #fff;
+    }
+    .logo-icon {
+      font-size: 28px;
+      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .logo-text h1 {
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .logo-text span {
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover {
+      color: #fff;
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      box-shadow: 0 4px 15px rgba(2, 132, 199, 0.35);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.5);
+    }
+    .btn-parent {
+      background: linear-gradient(135deg, #1d4ed8, #2563eb);
+      color: #fff;
+      box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
+    }
+    .btn-kid {
+      background: linear-gradient(135deg, #047857, #059669);
+      color: #fff;
+      box-shadow: 0 4px 15px rgba(5, 150, 105, 0.35);
+    }
+    .btn-outline {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.15);
+      color: #f1f5f9;
+    }
+    .btn-outline:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+    .btn-github {
+      background: #1f2937;
+      color: #f9fafb;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .btn-github:hover {
+      background: #374151;
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+    .btn-lg {
+      padding: 14px 24px;
+      font-size: 15px;
+      border-radius: 14px;
+    }
+
+    /* Hero Section */
+    .hero {
+      padding: 70px 0 50px;
+      text-align: center;
+    }
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 6px 14px;
+      border-radius: 999px;
+      color: var(--accent);
+      font-size: 12.5px;
+      font-weight: 700;
+      margin-bottom: 24px;
+    }
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+    .hero h2 {
+      font-size: 46px;
+      font-weight: 900;
+      letter-spacing: -1.2px;
+      line-height: 1.2;
+      margin-bottom: 20px;
+      background: linear-gradient(180deg, #ffffff 30%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 780px;
+      margin: 0 auto 36px;
+      line-height: 1.7;
+    }
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+
+    /* Server Live Banner */
+    .server-status-banner {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 18px;
+      padding: 16px 24px;
+      margin-bottom: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .server-status-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-align: left;
+    }
+    .server-status-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: rgba(14, 165, 233, 0.15);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+    .server-url-tag {
+      font-family: 'JetBrains Mono', monospace, Consolas;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--accent);
+      font-size: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      user-select: all;
+    }
+
+    /* Section Titles */
+    .section-title {
+      text-align: center;
+      margin-bottom: 46px;
+    }
+    .section-title h3 {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.8px;
+      margin-bottom: 10px;
+    }
+    .section-title p {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 650px;
+      margin: 0 auto;
+    }
+
+    /* Download Cards Grid */
+    .download-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+      gap: 28px;
+      margin-bottom: 70px;
+    }
+    @media (max-width: 600px) {
+      .download-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .download-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 32px;
+      backdrop-filter: blur(12px);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.3s, border-color 0.3s;
+    }
+    .download-card:hover {
+      transform: translateY(-4px);
+    }
+    .download-card.parent-card {
+      border-top: 5px solid var(--parent-color);
+    }
+    .download-card.kid-card {
+      border-top: 5px solid var(--kid-color);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+    .app-avatar {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      object-fit: cover;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    .app-meta h4 {
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .app-tag {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .parent-tag {
+      background: rgba(37, 99, 235, 0.18);
+      color: #60a5fa;
+    }
+    .kid-tag {
+      background: rgba(5, 150, 105, 0.18);
+      color: #34d399;
+    }
+    .app-desc {
+      color: var(--text-muted);
+      font-size: 14.5px;
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    /* QR Code and Actions Row */
+    .download-body {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 20px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      margin-bottom: 24px;
+    }
+    @media (max-width: 500px) {
+      .download-body {
+        flex-direction: column;
+        text-align: center;
+      }
+    }
+    .qr-box {
+      width: 140px;
+      height: 140px;
+      background: #fff;
+      padding: 8px;
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    }
+    .qr-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .qr-caption {
+      font-size: 11px;
+      font-weight: 700;
+      color: #334155;
+      margin-top: 4px;
+      text-align: center;
+    }
+    .qr-info h5 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .qr-info p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .file-spec {
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* 4G Download Box & Badge */
+    .link-4g-box {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(139, 92, 246, 0.08));
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+    }
+    .link-4g-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
+    .badge-4g {
+      background: #0284c7;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 6px;
+      text-transform: uppercase;
+    }
+    .link-4g-content {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .link-4g-text {
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 12px;
+      color: #f1f5f9;
+      word-break: break-all;
+      flex: 1;
+    }
+    .btn-copy-mini {
+      background: rgba(56, 189, 248, 0.2);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: #38bdf8;
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .btn-copy-mini:hover {
+      background: #0284c7;
+      color: #fff;
+    }
+    .btn-glowing {
+      box-shadow: 0 0 16px rgba(14, 165, 233, 0.4);
+      animation: pulseGlow 2.5s infinite;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 12px rgba(14, 165, 233, 0.35); }
+      50% { box-shadow: 0 0 24px rgba(14, 165, 233, 0.65); }
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .card-actions .btn {
+      flex: 1;
+      min-width: 170px;
+    }
+
+    /* Features Grid */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+      margin-bottom: 80px;
+    }
+    .feature-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 26px;
+      backdrop-filter: blur(10px);
+      transition: transform 0.2s;
+    }
+    .feature-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+    .feature-icon-box {
+      width: 50px;
+      height: 50px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    .feature-blue { background: rgba(37, 99, 235, 0.15); color: #60a5fa; }
+    .feature-green { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .feature-amber { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .feature-purple { background: rgba(139, 92, 246, 0.15); color: #c084fc; }
+    .feature-rose { background: rgba(244, 63, 94, 0.15); color: #fb7185; }
+    .feature-cyan { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
+
+    .feature-card h4 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Guide Steps */
+    .guide-box {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 36px;
+      margin-bottom: 80px;
+    }
+    .guide-steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+      margin-top: 30px;
+    }
+    .step-item {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+    .step-text h5 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .step-text p {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Portal Callout Banner */
+    .portal-banner {
+      background: radial-gradient(circle at right, rgba(14, 165, 233, 0.15) 0%, transparent 60%),
+                  linear-gradient(135deg, #1e293b, #0f172a);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 24px;
+      padding: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 24px;
+      margin-bottom: 70px;
+    }
+    .portal-banner-text h4 {
+      font-size: 26px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .portal-banner-text p {
+      color: var(--text-muted);
+      font-size: 15px;
+      max-width: 600px;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 40px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .footer-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .footer-links a:hover {
+      color: #fff;
+    }
+
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1e293b;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      display: none;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <header>
+    <div class="container nav-inner">
+      <a href="/" class="logo-group">
+        <span class="logo-icon">🛡️</span>
+        <div class="logo-text">
+          <h1>KidCare &amp; ParentPro</h1>
+          <span>Quản Lý Con Toàn Diện v2.5</span>
+        </div>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#downloads">Tải Ứng Dụng</a>
+        <a href="#features">Tính Năng</a>
+        <a href="#guide">Hướng Dẫn Cài Đặt</a>
+        <a href="/portal">Quản Trị Máy Chủ</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="https://github.com/Thaopxtn/quan-ly-con" target="_blank" rel="noopener noreferrer" class="btn btn-github">
+          <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+          </svg>
+          <span>GitHub</span>
+        </a>
+        <a href="/parent.html" class="btn btn-primary">
+          <span>👨‍👩‍👧 Vào App Cha Mẹ</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <main class="container">
+    <section class="hero">
+      <div class="badge-pill">
+        <span class="badge-dot"></span>
+        <span>Hệ Thống Đang Trực Tuyến 24/7 • Sẵn Sàng Kết Nối Wi-Fi &amp; 4G Internet</span>
+      </div>
+
+      <h2>Đồng Hành Cùng Con Khôn Lớn<br>An Toàn Trong Kỷ Nguyên Số</h2>
+      <p>
+        Hệ sinh thái ứng dụng quản lý và bảo vệ trẻ em toàn diện: Giám sát thời gian sử dụng màn hình, 
+        khóa máy từ xa tức thì (0ms), bản đồ định vị GPS, nhận diện khẩn cấp SOS và chống nghiện điện thoại.
+        Dữ liệu lưu trữ độc lập trên máy chủ gia đình của bạn.
+      </p>
+
+      <div class="hero-actions">
+        <a href="#downloads" class="btn btn-primary btn-lg">
+          <span>📥 Tải Ứng Dụng Ngay (APK)</span>
+        </a>
+        <a href="/parent.html" target="_blank" class="btn btn-outline btn-lg">
+          <span>👨‍👩‍👧 Dùng Trực Tiếp Trên Web</span>
+        </a>
+        <a href="/portal" class="btn btn-outline btn-lg">
+          <span>💻 Bảng Điều Khiển Server</span>
+        </a>
+      </div>
+
+      <!-- Live Server Status Banner -->
+      <div class="server-status-banner">
+        <div class="server-status-left">
+          <div class="server-status-icon">📡</div>
+          <div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+              ĐƯỜNG LINK TRUY CẬP TỪ XA QUA 4G / INTERNET CỦA MÁY CHỦ BẠN:
+            </div>
+            <div class="server-url-tag" id="liveTunnelUrl">
+              Đang kết nối tới máy chủ...
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <button class="btn btn-primary" onclick="copyLink()">
+            <span>📋 Sao Chép Link</span>
+          </button>
+          <a href="/portal" class="btn btn-outline">
+            <span>⚙️ Quản Trị PC</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Downloads Section -->
+    <section id="downloads" style="scroll-margin-top: 90px;">
+      <div class="section-title">
+        <h3>Trung Tâm Tải Ứng Dụng Từ Máy Chủ</h3>
+        <p>Tải trực tiếp file cài đặt APK mới nhất cho Android hoặc quét mã QR bằng camera điện thoại để cài đặt siêu tốc.</p>
+      </div>
+
+      <div class="download-grid">
+        <!-- Parent Card -->
+        <div class="download-card parent-card">
+          <div>
+            <div class="card-header">
+              <img src="/icon-parentpro-512.png" alt="ParentPro Icon" class="app-avatar" onerror="this.src='/favicon.ico'">
+              <div class="app-meta">
+                <span class="app-tag parent-tag">Dành Cho Điện Thoại Cha Mẹ</span>
+                <h4>ParentPro - Cha Mẹ</h4>
+                <div style="font-size:12.5px;color:var(--text-muted);">Phiên bản 2.5 • Android 8.0 trở lên</div>
+              </div>
+            </div>
+
+            <p class="app-desc">
+              Cài đặt trên điện thoại của Bố/Mẹ để giám sát, điều khiển từ xa, thiết lập thời gian biểu,
+              xem vị trí định vị con, duyệt gia hạn thêm giờ và giao nhiệm vụ thưởng sao.
+            </p>
+
+            <!-- 4G Link Container -->
+            <div class="link-4g-box">
+              <div class="link-4g-header">
+                <span>📶 LINK TẢI 4G / INTERNET TỪ XA:</span>
+                <span class="badge-4g">WAN 4G/5G</span>
+              </div>
+              <div class="link-4g-content">
+                <span id="linkParent4gDisplay" class="link-4g-text">Đang lấy link 4G...</span>
+                <button type="button" class="btn-copy-mini" onclick="copyApkLink('parent')" title="Sao chép link tải 4G">📋 Copy Link 4G</button>
+              </div>
+            </div>
+
+            <div class="download-body">
+              <div class="qr-box">
+                <img id="qrParent" src="" alt="QR Code ParentPro APK">
+                <div class="qr-caption">Quét mã tải qua 4G</div>
+              </div>
+              <div class="qr-info">
+                <h5>Quét Mã Bằng Camera / Zalo (4G)</h5>
+                <p>Mở ứng dụng Camera hoặc Zalo trên điện thoại Cha/Mẹ quét mã QR để tải file APK trực tiếp qua mạng 4G/Internet mà không cần chung Wi-Fi.</p>
+                <div class="file-spec" id="parentSpecText">📦 Tên file: ParentPro-AppChaMe.apk (~7.14 MB)</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <a id="btnParent4g" href="/download/parent" class="btn btn-parent btn-glowing" title="Bấm để tải APK trực tiếp qua mạng 4G">
+              <span>⚡ Tải APK Qua 4G / Internet</span>
+            </a>
+            <button type="button" class="btn btn-outline" onclick="copyApkLink('parent')">
+              <span>📋 Sao Chép Link 4G</span>
+            </button>
+            <a href="/download/parent" class="btn btn-outline" title="Tải về máy tính hoặc Wi-Fi nội bộ">
+              <span>🏠 Tải Qua Wi-Fi (LAN)</span>
+            </a>
+            <a href="/parent.html" target="_blank" class="btn btn-outline">
+              <span>🌐 Dùng Bản Web</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Kid Card -->
+        <div class="download-card kid-card">
+          <div>
+            <div class="card-header">
+              <img src="/icon-kidcare-512.png" alt="KidCare Icon" class="app-avatar" onerror="this.src='/favicon.ico'">
+              <div class="app-meta">
+                <span class="app-tag kid-tag">Cài Trên Điện Thoại Của Con</span>
+                <h4>KidCare - Con Cái</h4>
+                <div style="font-size:12.5px;color:var(--text-muted);">Phiên bản 2.5 • Android 8.0 trở lên</div>
+              </div>
+            </div>
+
+            <p class="app-desc">
+              Cài đặt trên điện thoại của con. Chạy ngầm 24/7 bảo vệ an toàn (kể cả khi khóa/tắt màn hình),
+              tự động khóa màn hình đè khi hết giờ, đếm bước chân và nút cứu hộ SOS 1 chạm.
+            </p>
+
+            <!-- 4G Link Container -->
+            <div class="link-4g-box">
+              <div class="link-4g-header">
+                <span>📶 LINK TẢI 4G / INTERNET TỪ XA:</span>
+                <span class="badge-4g">WAN 4G/5G</span>
+              </div>
+              <div class="link-4g-content">
+                <span id="linkKid4gDisplay" class="link-4g-text">Đang lấy link 4G...</span>
+                <button type="button" class="btn-copy-mini" onclick="copyApkLink('kid')" title="Sao chép link tải 4G">📋 Copy Link 4G</button>
+              </div>
+            </div>
+
+            <div class="download-body">
+              <div class="qr-box">
+                <img id="qrKid" src="" alt="QR Code KidCare APK">
+                <div class="qr-caption">Quét mã tải qua 4G</div>
+              </div>
+              <div class="qr-info">
+                <h5>Quét Mã Bằng Camera / Zalo (4G)</h5>
+                <p>Mở ứng dụng Camera hoặc Zalo trên điện thoại của con quét mã QR để tải file APK trực tiếp qua mạng 4G/Internet mà không cần chung Wi-Fi.</p>
+                <div class="file-spec" id="kidSpecText">📦 Tên file: KidCare-AppConCai.apk (~6.93 MB)</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <a id="btnKid4g" href="/download/kid" class="btn btn-kid btn-glowing" title="Bấm để tải APK trực tiếp qua mạng 4G">
+              <span>⚡ Tải APK Qua 4G / Internet</span>
+            </a>
+            <button type="button" class="btn btn-outline" onclick="copyApkLink('kid')">
+              <span>📋 Sao Chép Link 4G</span>
+            </button>
+            <a href="/download/kid" class="btn btn-outline" title="Tải về máy tính hoặc Wi-Fi nội bộ">
+              <span>🏠 Tải Qua Wi-Fi (LAN)</span>
+            </a>
+            <a href="/kid.html" target="_blank" class="btn btn-outline">
+              <span>🧒 Dùng Bản Web</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" style="scroll-margin-top: 90px;">
+      <div class="section-title">
+        <h3>Tính Năng Vượt Trội Của Hệ Sinh Thái</h3>
+        <p>Được thiết kế tối ưu cho thói quen sinh hoạt của gia đình Việt Nam với các công nghệ giám sát tiên tiến nhất.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon-box feature-blue">⏱️</div>
+          <h4>Đồng Hồ Sử Dụng 360°</h4>
+          <p>Xem trực quan thời lượng con dùng máy trong ngày, phân tích theo từng ứng dụng (YouTube, TikTok, Game...) kèm đồ họa trực quan.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-rose">🔒</div>
+          <h4>Khóa Máy Tức Thì 0 Giây</h4>
+          <p>Khóa hoặc mở khóa điện thoại con chỉ với một chạm. Cơ chế truyền lệnh 2 chiều kèm ACK đảm bảo màn hình con đã khóa thật sự.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-cyan">📍</div>
+          <h4>Định Vị GPS &amp; Vùng An Toàn</h4>
+          <p>Theo dõi vị trí con trên bản đồ vệ tinh, thiết lập vùng an toàn Nhà &amp; Trường học, nhận cảnh báo tự động khi con rời khỏi vùng an toàn.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-green">🛡️</div>
+          <h4>Chạy Nền 24/7 Khi Khóa Màn Hình</h4>
+          <p>Dịch vụ chạy ngầm độc quyền với Partial WakeLock giữ kết nối liên tục kể cả khi màn hình tắt, tiêu hao dưới 0.5% pin mỗi ngày.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-amber">⏳</div>
+          <h4>Xin Giờ &amp; Duyệt Tức Thì</h4>
+          <p>Khi hết giờ dùng máy, con có thể gửi yêu cầu xin thêm 15p, 30p hoặc 60p kèm lý do (học bài, làm việc nhóm) để cha mẹ phê duyệt.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-purple">⭐</div>
+          <h4>Giao Việc Nhà &amp; Thưởng Sao</h4>
+          <p>Biến kỷ luật thành niềm vui: Tạo danh sách bài tập, việc nhà cần hoàn thành để con tích lũy sao thưởng và đổi lấy quà tặng gia đình.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-rose">🚨</div>
+          <h4>Còi Hú Tìm Máy &amp; Cứu Hộ SOS</h4>
+          <p>Kích hoạt còi hú âm lượng tối đa để tìm máy để quên hoặc nhận tín hiệu cầu cứu SOS kèm tọa độ khẩn cấp khi con gặp nguy hiểm.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-green">🏃</div>
+          <h4>Đếm Bước Chân &amp; Sức Khỏe</h4>
+          <p>Cảm biến đếm bước chân ghi nhận mức độ vận động hàng ngày, giúp con cân bằng giữa việc học tập, giải trí và rèn luyện thể chất.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box feature-blue">🚫</div>
+          <h4>Bảo Vệ Chống Gỡ Cài Đặt</h4>
+          <p>Tích hợp quyền Quản trị viên thiết bị (Device Admin) và Dịch vụ trợ năng (Accessibility) để con không thể tự ý xóa ứng dụng.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Installation Guide -->
+    <section id="guide" class="guide-box">
+      <div style="text-align: center;">
+        <span class="app-tag" style="background: rgba(14, 165, 233, 0.2); color: #38bdf8;">Dễ Dàng &amp; Nhanh Chóng</span>
+        <h3 style="font-size: 28px; font-weight: 800; margin-top: 6px;">3 Bước Cài Đặt File APK Cho Android</h3>
+        <p style="color: var(--text-muted); font-size: 15px; margin-top: 6px;">Ứng dụng được biên dịch trực tiếp từ máy tính nội bộ của bạn, hoàn toàn sạch sẽ và an toàn.</p>
+      </div>
+
+      <div class="guide-steps">
+        <div class="step-item">
+          <div class="step-num">1</div>
+          <div class="step-text">
+            <h5>Tải File Cài Đặt APK</h5>
+            <p>Bấm nút <strong>Tải APK</strong> hoặc mở camera điện thoại quét mã QR tương ứng cho máy Cha Mẹ hoặc máy Con Cái.</p>
+          </div>
+        </div>
+
+        <div class="step-item">
+          <div class="step-num">2</div>
+          <div class="step-text">
+            <h5>Cho Phép Cài Đặt</h5>
+            <p>Nếu điện thoại hiện cảnh báo <em>"Tệp có thể gây hại"</em> (do tải ngoài CH Play), chọn <strong>Vẫn tải xuống</strong> ➔ Nhấn <strong>Cài đặt</strong>.</p>
+          </div>
+        </div>
+
+        <div class="step-item">
+          <div class="step-num">3</div>
+          <div class="step-text">
+            <h5>Mở App &amp; Ghép Nối</h5>
+            <p>Mở App Cha Mẹ tạo mã số PIN 6 chữ số, sau đó nhập vào máy Con Cái (hoặc đăng nhập Google) để kết nối hai máy lập tức.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Server Control Center Callout -->
+    <section class="portal-banner">
+      <div class="portal-banner-text">
+        <h4>Trung Tâm Quản Trị Máy Chủ (Server Dashboard)</h4>
+        <p>
+          Theo dõi trạng thái thời gian thực của máy chủ Node.js, đường truyền Cloudflare Tunnel 4G, 
+          mức tiêu thụ CPU/RAM, lịch sử lệnh điều khiển và danh sách tất cả các thiết bị con đang kết nối.
+        </p>
+      </div>
+      <div>
+        <a href="/portal" class="btn btn-primary btn-lg">
+          <span>💻 Mở Bảng Điều Khiển Máy Chủ</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="footer-links">
+        <a href="/parent.html">App Cha Mẹ</a>
+        <a href="/kid.html">App Con Cái</a>
+        <a href="/portal">Bảng Điều Khiển Server</a>
+        <a href="/download/parent">Tải APK Cha Mẹ</a>
+        <a href="/download/kid">Tải APK Con Cái</a>
+        <a href="/privacy-policy.html">Chính Sách Bảo Mật</a>
+        <a href="https://github.com/Thaopxtn/quan-ly-con" target="_blank" rel="noopener noreferrer">Mã Nguồn GitHub</a>
+      </div>
+      <p>© 2026 Hệ Thống Quản Lý Con Cái Thông Minh (KidCare &amp; ParentPro). Mã nguồn mở bảo mật cho gia đình.</p>
+    </div>
+  </footer>
+
+  <div id="toast">Đã sao chép liên kết!</div>
+
+  <script>
+    let currentTunnelUrl = '';
+    let parent4gUrl = '';
+    let kid4gUrl = '';
+
+    // Copy server root link helper
+    function copyLink() {
+      const urlText = currentTunnelUrl || document.getElementById('liveTunnelUrl').innerText.trim();
+      if (!urlText || urlText.includes('Đang')) return;
+      navigator.clipboard.writeText(urlText).then(() => {
+        showToast('✅ Đã sao chép link máy chủ 4G: ' + urlText);
+      }).catch(() => {
+        prompt('Sao chép link máy chủ 4G:', urlText);
+      });
+    }
+
+    // Copy specific APK 4G download link helper
+    function copyApkLink(type) {
+      const targetUrl = type === 'parent' ? parent4gUrl : kid4gUrl;
+      const targetName = type === 'parent' ? 'ParentPro (Cha Mẹ)' : 'KidCare (Con Cái)';
+      if (!targetUrl) {
+        showToast('⏳ Đang lấy link 4G từ máy chủ, vui lòng đợi...');
+        return;
+      }
+      navigator.clipboard.writeText(targetUrl).then(() => {
+        showToast('✅ Đã sao chép Link Tải 4G ' + targetName + '!\n' + targetUrl);
+      }).catch(() => {
+        prompt('Sao chép đường link tải 4G cho ' + targetName + ':', targetUrl);
+      });
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 3500);
+    }
+
+    // Dynamic Server Info & 4G URLs Initialization
+    async function initPage() {
+      const origin = window.location.origin;
+      const localParentUrl = `${origin}/download/parent`;
+      const localKidUrl = `${origin}/download/kid`;
+
+      const qrParentEl = document.getElementById('qrParent');
+      const qrKidEl = document.getElementById('qrKid');
+
+      // Default temporary QR while fetching
+      if (qrParentEl) {
+        qrParentEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(localParentUrl)}`;
+      }
+      if (qrKidEl) {
+        qrKidEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(localKidUrl)}`;
+      }
+
+      // Fetch live tunnel URL & server stats
+      try {
+        const res = await fetch('/api/public-info');
+        if (res.ok) {
+          const data = await res.json();
+          currentTunnelUrl = data.tunnelUrl || origin;
+          parent4gUrl = data.parentApk?.public4gUrl || (currentTunnelUrl + '/download/parent');
+          kid4gUrl = data.kidApk?.public4gUrl || (currentTunnelUrl + '/download/kid');
+
+          document.getElementById('liveTunnelUrl').innerText = currentTunnelUrl;
+
+          const linkParentEl = document.getElementById('linkParent4gDisplay');
+          if (linkParentEl) linkParentEl.innerText = parent4gUrl;
+
+          const linkKidEl = document.getElementById('linkKid4gDisplay');
+          if (linkKidEl) linkKidEl.innerText = kid4gUrl;
+
+          const btnParentEl = document.getElementById('btnParent4g');
+          if (btnParentEl) btnParentEl.href = parent4gUrl;
+
+          const btnKidEl = document.getElementById('btnKid4g');
+          if (btnKidEl) btnKidEl.href = kid4gUrl;
+
+          if (data.parentApk?.size && document.getElementById('parentSpecText')) {
+            document.getElementById('parentSpecText').innerText = `📦 Tên file: ParentPro-AppChaMe.apk (~${data.parentApk.size})`;
+          }
+          if (data.kidApk?.size && document.getElementById('kidSpecText')) {
+            document.getElementById('kidSpecText').innerText = `📦 Tên file: KidCare-AppConCai.apk (~${data.kidApk.size})`;
+          }
+
+          // Generate 4G QR code for direct download from anywhere
+          if (qrParentEl) {
+            qrParentEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(parent4gUrl)}`;
+          }
+          if (qrKidEl) {
+            qrKidEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(kid4gUrl)}`;
+          }
+        } else {
+          document.getElementById('liveTunnelUrl').innerText = origin;
+          parent4gUrl = localParentUrl;
+          kid4gUrl = localKidUrl;
+        }
+      } catch (e) {
+        document.getElementById('liveTunnelUrl').innerText = origin;
+        parent4gUrl = localParentUrl;
+        kid4gUrl = localKidUrl;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', initPage);
+  </script>
+</body>
+</html>

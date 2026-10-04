@@ -141,7 +141,13 @@ export interface KidPermissionsPluginInterface {
   setHardwareControl(options: { volume?: number; brightness?: number; flashlight?: boolean }): Promise<{ success: boolean; volume?: number; brightness?: number; flashlight?: boolean }>;
   getHardwareStatus(): Promise<{ volume: number; brightness: number }>;
   controlMedia(options: { action: 'play' | 'pause' | 'play_pause' | 'next' | 'prev' | 'stop' }): Promise<{ success: boolean; action?: string }>;
-  getUsageStats(): Promise<{ isGranted: boolean; totalMinutesToday: number; appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }> }>;
+  getUsageStats(): Promise<{
+    isGranted: boolean;
+    totalMinutesToday: number;
+    usageDate?: string;
+    hourlyUsage?: number[];
+    appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }>;
+  }>;
   getHealthData(): Promise<{ sensorAvailable: boolean; dailySteps: number; isActivityRecognitionGranted: boolean }>;
   getBatteryInfo(): Promise<{ level: number; isCharging: boolean }>;
   getNetworkInfo(): Promise<NativeNetworkInfoResult>;
@@ -484,6 +490,8 @@ export async function sendNativeMediaKey(action: 'play' | 'pause' | 'play_pause'
 export async function getNativeUsageStats(): Promise<{
   isGranted: boolean;
   totalMinutesToday: number;
+  usageDate?: string;
+  hourlyUsage?: number[];
   appsUsage: Array<{ packageName: string; usedMinutes: number; lastTimeUsed: number }>;
 }> {
   if (Capacitor.isNativePlatform()) {
@@ -494,7 +502,7 @@ export async function getNativeUsageStats(): Promise<{
       console.warn('getNativeUsageStats error:', err);
     }
   }
-  return { isGranted: false, totalMinutesToday: 0, appsUsage: [] };
+  return { isGranted: false, totalMinutesToday: 0, usageDate: undefined, hourlyUsage: undefined, appsUsage: [] };
 }
 
 export async function getNativeHealthData(): Promise<{

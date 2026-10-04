@@ -52,7 +52,7 @@ import {
   Phone,
   PhoneCall,
 } from 'lucide-react';
-import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId, getLocalDateString } from '@shared/store';
+import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId, getLocalDateString, getTodayScreenTime } from '@shared/store';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
 import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
@@ -521,6 +521,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     requestSystemNotificationPermission().catch(() => {});
   }, []);
 
+  // Tự động khởi chạy Native Protection Service 24/7 duy trì kết nối khi khóa màn hình
+  useEffect(() => {
+    if (targetChildId) {
+      const sUrl = serverApiClient.getServerUrl();
+      startNativeProtectionService(sUrl, targetChildId, activeParentId).catch(() => {});
+    }
+  }, [targetChildId, activeParentId]);
+
   // Ensure flashlight is forced OFF by default when opening Kid app
   useEffect(() => {
     setNativeFlashlight(false).catch(() => {});
@@ -837,6 +845,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         if (activeParentId && targetChildId) {
           const currentSettings = stateRef.current.childSettings?.[targetChildId];
           const existingRules = currentSettings?.apps || stateRef.current.apps || [];
+          const appUsageMap = currentSettings?.screenTime?.appUsage || {};
           const mergedApps: AppItem[] = scanned.map((app) => {
             const existing = existingRules.find(
               (r) =>
@@ -844,6 +853,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 r.name.toLowerCase() === app.name.toLowerCase() ||
                 (app.packageName && r.packageName === app.packageName)
             );
+            const realMinutes = app.packageName && typeof appUsageMap[app.packageName] === 'number'
+              ? appUsageMap[app.packageName]
+              : 0;
             return {
               id: app.id,
               name: app.name,
@@ -853,7 +865,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               status: existing ? existing.status : 'allowed',
               isHidden: existing ? !!existing.isHidden : false,
               isFavorite: existing ? !!existing.isFavorite : false,
-              timeUsedMinutes: existing ? existing.timeUsedMinutes : 0,
+              timeUsedMinutes: realMinutes,
               dailyLimitMinutes: existing ? existing.dailyLimitMinutes : 0,
               isSystem: !!app.isSystem,
             };
@@ -1374,6 +1386,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   network: netInfo || undefined,
                   mediaPlayback: realMediaState,
                   screenTimeUsedMinutes: todayMins,
+                  screenTimeDate: (usageStats as any)?.usageDate || getLocalDateString(),
                   activeOpenedApp: typeof activeOpenedAppRef.current === 'object' && activeOpenedAppRef.current ? activeOpenedAppRef.current.name : (typeof activeOpenedAppRef.current === 'string' ? activeOpenedAppRef.current : ''),
                   installedAppsCount: realInstalledAppsRef.current.length || curApps.length,
                   isLocked: Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked),
@@ -2442,13 +2455,21 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       }
     };
 
-    const applyUsageMinutes = (statsMinutes?: number, shouldIncrement = false) => {
-      const curUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+    const applyUsageMinutes = (
+      statsMinutes?: number,
+      shouldIncrement = false,
+      nativeUsageDate?: string,
+      hourlyUsage?: number[],
+      appsUsage?: Array<{ packageName: string; usedMinutes: number }>
+    ) => {
+      const today = nativeUsageDate || getLocalDateString();
+      const curSt = getTodayScreenTime(targetSettingsRef.current.screenTime, today);
+      const isDateChanged = curSt.usageDate !== today;
+      const curUsed = isDateChanged ? 0 : curSt.todayTotalMinutes;
       let newUsed = curUsed;
 
-      if (typeof statsMinutes === 'number' && statsMinutes > 0) {
-        // Native UsageStats is authoritative for foreground apps, always take the max so we never drop backwards
-        newUsed = Math.max(curUsed, statsMinutes);
+      if (typeof statsMinutes === 'number' && statsMinutes >= 0) {
+        newUsed = isDateChanged ? statsMinutes : Math.max(curUsed, statsMinutes);
       }
 
       // If document is visible in foreground, ensure this active minute is counted
@@ -2458,8 +2479,31 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         }
       }
 
-      if (newUsed !== curUsed) {
-        setScreenTimeUsedRef.current(targetChildId, newUsed);
+      // If new day arrived and kid was locked due to expired screen time yesterday, unlock it!
+      if (isDateChanged) {
+        bypassedRoutinesRef.current.screentime = false;
+        if (lockChallengeRef.current?.title === 'Đã hết thời gian dùng máy hôm nay!' || targetSettingsRef.current.lockTitle === 'Đã hết thời gian dùng máy hôm nay!') {
+          unlockDevice(targetChildId);
+        }
+      }
+
+      // Build appUsage map if appsUsage provided
+      const appUsageMap: Record<string, number> = {};
+      if (Array.isArray(appsUsage)) {
+        for (const app of appsUsage) {
+          if (app.packageName) {
+            appUsageMap[app.packageName] = app.usedMinutes;
+          }
+        }
+      }
+
+      if (newUsed !== curUsed || isDateChanged || hourlyUsage || Object.keys(appUsageMap).length > 0) {
+        setScreenTimeUsedRef.current(targetChildId, newUsed, {
+          usageDate: today,
+          hourlyUsage,
+          appUsage: Object.keys(appUsageMap).length > 0 ? appUsageMap : undefined,
+          forceReset: isDateChanged,
+        });
       }
 
       checkAndEnforceLimit(newUsed);
@@ -2472,8 +2516,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
     // Initial check for native usage stats on mount (only advance if positive)
     getNativeUsageStats().then((stats) => {
-      if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
-        applyUsageMinutes(stats.totalMinutesToday, false);
+      if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number') {
+        applyUsageMinutes(stats.totalMinutesToday, false, stats.usageDate, stats.hourlyUsage, stats.appsUsage);
       } else {
         checkAndEnforceLimit(initialUsed);
       }
@@ -2486,13 +2530,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         const missedMinutes = Math.floor((Date.now() - lastTickRef.current) / 60000);
         lastTickRef.current = Date.now();
         getNativeUsageStats().then((stats) => {
-          if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
-            applyUsageMinutes(stats.totalMinutesToday, false);
+          if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number') {
+            applyUsageMinutes(stats.totalMinutesToday, false, stats.usageDate, stats.hourlyUsage, stats.appsUsage);
           } else {
-            const curUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+            const today = getLocalDateString();
+            const curSt = getTodayScreenTime(targetSettingsRef.current.screenTime, today);
+            const curUsed = curSt.todayTotalMinutes;
             const updated = missedMinutes > 0 ? curUsed + missedMinutes : curUsed;
             if (missedMinutes > 0) {
-              setScreenTimeUsedRef.current(targetChildId, updated);
+              setScreenTimeUsedRef.current(targetChildId, updated, { usageDate: today });
             }
             checkAndEnforceLimit(updated);
           }
@@ -2508,15 +2554,15 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
     const ticker = setInterval(async () => {
       lastTickRef.current = Date.now();
-      let nativeMinutes = 0;
       try {
         const stats = await getNativeUsageStats();
-        if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
-          nativeMinutes = stats.totalMinutesToday;
+        if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number') {
+          applyUsageMinutes(stats.totalMinutesToday, true, stats.usageDate, stats.hourlyUsage, stats.appsUsage);
+          return;
         }
       } catch (_) {}
 
-      applyUsageMinutes(nativeMinutes, true);
+      applyUsageMinutes(undefined, true);
     }, 60000);
 
     return () => {
@@ -2844,6 +2890,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             network: isNetworkOn ? networkInfo : null,
             mediaPlayback: realMediaPlayback,
             screenTimeUsedMinutes: isAppUsageOn ? (curScreenTime?.todayTotalMinutes || 0) : undefined,
+            screenTimeDate: isAppUsageOn ? (curScreenTime?.usageDate || getLocalDateString()) : undefined,
             activeOpenedApp: isAppUsageOn && isScreenStateOn ? (typeof curActiveApp === 'object' && curActiveApp ? curActiveApp.name : (typeof curActiveApp === 'string' ? curActiveApp : '')) : '',
             installedAppsCount: isAppUsageOn ? (curRealApps.length || curApps.length) : undefined,
             isLocked: isDeviceLocked,
@@ -2863,8 +2910,8 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     [activeParentId, targetChildId]
   );
 
-  // Compute adaptive interval based on user requirement:
-  // "tối ưu lại vị trí có thể ko gửi dữ liệu mà xử lý trên máy con chỉ gửi mỗi 1 tiếng nếu ko có gì cần thiết, chỉ gửi liên tục khi cha mẹ xem vị trí trực tiếp"
+  // Compute adaptive interval based on screen state and live tracking:
+  // Giữ kết nối 24/7 không bị gián đoạn khi tắt/khóa màn hình
   const getNextHeartbeatIntervalMs = React.useCallback(() => {
     const curSpeed = lastTelemetryRef.current.speed;
 
@@ -2879,30 +2926,28 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       liveTrackingExpiresAtRef.current = 0;
     }
 
-    // 2. Chế độ bình thường mặc định: CHỈ gửi mỗi 1 tiếng (3,600,000 ms) để bảo vệ quota máy chủ Firebase và pin máy con
-    return 3600000;
+    // 2. Chế độ bình thường: Giữ kết nối trực tuyến 24/7 (Keep-alive) với gói dữ liệu siêu nhẹ (~150 bytes)
+    // Khi màn hình BẬT: 25 giây
+    // Khi màn hình TẮT (khóa màn hình): 40 giây (đảm bảo máy chủ và cha mẹ nhận biết online, pin tiêu thụ < 0.5%/ngày)
+    const isScreenCurrentlyOn = lastTelemetryRef.current.isScreenOn;
+    return isScreenCurrentlyOn ? 25000 : 40000;
   }, []);
 
-  // Instant Trigger: Chỉ gửi ngay khi cha mẹ bật xem trực tiếp hoặc các sự kiện khẩn cấp
+  // Instant Trigger: Gửi ngay tức thì khi có bất kỳ sự kiện nào (màn hình tắt/bật, mở app, lệnh từ xa, sos...)
   const triggerInstantTelemetryFlush = React.useCallback(
     (reason: string) => {
-      const isLive = isLiveTrackingActiveRef.current && Date.now() < liveTrackingExpiresAtRef.current;
-      const isUrgent = reason === 'tracking_reenabled' || reason === 'manual_flush' || reason === 'sos' || reason === 'geofence_alert';
-
-      if (isLive || isUrgent) {
-        if (heartbeatTimerRef.current) {
-          clearTimeout(heartbeatTimerRef.current);
-        }
-        uploadCurrentTelemetrySnapshot(reason)
-          .catch(() => {})
-          .finally(() => {
-            if (trackingConfig.isMasterTrackingEnabled === false) return;
-            const nextMs = getNextHeartbeatIntervalMs();
-            heartbeatTimerRef.current = setTimeout(async () => {
-              await uploadCurrentTelemetrySnapshot('scheduled_heartbeat');
-            }, nextMs);
-          });
+      if (heartbeatTimerRef.current) {
+        clearTimeout(heartbeatTimerRef.current);
       }
+      uploadCurrentTelemetrySnapshot(reason)
+        .catch(() => {})
+        .finally(() => {
+          if (trackingConfig.isMasterTrackingEnabled === false) return;
+          const nextMs = getNextHeartbeatIntervalMs();
+          heartbeatTimerRef.current = setTimeout(async () => {
+            await uploadCurrentTelemetrySnapshot('scheduled_heartbeat');
+          }, nextMs);
+        });
     },
     [uploadCurrentTelemetrySnapshot, getNextHeartbeatIntervalMs, trackingConfig.isMasterTrackingEnabled]
   );

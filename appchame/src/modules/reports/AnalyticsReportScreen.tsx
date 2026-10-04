@@ -39,7 +39,7 @@ import {
   Flame,
   Battery
 } from 'lucide-react';
-import { useAppState } from '@shared/store';
+import { useAppState, getTodayScreenTime, DEFAULT_SCREEN_TIME_LIMIT } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
 import { AppItem, ChildDeviceInfo } from '@shared/types';
 import { haptics } from '@shared/utils/haptics';
@@ -61,14 +61,14 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
     triggerVoiceGuide,
   } = useAppState();
 
-  const { apps: globalApps, child, children, selectedChildId, childSettings, screenTime: globalScreenTime } = state;
+  const { apps: globalApps, child, children, selectedChildId, childSettings } = state;
   const currentChild = children?.find((c) => c.id === selectedChildId) || child;
   const currentParent = getCurrentParentAccount();
 
   // Active settings for current child
   const currentSettings = childSettings?.[currentChild.id];
-  const effectiveApps: AppItem[] = currentSettings?.apps || globalApps || [];
-  const effectiveScreenTime = currentSettings?.screenTime || globalScreenTime;
+  const effectiveApps: AppItem[] = currentSettings?.apps || (selectedChildId === currentChild.id ? globalApps : []);
+  const effectiveScreenTime = getTodayScreenTime(currentSettings?.screenTime);
 
   // Periods: today (24h), week (7 days), month (30 days)
   const [period, setPeriod] = useState<PeriodType>('week');
@@ -125,11 +125,11 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
     if (effectiveScreenTime?.todayTotalMinutes && effectiveScreenTime.todayTotalMinutes > 0) {
       return effectiveScreenTime.todayTotalMinutes;
     }
-    return totalAppsMinutes > 0 ? totalAppsMinutes : 135;
+    return totalAppsMinutes;
   }, [currentChild.screenTimeUsedMinutes, effectiveScreenTime, totalAppsMinutes]);
 
-  const yesterdayMinutes = effectiveScreenTime?.yesterdayTotalMinutes || Math.round(todayUsedMinutes * 1.15);
-  const dailyLimitMinutes = currentSettings?.screenTimeLimitMinutes || 120;
+  const yesterdayMinutes = effectiveScreenTime?.yesterdayTotalMinutes || 0;
+  const dailyLimitMinutes = currentSettings?.screenTimeLimitMinutes ?? effectiveScreenTime?.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT;
   const remainingLimitMinutes = Math.max(0, dailyLimitMinutes - todayUsedMinutes);
 
   // Format helper: minutes to string
@@ -144,44 +144,67 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
   const periodMetrics = useMemo(() => {
     if (period === 'today') {
       const diffVsYesterday = todayUsedMinutes - yesterdayMinutes;
-      const pctChange = yesterdayMinutes > 0 ? Math.round((diffVsYesterday / yesterdayMinutes) * 100) : 0;
+      const hasYesterday = yesterdayMinutes > 0;
+      const pctChange = hasYesterday ? Math.round((diffVsYesterday / yesterdayMinutes) * 100) : 0;
       return {
         onlineTime: formatMins(todayUsedMinutes),
-        studyTime: formatMins(studyMinutes || Math.round(todayUsedMinutes * 0.45)),
-        entertainmentTime: formatMins(entertainmentMinutes || Math.round(todayUsedMinutes * 0.35)),
+        studyTime: formatMins(studyMinutes),
+        entertainmentTime: formatMins(entertainmentMinutes),
         avgDaily: `${formatMins(todayUsedMinutes)} hôm nay`,
-        trendText: pctChange < 0
-          ? `Giảm ${Math.abs(pctChange)}% so với hôm qua (Cân bằng tốt)`
-          : pctChange > 0
-          ? `Tăng ${pctChange}% so với hôm qua`
-          : 'Bằng mức hôm qua',
+        trendText: hasYesterday
+          ? pctChange < 0
+            ? `Giảm ${Math.abs(pctChange)}% so với hôm qua`
+            : pctChange > 0
+            ? `Tăng ${pctChange}% so với hôm qua`
+            : 'Bằng mức hôm qua'
+          : 'Chưa đủ dữ liệu hôm qua để so sánh',
         isTrendPositive: pctChange <= 0,
       };
     } else if (period === 'week') {
-      const weekTotalMins = Math.round((effectiveScreenTime?.weekTotalHours || (todayUsedMinutes * 5.8) / 60) * 60);
-      const studyWeekMins = Math.round((effectiveScreenTime?.studyHours || (studyMinutes * 6) / 60) * 60);
-      const entWeekMins = Math.round((effectiveScreenTime?.entertainmentHours || (entertainmentMinutes * 6) / 60) * 60);
-      const avgDailyMins = Math.round(weekTotalMins / 7);
+      const now = new Date();
+      let weekTotalMins = todayUsedMinutes;
+      let recordedDays = todayUsedMinutes > 0 ? 1 : 0;
+      for (let i = 1; i < 7; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const m = effectiveScreenTime?.dailyHistory?.[dateStr];
+        if (typeof m === 'number') {
+          weekTotalMins += m;
+          recordedDays++;
+        }
+      }
+      const avgDailyMins = recordedDays > 0 ? Math.round(weekTotalMins / recordedDays) : 0;
       return {
         onlineTime: formatMins(weekTotalMins),
-        studyTime: formatMins(studyWeekMins),
-        entertainmentTime: formatMins(entWeekMins),
+        studyTime: formatMins(studyMinutes),
+        entertainmentTime: formatMins(entertainmentMinutes),
         avgDaily: `${(avgDailyMins / 60).toFixed(1)} giờ/ngày`,
-        trendText: 'Duy trì phong độ ổn định (-14% so với tuần trước)',
+        trendText: recordedDays >= 3 ? 'Dữ liệu 7 ngày thực tế' : 'Đang tích lũy dữ liệu 7 ngày',
         isTrendPositive: true,
       };
     } else {
-      // Month
-      const monthTotalMins = Math.round((effectiveScreenTime?.weekTotalHours || 24) * 4.2 * 60);
-      const studyMonthMins = Math.round(monthTotalMins * 0.42);
-      const entMonthMins = Math.round(monthTotalMins * 0.32);
-      const avgDailyMins = Math.round(monthTotalMins / 30);
+      // Month (30 days)
+      const now = new Date();
+      let monthTotalMins = todayUsedMinutes;
+      let recordedDays = todayUsedMinutes > 0 ? 1 : 0;
+      for (let i = 1; i < 30; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const m = effectiveScreenTime?.dailyHistory?.[dateStr];
+        if (typeof m === 'number') {
+          monthTotalMins += m;
+          recordedDays++;
+        }
+      }
+      const avgDailyMins = recordedDays > 0 ? Math.round(monthTotalMins / recordedDays) : 0;
       return {
         onlineTime: formatMins(monthTotalMins),
-        studyTime: formatMins(studyMonthMins),
-        entertainmentTime: formatMins(entMonthMins),
+        studyTime: formatMins(studyMinutes),
+        entertainmentTime: formatMins(entertainmentMinutes),
         avgDaily: `${(avgDailyMins / 60).toFixed(1)} giờ/ngày`,
-        trendText: 'Tối ưu thời gian học (+12% tiến độ bài tập)',
+        trendText: recordedDays >= 7 ? 'Dữ liệu 30 ngày thực tế' : 'Đang tích lũy dữ liệu 30 ngày',
         isTrendPositive: true,
       };
     }
@@ -191,7 +214,7 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
   const hourlyData = useMemo(() => {
     const rawHourly = effectiveScreenTime?.hourlyUsage && effectiveScreenTime.hourlyUsage.length === 24
       ? effectiveScreenTime.hourlyUsage
-      : [0, 0, 0, 0, 0, 0, 10, 15, 25, 10, 5, 20, 15, 5, 10, 20, 0, 0, 0, 0, 0, 0, 0, 0];
+      : Array(24).fill(0);
 
     const maxHour = Math.max(...rawHourly, 1);
     const nowHour = new Date().getHours();
@@ -217,10 +240,13 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
       d.setDate(today.getDate() - i);
       const isToday = i === 0;
       const isYesterday = i === 1;
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
       let mins = 0;
       if (isToday) {
         mins = todayUsedMinutes;
+      } else if (effectiveScreenTime?.dailyHistory && typeof effectiveScreenTime.dailyHistory[dateStr] === 'number') {
+        mins = effectiveScreenTime.dailyHistory[dateStr];
       } else if (isYesterday) {
         mins = yesterdayMinutes;
       } else {
@@ -247,7 +273,7 @@ export const AnalyticsReportScreen: React.FC<AnalyticsReportScreenProps> = ({ on
     const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)},110 L ${points[0].x.toFixed(1)},110 Z`;
 
     return { points, pathD, areaD, maxVal };
-  }, [todayUsedMinutes, yesterdayMinutes]);
+  }, [todayUsedMinutes, yesterdayMinutes, effectiveScreenTime?.dailyHistory]);
 
   // 5. Filter & Search Apps
   const filteredApps = useMemo(() => {

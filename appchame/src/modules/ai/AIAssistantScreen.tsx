@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Bot, Send, Sparkles, Lightbulb, Shield, BarChart3, Settings, Key, AlertTriangle } from 'lucide-react';
 import { AIMessage } from '@shared/types';
-import { useAppState } from '@shared/store';
+import { useAppState, getTodayScreenTime, DEFAULT_SCREEN_TIME_LIMIT } from '@shared/store';
 import { serverApiClient } from '@shared/services/serverApiClient';
 
 interface AIAssistantScreenProps {
@@ -13,9 +13,10 @@ export const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) 
   const currentChild = state.children?.find((c) => c.id === state.selectedChildId) || state.child;
   const childName = currentChild?.name || 'con';
   const childSettings = state.childSettings?.[currentChild?.id || ''];
-  const usedMins = childSettings?.screenTime?.todayTotalMinutes ?? state.screenTime?.todayTotalMinutes ?? 0;
-  const limitMins = childSettings?.screenTimeLimitMinutes ?? 135;
-  const apps = childSettings?.apps || state.apps || [];
+  const todayST = getTodayScreenTime(childSettings?.screenTime);
+  const usedMins = todayST.todayTotalMinutes;
+  const limitMins = childSettings?.screenTimeLimitMinutes ?? todayST.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT;
+  const apps = childSettings?.apps || (state.selectedChildId === currentChild?.id ? state.apps : []);
   const routines = childSettings?.smartRoutines || state.smartRoutines;
 
   const [messages, setMessages] = useState<AIMessage[]>([

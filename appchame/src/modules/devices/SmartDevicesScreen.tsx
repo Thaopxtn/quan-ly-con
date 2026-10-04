@@ -134,7 +134,7 @@ export const SmartDevicesScreen: React.FC<SmartDevicesScreenProps> = ({ onBack }
       id: 'dev_' + Date.now(),
       name: deviceName.trim() || 'Thiết bị mới',
       type: selectedType,
-      battery: Math.floor(Math.random() * 25) + 75,
+      battery: 100,
       isConnected: true,
       statusText: 'Đang kết nối • Tín hiệu tốt',
       icon: selectedType,

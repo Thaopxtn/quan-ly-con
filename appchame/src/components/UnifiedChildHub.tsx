@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAppState, syncAllChildrenFromCloud, getActiveParentId } from '@shared/store';
+import { useAppState, syncAllChildrenFromCloud, getActiveParentId, getTodayScreenTime, DEFAULT_SCREEN_TIME_LIMIT } from '@shared/store';
 import {
   Plus,
   Check,
@@ -311,8 +311,9 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   const totalChildren = children.length;
   const activeChild = totalChildren > 0 ? (children[activeIndex] || children[0]) : null;
   const activeChildSettings = activeChild ? state.childSettings[activeChild.id] : undefined;
-  const usedMins = activeChildSettings?.screenTime?.todayTotalMinutes ?? state.screenTime.todayTotalMinutes ?? 0;
-  const limitMins = activeChildSettings?.screenTimeLimitMinutes ?? 120;
+  const activeTodayST = getTodayScreenTime(activeChildSettings?.screenTime);
+  const usedMins = activeTodayST.todayTotalMinutes;
+  const limitMins = activeChildSettings?.screenTimeLimitMinutes ?? activeTodayST.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT;
   const progressPercent = limitMins > 0 ? Math.min(100, Math.round((usedMins / limitMins) * 100)) : 0;
 
   const activeChildTasks = (activeChildSettings?.kidTasks || state.kidTasks || [])
@@ -581,7 +582,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                         title="Bấm để tặng sao khen ngợi cho con"
                       >
                         <Star size={11} className="fill-amber-500 text-amber-500" />
-                        <span>{activeChildSettings?.kidStars ?? state.kidStars ?? 28} Sao</span>
+                        <span>{activeChildSettings?.kidStars ?? 0} Sao</span>
                         <span className="text-amber-600 text-[10px] font-semibold hover:underline ml-0.5">+ Tặng sao</span>
                       </button>
                     </div>

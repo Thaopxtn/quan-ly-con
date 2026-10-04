@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, TrendingDown, Clock, Sliders, Check, Sparkles, Hourglass } from 'lucide-react';
-import { useAppState } from '@shared/store';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ChevronLeft, TrendingDown, TrendingUp, Clock, Sliders, Check, Sparkles, Hourglass } from 'lucide-react';
+import { useAppState, getTodayScreenTime, DEFAULT_SCREEN_TIME_LIMIT } from '@shared/store';
 import { Kids360ScreenTimeGauge } from '../../components/Kids360ScreenTimeGauge';
 import { Kids360DayTimeline } from '../../components/Kids360DayTimeline';
 import { UsageAccessPermissionAlert } from '../../components/UsageAccessPermissionAlert';
@@ -23,27 +23,34 @@ const PRESET_TIMES = [
 
 export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNavigate }) => {
   const { state, setCustomScreenTimeLimit } = useAppState();
-  const { apps, screenTime, child } = state;
+  const { child } = state;
   const [timeTab, setTimeTab] = useState<'today' | '7days' | '30days'>('today');
   const [showLimitModal, setShowLimitModal] = useState(false);
 
-  // Read currently saved custom limit for this child
-  const savedLimitMinutes = state.childSettings?.[child.id]?.screenTimeLimitMinutes || 135;
+  // Read child-specific settings and today's sanitized screenTime
+  const childSettings = state.childSettings?.[child.id];
+  const effectiveScreenTime = useMemo(
+    () => getTodayScreenTime(childSettings?.screenTime),
+    [childSettings?.screenTime]
+  );
+  const childApps = childSettings?.apps || (state.selectedChildId === child.id ? state.apps : []);
+
+  const savedLimitMinutes = childSettings?.screenTimeLimitMinutes ?? effectiveScreenTime.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT;
   const [customHours, setCustomHours] = useState(Math.floor(savedLimitMinutes / 60));
   const [customMinutes, setCustomMinutes] = useState(savedLimitMinutes % 60);
 
   useEffect(() => {
-    const cur = state.childSettings?.[child.id]?.screenTimeLimitMinutes || 135;
+    const cur = childSettings?.screenTimeLimitMinutes ?? effectiveScreenTime.dailyLimitMinutes ?? DEFAULT_SCREEN_TIME_LIMIT;
     setCustomHours(Math.floor(cur / 60));
     setCustomMinutes(cur % 60);
-  }, [child.id, state.childSettings]);
+  }, [child.id, childSettings?.screenTimeLimitMinutes, effectiveScreenTime.dailyLimitMinutes]);
 
   const hourlyLabels = ['6h', '9h', '12h', '15h', '18h', '21h', '24h'];
   
   // Calculate dynamic heights from hourlyUsage if available, else 0
   const getBlockMaxPercent = (hours: number[]) => {
-    if (!screenTime.hourlyUsage) return 0;
-    const maxMins = Math.max(...hours.map(h => screenTime.hourlyUsage[h] || 0));
+    if (!effectiveScreenTime.hourlyUsage) return 0;
+    const maxMins = Math.max(...hours.map(h => effectiveScreenTime.hourlyUsage[h] || 0));
     return Math.min(100, Math.round((maxMins / 60) * 100));
   };
 
@@ -57,8 +64,29 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
     getBlockMaxPercent([0, 1, 2, 3, 4, 5]),
   ];
 
-  const totalUsedHours = Math.floor(screenTime.todayTotalMinutes / 60);
-  const totalUsedMins = screenTime.todayTotalMinutes % 60;
+  // 7-day or 30-day history bars
+  const historyBars = useMemo(() => {
+    if (timeTab === 'today') return [];
+    const count = timeTab === '7days' ? 7 : 30;
+    const result: { label: string; minutes: number }[] = [];
+    const now = new Date();
+    for (let i = count - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const dayLabel = i === 0 ? 'Hôm nay' : count === 7 ? `${d.getDate()}/${d.getMonth() + 1}` : `${d.getDate()}`;
+      const mins = i === 0 ? (effectiveScreenTime.todayTotalMinutes || 0) : (effectiveScreenTime.dailyHistory?.[dateStr] || 0);
+      result.push({ label: dayLabel, minutes: mins });
+    }
+    const maxMins = Math.max(...result.map(r => r.minutes), 60);
+    return result.map(r => ({
+      ...r,
+      heightPercent: Math.min(100, Math.round((r.minutes / maxMins) * 100)),
+    }));
+  }, [timeTab, effectiveScreenTime]);
+
+  const totalUsedHours = Math.floor(effectiveScreenTime.todayTotalMinutes / 60);
+  const totalUsedMins = effectiveScreenTime.todayTotalMinutes % 60;
   const timeUsedStr = `${totalUsedHours > 0 ? `${totalUsedHours}h ` : ''}${totalUsedMins}p`;
 
   const limitH = Math.floor(savedLimitMinutes / 60);
@@ -132,44 +160,89 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
         <Kids360ScreenTimeGauge
           childId={child.id}
           childName={child.name}
-          usedMinutes={screenTime.todayTotalMinutes}
+          usedMinutes={effectiveScreenTime.todayTotalMinutes}
           limitMinutes={savedLimitMinutes}
           isLocked={Boolean(child.isLocked || state.childSettings?.[child.id]?.isLocked || state.childSettings?.[child.id]?.lockChallenge?.isLocked || (child.id === state.selectedChildId && state.lockChallenge?.isLocked))}
           isStudyMode={state.studyModeOnly}
           battery={child.battery}
           onOpenLimitModal={() => setShowLimitModal(true)}
+          child={child}
+          childSettings={childSettings}
         />
       </div>
 
-      {/* Hourly Bar Chart Visualization Card */}
+      {/* Hourly / 7d / 30d Bar Chart Visualization Card */}
       <div className="px-4 pt-3">
         <div className="bg-white rounded-3xl p-4 shadow-xs border border-slate-200/80 space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">Biểu đồ dùng theo giờ</h4>
-              <p className="text-[10px] text-slate-400 font-medium">Hôm nay ({child.name})</p>
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">
+                {timeTab === 'today' ? 'Biểu đồ dùng theo giờ' : timeTab === '7days' ? 'Lịch sử 7 ngày qua' : 'Lịch sử 30 ngày qua'}
+              </h4>
+              <p className="text-[10px] text-slate-400 font-medium">
+                {timeTab === 'today' ? `Hôm nay (${child.name})` : timeTab === '7days' ? `7 ngày gần nhất (${child.name})` : `30 ngày gần nhất (${child.name})`}
+              </p>
             </div>
-            <div className="flex items-center space-x-1.5 text-emerald-600 text-xs font-semibold">
-              <TrendingDown size={14} />
-              <span>Giảm {Math.abs(screenTime.percentChangeVsYesterday)}%</span>
-            </div>
+            {timeTab === 'today' ? (
+              effectiveScreenTime.yesterdayTotalMinutes > 0 ? (
+                <div className={`flex items-center space-x-1.5 text-xs font-semibold ${
+                  (effectiveScreenTime.percentChangeVsYesterday || 0) <= 0 ? 'text-emerald-600' : 'text-rose-600'
+                }`}>
+                  {(effectiveScreenTime.percentChangeVsYesterday || 0) <= 0 ? (
+                    <>
+                      <TrendingDown size={14} />
+                      <span>Giảm {Math.abs(effectiveScreenTime.percentChangeVsYesterday || 0)}%</span>
+                    </>
+                  ) : (
+                    <>
+                      <TrendingUp size={14} />
+                      <span>Tăng {effectiveScreenTime.percentChangeVsYesterday}%</span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <span className="text-[10px] text-slate-400 font-medium">Chưa có số hôm qua</span>
+              )
+            ) : (
+              <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-full">
+                Dữ liệu thực tế
+              </span>
+            )}
           </div>
 
-          <div className="h-28 flex items-end justify-between gap-2.5 px-2 pt-2">
-            {sampleHeights.map((h, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group">
-                <div className="w-full bg-slate-100 rounded-t-lg relative flex items-end h-24 overflow-hidden">
-                  <div
-                    className={`w-full rounded-t-lg transition-all duration-500 ${
-                      i === 2 ? 'bg-blue-600' : 'bg-blue-400 hover:bg-blue-500'
-                    }`}
-                    style={{ height: `${h}%` }}
-                  />
+          {timeTab === 'today' ? (
+            <div className="h-28 flex items-end justify-between gap-2.5 px-2 pt-2">
+              {sampleHeights.map((h, i) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group">
+                  <div className="w-full bg-slate-100 rounded-t-lg relative flex items-end h-24 overflow-hidden">
+                    <div
+                      className={`w-full rounded-t-lg transition-all duration-500 ${
+                        i === 2 ? 'bg-blue-600' : 'bg-blue-400 hover:bg-blue-500'
+                      }`}
+                      style={{ height: `${h}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium">{hourlyLabels[i]}</span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-medium">{hourlyLabels[i]}</span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="h-28 flex items-end justify-between gap-1.5 px-1 pt-2 overflow-x-auto">
+              {historyBars.map((bar, i) => (
+                <div key={i} className="flex-1 min-w-[20px] flex flex-col items-center gap-1.5 group">
+                  <div className="w-full bg-slate-100 rounded-t-lg relative flex items-end h-24 overflow-hidden" title={`${bar.label}: ${bar.minutes} phút`}>
+                    <div
+                      className={`w-full rounded-t-lg transition-all duration-500 ${
+                        bar.label === 'Hôm nay' ? 'bg-blue-600' : 'bg-indigo-400 hover:bg-indigo-500'
+                      }`}
+                      style={{ height: `${bar.heightPercent}%` }}
+                    />
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-medium truncate max-w-[28px]">{bar.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -194,36 +267,45 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
         </div>
 
         <div className="bg-white rounded-2xl p-3 shadow-soft border border-slate-100 space-y-3">
-          {apps.slice(0, 4).map((app) => (
-            <div key={app.id} className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-700">
-                    {app.name.charAt(0)}
-                  </div>
-                  <div>
-                    <span className="font-bold text-slate-800 block leading-tight">{app.name}</span>
-                    <span className={`text-[9px] font-bold ${app.status === 'blocked' ? 'text-rose-500' : 'text-emerald-600'}`}>
-                      {app.status === 'blocked' ? 'Đang khóa' : 'Cho phép'}
-                    </span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="font-bold text-slate-900">
-                    {Math.floor(app.timeUsedMinutes / 60) > 0 ? `${Math.floor(app.timeUsedMinutes / 60)}h ` : ''}
-                    {app.timeUsedMinutes % 60}p
-                  </span>
-                  <span className="text-[10px] text-slate-400 ml-1.5">({app.percentChange}%)</span>
-                </div>
-              </div>
-              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-blue-500"
-                  style={{ width: `${Math.min(100, app.percentChange || 20)}%` }}
-                />
-              </div>
+          {childApps.length === 0 ? (
+            <div className="text-center py-4 text-xs text-slate-400">
+              Chưa có dữ liệu ứng dụng nào từ thiết bị của {child.name}
             </div>
-          ))}
+          ) : (
+            (() => {
+              const sortedApps = [...childApps].sort((a, b) => (b.timeUsedMinutes || 0) - (a.timeUsedMinutes || 0));
+              const maxAppMins = Math.max(1, ...sortedApps.map(a => a.timeUsedMinutes || 0));
+              return sortedApps.slice(0, 5).map((app) => (
+                <div key={app.id || app.packageName} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-700">
+                        {app.name.charAt(0)}
+                      </div>
+                      <div>
+                        <span className="font-bold text-slate-800 block leading-tight">{app.name}</span>
+                        <span className={`text-[9px] font-bold ${app.status === 'blocked' ? 'text-rose-500' : 'text-emerald-600'}`}>
+                          {app.status === 'blocked' ? 'Đang khóa' : 'Cho phép'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-bold text-slate-900">
+                        {Math.floor((app.timeUsedMinutes || 0) / 60) > 0 ? `${Math.floor((app.timeUsedMinutes || 0) / 60)}h ` : ''}
+                        {(app.timeUsedMinutes || 0) % 60}p
+                      </span>
+                    </div>
+                  </div>
+                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                      style={{ width: `${Math.min(100, Math.round(((app.timeUsedMinutes || 0) / maxAppMins) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              ));
+            })()
+          )}
         </div>
 
         {/* Set Screen Time Button */}
