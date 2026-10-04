@@ -203,7 +203,11 @@ function readDb(type) {
   try {
     const file = DB_FILES[type];
     if (file && fs.existsSync(file)) {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      let raw = fs.readFileSync(file, 'utf8');
+      if (raw.charCodeAt(0) === 0xfeff) {
+        raw = raw.slice(1);
+      }
+      const data = JSON.parse(raw);
       DB_MEMORY_CACHE[type] = data;
       return data;
     }
