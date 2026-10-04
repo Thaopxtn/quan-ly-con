@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAppState } from '@shared/store';
+import { useAppState, getActiveParentId } from '@shared/store';
 import { Trash2, Check, Bell } from 'lucide-react';
 import { syncChildSettingsToCloud } from '@shared/firebase/cloudSyncService';
 
@@ -8,7 +8,8 @@ interface DeviceNotificationsViewProps {
 }
 
 export const DeviceNotificationsView: React.FC<DeviceNotificationsViewProps> = ({ childId }) => {
-  const { state, currentParent } = useAppState();
+  const { state } = useAppState();
+  const parentId = getActiveParentId();
   const childSettings = state.childSettings?.[childId];
   const rawNotifications = childSettings?.deviceNotifications || [];
   
@@ -21,9 +22,9 @@ export const DeviceNotificationsView: React.FC<DeviceNotificationsViewProps> = (
   const unreadCount = rawNotifications.length;
 
   const handleClearAll = () => {
-    if (!currentParent?.id || !childId) return;
+    if (!parentId || !childId) return;
     if (confirm('Bạn có chắc muốn xóa toàn bộ lịch sử thông báo máy con không?')) {
-      syncChildSettingsToCloud(currentParent.id, childId, {
+      syncChildSettingsToCloud(parentId, childId, {
         deviceNotifications: [],
       }).catch(console.error);
     }

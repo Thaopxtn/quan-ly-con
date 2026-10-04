@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { ChevronLeft, Bell, Trash2, CheckCheck, Filter } from "lucide-react";
 import { useAppState } from "@shared/store";
 import { ChildNotification } from "@shared/types";

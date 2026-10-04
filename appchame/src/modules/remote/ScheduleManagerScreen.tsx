@@ -418,7 +418,7 @@ export const ScheduleManagerScreen: React.FC<ScheduleManagerScreenProps> = ({ on
                         onClick={() =>
                           setAlarmDays(
                             alarmDays.includes(i)
-                              ? alarmDays.filter((x) => x !== i)
+                               ? alarmDays.filter((x) => x !== i)
                               : [...alarmDays, i]
                           )
                         }

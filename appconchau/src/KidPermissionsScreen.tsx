@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import {
   ChevronLeft,
   Shield,
-  ShieldCheck,
-  AlertTriangle,
   ExternalLink,
   CheckCircle2,
   Lock,
@@ -17,11 +15,15 @@ import {
   Activity,
   Zap,
   Calendar,
-  Sliders
+  Sliders,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { PrivacyPolicyModal } from "@shared/components/PrivacyPolicyModal";
 import { Capacitor } from "@capacitor/core";
-import { resetSafeConfetti } from "@shared/utils/safeConfetti";
+import { resetSafeConfetti, fireSafeConfetti } from "@shared/utils/safeConfetti";
 import {
   checkRealAndroidPermissions,
   openAndroidPermissionSettings,
@@ -37,115 +39,128 @@ interface KidPermissionsScreenProps {
 interface PermissionItem {
   id: string;
   name: string;
+  tag: string;
   desc: string;
   icon: React.ReactNode;
   iconBg: string;
   isGranted: boolean;
+  defaultGranted: boolean;
   instruction: string;
 }
 
 export const PERMISSIONS_STORAGE_KEY = "kidcare_permissions_state_v1";
 export const PERMISSIONS_SNOOZE_KEY = "kidcare_permissions_dismissed_until";
 
-const DEFAULT_CONFIG = [
+const DEFAULT_CONFIG: Omit<PermissionItem, "isGranted">[] = [
   {
     id: "overlay",
-    name: "Quyền Vẽ Đè Màn Hình (Display Over Other Apps)",
-    desc: "Cho phép KidCare hiển thị màn hình khóa, thông điệp khẩn cấp và thử thách giải toán khi hết giờ dùng.",
-    icon: <Eye size={20} />,
+    name: "Hiển thị trên ứng dụng khác",
+    tag: "Khóa máy & Khẩn cấp",
+    desc: "Hiển thị màn hình khóa và thông điệp khẩn cấp khi con hết giờ sử dụng.",
+    icon: <Eye size={18} />,
     iconBg: "bg-blue-100 text-blue-700",
     defaultGranted: false,
-    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Xuất hiện trên cùng > Bật KidCare.",
+    instruction: "Cài đặt > Ứng dụng > Xuất hiện trên cùng (Overlay) > Bật KidCare.",
   },
   {
     id: "accessibility",
-    name: "Dịch Vụ Trợ Năng (Accessibility Service)",
-    desc: "Tự động nhận diện khi mở ứng dụng bị cấm (TikTok, Game) trong giờ học và chặn tức thì.",
-    icon: <Lock size={20} />,
+    name: "Dịch vụ trợ năng",
+    tag: "Chặn app bị cấm",
+    desc: "Tự động nhận diện khi con mở ứng dụng bị cấm (TikTok, Game) và chặn tức thì.",
+    icon: <Lock size={18} />,
     iconBg: "bg-purple-100 text-purple-700",
     defaultGranted: false,
     instruction: "Cài đặt > Hỗ trợ tiếp cận (Trợ năng) > Ứng dụng đã tải xuống > KidCare > Bật.",
   },
   {
-    id: "device_admin",
-    name: "Quản Trị Viên Thiết Bị (Device Admin MDM)",
-    desc: "Ngăn chặn việc tự ý gỡ cài đặt KidCare trái phép mà không có sự đồng ý của cha mẹ.",
-    icon: <Shield size={20} />,
-    iconBg: "bg-rose-100 text-rose-700",
+    id: "usage_stats",
+    name: "Thời gian sử dụng máy",
+    tag: "Đồng hồ 360 & Giờ dùng",
+    desc: "Theo dõi thời lượng dùng máy và thống kê chi tiết từng ứng dụng trong ngày.",
+    icon: <Clock size={18} />,
+    iconBg: "bg-indigo-100 text-indigo-700",
     defaultGranted: false,
-    instruction: "Cài đặt > Bảo mật & Quyền riêng tư > Quyền quản trị thiết bị > Kích hoạt KidCare.",
+    instruction: "Cài đặt > Ứng dụng > Quyền đặc biệt > Truy cập dữ liệu sử dụng > KidCare > Cho phép.",
   },
   {
-    id: "location",
-    name: "Định Vị GPS Chạy Nền (Always Allow Location)",
-    desc: "Gửi tọa độ vị trí thực tế của con về điện thoại cha mẹ và cảnh báo ra/vào vùng an toàn.",
-    icon: <MapPin size={20} />,
-    iconBg: "bg-emerald-100 text-emerald-700",
-    defaultGranted: true,
-    instruction: "Cài đặt > Vị trí > Quyền ứng dụng > KidCare > Chọn 'Luôn cho phép'.",
+    id: "device_admin",
+    name: "Quản trị viên thiết bị",
+    tag: "Chống gỡ ứng dụng",
+    desc: "Ngăn chặn việc con tự ý gỡ cài đặt KidCare trái phép mà không có mã cha mẹ.",
+    icon: <Shield size={18} />,
+    iconBg: "bg-rose-100 text-rose-700",
+    defaultGranted: false,
+    instruction: "Cài đặt > Bảo mật & Quyền riêng tư > Quản trị viên thiết bị > Kích hoạt KidCare.",
   },
   {
     id: "battery",
-    name: "Bỏ Qua Tối Ưu Hóa Pin (No Battery Restrictions)",
-    desc: "Giữ KidCare chạy ngầm ổn định 24/7, không bị Android tự động tắt khi màn hình khóa.",
-    icon: <BatteryCharging size={20} />,
+    name: "Bỏ qua tối ưu hóa pin",
+    tag: "Duy trì kết nối 24/7",
+    desc: "Giữ KidCare chạy ngầm liên tục, không bị Android tắt khi khóa màn hình.",
+    icon: <BatteryCharging size={18} />,
     iconBg: "bg-amber-100 text-amber-700",
     defaultGranted: true,
-    instruction: "Cài đặt > Pin & Hiệu suất > Tiết kiệm pin ứng dụng > KidCare > Chọn 'Không giới hạn'.",
+    instruction: "Cài đặt > Pin & Hiệu suất > Tiết kiệm pin ứng dụng > KidCare > Không giới hạn.",
   },
   {
-    id: "usage_stats",
-    name: "Quyền Xem Thời Gian Sử Dụng (Usage Stats Access)",
-    desc: "Cho phép cha mẹ xem thời lượng sử dụng máy và từng ứng dụng (YouTube, Game...) trong ngày.",
-    icon: <Clock size={20} />,
-    iconBg: "bg-indigo-100 text-indigo-700",
-    defaultGranted: false,
-    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Truy cập dữ liệu sử dụng > KidCare > Cho phép.",
+    id: "location",
+    name: "Định vị GPS vị trí thực",
+    tag: "Bản đồ & Vùng an toàn",
+    desc: "Cập nhật tọa độ máy con lên bản đồ cha mẹ và gửi cảnh báo SOS.",
+    icon: <MapPin size={18} />,
+    iconBg: "bg-emerald-100 text-emerald-700",
+    defaultGranted: true,
+    instruction: "Cài đặt > Vị trí > Quyền ứng dụng > KidCare > Luôn cho phép.",
   },
   {
     id: "notification_listener",
-    name: "Quyền Đọc Thông Báo & Media (Notification Access)",
-    desc: "Cho phép cha mẹ xem tên bài hát, video (YouTube, Spotify...) đang phát trên thiết bị của con.",
-    icon: <FileText size={20} />,
+    name: "Truy cập thông báo & media",
+    tag: "Nhạc & Video đang phát",
+    desc: "Nhận biết tên bài hát, video (YouTube, Spotify...) đang phát trên thiết bị con.",
+    icon: <FileText size={18} />,
     iconBg: "bg-pink-100 text-pink-700",
     defaultGranted: false,
-    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Truy cập thông báo > KidCare > Cho phép.",
+    instruction: "Cài đặt > Ứng dụng > Quyền đặc biệt > Truy cập thông báo > KidCare > Bật.",
   },
   {
     id: "activity_recognition",
-    name: "Quyền Sức Khỏe & Đếm Bước Chân (Health & Activity)",
-    desc: "Nhận diện hoạt động thể chất và đếm số bước chân con di chuyển mỗi ngày để khuyến khích vận động.",
-    icon: <Activity size={20} />,
+    name: "Đếm bước chân & Vận động",
+    tag: "Sức khỏe thể chất",
+    desc: "Đếm số bước chân di chuyển mỗi ngày để khuyến khích vận động tích sao.",
+    icon: <Activity size={18} />,
     iconBg: "bg-cyan-100 text-cyan-700",
     defaultGranted: true,
     instruction: "Cài đặt > Quyền ứng dụng > Hoạt động thể chất > KidCare > Cho phép.",
   },
   {
     id: "camera",
-    name: "Quyền Bật Đèn Flash & Camera (Flashlight Alert)",
-    desc: "Cho phép cha mẹ bật đèn flash từ xa để tìm máy trong phòng tối hoặc phát tín hiệu khẩn cấp.",
-    icon: <Zap size={20} />,
+    name: "Đèn Flash & Camera",
+    tag: "Cảnh báo tìm máy",
+    desc: "Bật đèn flash từ xa để tìm máy trong bóng tối hoặc phát tín hiệu khẩn cấp.",
+    icon: <Zap size={18} />,
     iconBg: "bg-yellow-100 text-yellow-700",
     defaultGranted: true,
     instruction: "Cài đặt > Quyền ứng dụng > Máy ảnh > KidCare > Cho phép.",
   },
   {
     id: "calendar",
-    name: "Quyền Lịch Biểu & Thời Gian Biểu (Calendar & Study)",
-    desc: "Đồng bộ lịch học, bài tập về nhà và nhắc nhở thời gian biểu của con tự động từ cha mẹ.",
-    icon: <Calendar size={20} />,
+    name: "Lịch & Thời gian biểu",
+    tag: "Thời khóa biểu học tập",
+    desc: "Đồng bộ thời khóa biểu học tập và nhắc nhở thời gian biểu từ cha mẹ.",
+    icon: <Calendar size={18} />,
     iconBg: "bg-teal-100 text-teal-700",
     defaultGranted: true,
     instruction: "Cài đặt > Quyền ứng dụng > Lịch > KidCare > Cho phép.",
   },
   {
     id: "write_settings",
-    name: "Quyền Điều Chỉnh Âm Lượng & Độ Sáng (System Settings)",
-    desc: "Cho phép cha mẹ điều chỉnh âm lượng loa và hạ độ sáng màn hình để bảo vệ thị lực con vào ban đêm.",
-    icon: <Sliders size={20} />,
+    name: "Cài đặt hệ thống",
+    tag: "Âm lượng & Độ sáng",
+    desc: "Hạ độ sáng và điều chỉnh âm lượng từ xa để bảo vệ mắt con vào ban đêm.",
+    icon: <Sliders size={18} />,
     iconBg: "bg-violet-100 text-violet-700",
     defaultGranted: false,
-    instruction: "Cài đặt > Ứng dụng > Quyền truy cập đặc biệt > Sửa đổi cài đặt hệ thống > Bật KidCare.",
+    instruction: "Cài đặt > Ứng dụng > Quyền đặc biệt > Sửa đổi cài đặt hệ thống > Bật KidCare.",
   },
 ];
 
@@ -170,6 +185,9 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showBrandGuide, setShowBrandGuide] = useState(false);
+  const [showGrantedSection, setShowGrantedSection] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -187,7 +205,8 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
   };
 
   // Auto sync with real Android permissions
-  const syncWithNativePermissions = async () => {
+  const syncWithNativePermissions = async (showFeedback = false) => {
+    setIsSyncing(true);
     try {
       const realStatus = await checkRealAndroidPermissions();
       if (realStatus) {
@@ -196,12 +215,23 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
             const val = realStatus[p.id as keyof KidPermissionsStatus];
             return typeof val === "boolean" ? { ...p, isGranted: val } : p;
           });
-          setTimeout(() => savePermissions(updated), 0);
+          savePermissions(updated);
+          const allGranted = updated.every((p) => p.isGranted);
+          if (allGranted) {
+            fireSafeConfetti();
+          }
           return updated;
         });
+        if (showFeedback) {
+          showToast("✅ Đã đồng bộ quyền thực tế từ Android!");
+        }
+      } else if (showFeedback) {
+        showToast("ℹ️ Đang chạy ở chế độ mô phỏng");
       }
     } catch (e) {
-      console.warn('syncWithNativePermissions error:', e);
+      console.warn("syncWithNativePermissions error:", e);
+    } finally {
+      setTimeout(() => setIsSyncing(false), 400);
     }
   };
 
@@ -222,9 +252,10 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
     };
   }, []);
 
+  // Open Android permission settings for a specific permission
   const handlePermissionAction = async (perm: PermissionItem) => {
     if (Capacitor.isNativePlatform()) {
-      showToast(`Đang mở Cài đặt Android cho quyền: ${perm.name}...`);
+      showToast(`Đang mở Cài đặt cho: ${perm.name}...`);
       await openAndroidPermissionSettings(perm.id as PermissionSettingType);
     } else {
       togglePermission(perm.id);
@@ -236,49 +267,80 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
       const updated = prev.map((p) => {
         if (p.id === id) {
           const next = !p.isGranted;
-          showToast(next ? `✅ Đã xác nhận cấp quyền "${p.name}"` : `⚠️ Đã tắt quyền`);
+          showToast(next ? `✅ Đã bật "${p.name}"` : `⚠️ Đã tắt "${p.name}"`);
           return { ...p, isGranted: next };
         }
         return p;
       });
-      setTimeout(() => savePermissions(updated), 0);
+      savePermissions(updated);
       return updated;
     });
   };
 
-  const grantAllPermissions = async () => {
+  // Filter missing and granted permissions
+  const missingList = permissions.filter((p) => !p.isGranted);
+  const grantedList = permissions.filter((p) => p.isGranted);
+  const grantedCount = grantedList.length;
+  const isFullyProtected = missingList.length === 0;
+  const nextPermission = missingList[0];
+  const percent = Math.round((grantedCount / permissions.length) * 100);
+
+  // Smart sequential wizard: grant next ungranted permission
+  const handleGrantNext = async () => {
+    if (!nextPermission) {
+      handleExit();
+      return;
+    }
+
     if (Capacitor.isNativePlatform()) {
-      showToast("Đang kích hoạt toàn bộ quyền bảo vệ cho KidCare...");
-      await requestAllNativeAppPermissions();
-      const ungranted = permissions.find((p) => !p.isGranted);
-      if (ungranted) {
-        await openAndroidPermissionSettings(ungranted.id as PermissionSettingType);
-      } else {
-        await openAndroidPermissionSettings("app_details");
+      // 1. Proactively request standard native runtime dialogs (fine location, camera, calendar, activity)
+      try {
+        await requestAllNativeAppPermissions();
+      } catch (_) {}
+
+      // 2. Open the specific settings page for the next ungranted permission
+      showToast(`Bước ${grantedCount + 1}/${permissions.length}: Mở cài đặt "${nextPermission.name}"...`);
+      await openAndroidPermissionSettings(nextPermission.id as PermissionSettingType);
+    } else {
+      // Web simulator: toggle the next missing permission
+      togglePermission(nextPermission.id);
+    }
+  };
+
+  // Grant all permissions (Simulation on web, or bulk prompt on native)
+  const handleGrantAll = async () => {
+    if (Capacitor.isNativePlatform()) {
+      showToast("Đang yêu cầu quyền hệ thống...");
+      try {
+        await requestAllNativeAppPermissions();
+      } catch (_) {}
+      if (nextPermission) {
+        await openAndroidPermissionSettings(nextPermission.id as PermissionSettingType);
       }
     } else {
       setPermissions((prev) => {
         const updated = prev.map((p) => ({ ...p, isGranted: true }));
-        setTimeout(() => savePermissions(updated), 0);
-        showToast("🎉 Đã kích hoạt toàn bộ quyền bảo vệ an toàn!");
+        savePermissions(updated);
+        showToast("🎉 Đã bật tất cả quyền bảo vệ!");
+        fireSafeConfetti();
         return updated;
       });
     }
   };
 
-  // Universal exit handler: always snooze for 30 days so user is never trapped
+  // Universal exit handler: snooze for 30 days
   const handleExit = () => {
-    const oneMonthLater = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+    const oneMonthLater = Date.now() + 30 * 24 * 60 * 60 * 1000;
     localStorage.setItem(PERMISSIONS_SNOOZE_KEY, oneMonthLater.toString());
     onBack();
   };
 
   const handleSnoozeForOneMonth = () => {
-    showToast("Đã hoãn yêu cầu cấp quyền. Hệ thống sẽ nhắc lại sau 1 tháng.");
+    showToast("Đã hoãn cấp quyền. Hệ thống sẽ nhắc lại sau 1 tháng.");
     handleExit();
   };
 
-  // Listen for Android hardware back button
+  // Hardware back button support
   useEffect(() => {
     const handleBackButton = (e: Event) => {
       e.preventDefault();
@@ -290,29 +352,26 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
     };
   }, []);
 
-  const grantedCount = permissions.filter((p) => p.isGranted).length;
-  const isFullyProtected = grantedCount === permissions.length;
-
   return (
     <div
       className="flex-1 flex flex-col h-full bg-slate-50 select-none overflow-hidden relative pointer-events-auto"
-      style={{ touchAction: 'manipulation' }}
+      style={{ touchAction: "manipulation" }}
     >
       {/* Native Status Bar Spacer */}
       <div
         className="w-full shrink-0 bg-white"
-        style={{ height: 'var(--status-bar-height, 42px)' }}
+        style={{ height: "var(--status-bar-height, 42px)" }}
       />
 
-      {/* Top App Bar - Executive ParentPro Style with prominent Exit button */}
-      <div className="shrink-0 bg-white/95 backdrop-blur-xl px-4 py-3 border-b border-slate-200/80 flex items-center justify-between shadow-xs z-30 sticky top-0">
+      {/* Top App Bar - Clean, Minimal Header with Single Exit Action */}
+      <div className="shrink-0 bg-white/95 backdrop-blur-xl px-4 py-2.5 border-b border-slate-200/80 flex items-center justify-between shadow-2xs z-30 sticky top-0">
         <div className="flex items-center space-x-2.5">
           <button
             onClick={handleExit}
-            className="h-10 px-3 rounded-2xl bg-blue-50 border border-blue-200 text-blue-700 font-bold text-xs flex items-center gap-1.5 hover:bg-blue-100 active:scale-95 transition-all cursor-pointer shadow-xs"
+            className="h-9 px-2.5 rounded-xl bg-blue-50 border border-blue-200/80 text-blue-700 font-bold text-xs flex items-center gap-1 hover:bg-blue-100 active:scale-95 transition-all cursor-pointer shadow-2xs"
             title="Quay lại màn hình chính"
           >
-            <ChevronLeft size={18} strokeWidth={2.5} />
+            <ChevronLeft size={16} strokeWidth={2.5} />
             <span>Vào App</span>
           </button>
           <div>
@@ -323,30 +382,33 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
               </span>
             </div>
             <h1 className="text-sm font-black text-slate-900 leading-tight">
-              Quyền Hệ Thống
+              Quyền Bảo Vệ Con
             </h1>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        {/* Right Tools: Refresh Sync & Privacy Policy */}
+        <div className="flex items-center space-x-1.5">
           <button
-            onClick={() => setShowPrivacyModal(true)}
-            className="w-9 h-9 rounded-2xl bg-white border border-slate-200/80 text-blue-600 flex items-center justify-center hover:bg-blue-50 transition cursor-pointer shadow-xs active:scale-90"
-            title="Chính sách quyền riêng tư"
+            onClick={() => syncWithNativePermissions(true)}
+            className={`w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-600 flex items-center justify-center hover:bg-slate-50 active:scale-90 transition cursor-pointer shadow-2xs ${
+              isSyncing ? "animate-spin text-blue-600" : ""
+            }`}
+            title="Đồng bộ lại trạng thái quyền từ Android"
           >
-            <FileText size={15} />
+            <RefreshCw size={14} />
           </button>
           <button
-            onClick={handleExit}
-            className="px-3 py-2 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-            title="Bỏ qua và vào màn hình chính"
+            onClick={() => setShowPrivacyModal(true)}
+            className="w-8 h-8 rounded-xl bg-white border border-slate-200 text-blue-600 flex items-center justify-center hover:bg-blue-50 active:scale-90 transition cursor-pointer shadow-2xs"
+            title="Chính sách quyền riêng tư"
           >
-            Bỏ qua ✕
+            <FileText size={14} />
           </button>
         </div>
       </div>
 
-      {/* Floating Toast */}
+      {/* Toast Notification */}
       {toastMsg && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-2">
           {toastMsg}
@@ -354,235 +416,269 @@ export const KidPermissionsScreen: React.FC<KidPermissionsScreenProps> = ({ onBa
       )}
 
       {/* Main Scrollable Content */}
-      <div className="flex-1 p-4 space-y-4 overflow-y-auto pb-8">
-        {/* Banner Status Card - Executive ParentPro Rounded-3xl */}
+      <div className="flex-1 p-3.5 space-y-3.5 overflow-y-auto pb-4">
+        {/* Streamlined Summary Banner with Progress Bar & 1-Click Wizard Button */}
         <div
-          className={`p-4 rounded-3xl text-white shadow-md space-y-3 transition-all ${
+          className={`p-3.5 rounded-2xl text-white shadow-sm space-y-2.5 transition-all ${
             isFullyProtected
               ? "bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-700 shadow-emerald-500/15"
-              : "bg-gradient-to-br from-rose-600 via-pink-600 to-orange-600 shadow-rose-500/20"
+              : "bg-gradient-to-br from-rose-600 via-pink-600 to-orange-500 shadow-rose-500/15"
           }`}
         >
-          <div className="flex items-start justify-between">
-            <div className="flex items-start space-x-3">
-              <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center font-bold text-xl shrink-0 shadow-inner">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center text-lg shrink-0 shadow-inner">
                 {isFullyProtected ? "🛡️" : "⚠️"}
               </div>
               <div className="space-y-0.5">
-                <div className="flex items-center space-x-2">
-                  <h3 className="text-sm font-black">
-                    {isFullyProtected
-                      ? "Thiết Bị Đã Được Bảo Vệ 100%"
-                      : "Chưa Cấp Đủ Quyền Bảo Vệ Máy Con!"}
-                  </h3>
-                  {!isFullyProtected && (
-                    <span className="px-1.5 py-0.2 bg-yellow-300 text-rose-900 font-black text-[9px] rounded-md uppercase">
-                      Cần cấp
-                    </span>
-                  )}
-                </div>
-                <p className="text-[11px] text-white/90 leading-relaxed">
+                <h3 className="text-xs font-black">
                   {isFullyProtected
-                    ? "Tất cả các rào chắn an toàn, chống gỡ ứng dụng và khóa giờ học đều đang hoạt động tốt nhất."
-                    : `Còn ${permissions.length - grantedCount} quyền chưa được kích hoạt. Hãy bấm vào nút bên dưới từng quyền để mở Cài đặt và bật quyền.`}
+                    ? "Đã bảo vệ an toàn 100%"
+                    : `Còn ${missingList.length} quyền cần kích hoạt`}
+                </h3>
+                <p className="text-[10.5px] text-white/90">
+                  {isFullyProtected
+                    ? "Tất cả tính năng khóa máy và bảo vệ hoạt động tối ưu"
+                    : `Đã cấp ${grantedCount}/${permissions.length} quyền (${percent}%)`}
                 </p>
               </div>
             </div>
+
+            <span className="px-2 py-0.5 bg-white/20 backdrop-blur-md text-white font-black text-xs rounded-lg border border-white/20 shrink-0">
+              {percent}%
+            </span>
           </div>
 
-          {!isFullyProtected && (
-            <div className="pt-2.5 border-t border-white/20 flex items-center justify-between gap-2">
-              <p className="text-[10.5px] text-white/90 font-medium">
-                👉 Khuyên dùng: Bấm để mở quản lý quyền ứng dụng
-              </p>
+          {/* Smooth Animated Progress Bar */}
+          <div className="w-full bg-black/20 h-2 rounded-full overflow-hidden">
+            <div
+              className="bg-white h-full rounded-full transition-all duration-500 ease-out shadow-xs"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+
+          {/* Smart Fast Action inside Banner */}
+          {!isFullyProtected && nextPermission && (
+            <div className="pt-1 flex items-center gap-2">
               <button
-                onClick={grantAllPermissions}
-                className="px-3 py-1.5 bg-white text-rose-700 rounded-xl text-xs font-black shadow-xs hover:bg-rose-50 transition active:scale-95 shrink-0 cursor-pointer"
+                onClick={handleGrantNext}
+                className="flex-1 py-2 px-3 bg-white text-rose-700 hover:bg-rose-50 rounded-xl font-black text-xs shadow-xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
               >
-                Cấp tất cả quyền
+                <Zap size={13} className="text-amber-500 fill-amber-500 shrink-0" />
+                <span className="truncate">Cấp quyền tiếp theo: {nextPermission.name} ➔</span>
               </button>
+              {!Capacitor.isNativePlatform() && (
+                <button
+                  onClick={handleGrantAll}
+                  className="px-2.5 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl font-bold text-[11px] transition shrink-0 cursor-pointer"
+                  title="Mô phỏng bật toàn bộ quyền"
+                >
+                  Cấp tất cả
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        {/* Permissions List */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h4 className="text-xs font-black text-slate-900 tracking-tight uppercase">
-              Danh sách quyền bảo vệ ({grantedCount}/{permissions.length})
-            </h4>
-            <span className="text-[10px] text-slate-400 font-medium">
-              Bấm nút dưới mỗi quyền để cấp
-            </span>
-          </div>
+        {/* SECTION 1: MISSING PERMISSIONS (High Priority at Top) */}
+        {missingList.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                <h3 className="text-xs font-black text-rose-700 uppercase tracking-wide">
+                  Cần cấp ngay ({missingList.length})
+                </h3>
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                Chạm nút để mở Cài đặt
+              </span>
+            </div>
 
-          {permissions.map((perm) => (
-            <div
-              key={perm.id}
-              className={`bg-white p-4 rounded-3xl border shadow-xs space-y-3 transition-all ${
-                perm.isGranted
-                  ? "border-slate-200/80"
-                  : "border-rose-200 ring-2 ring-rose-100 shadow-sm"
-              }`}
-            >
-              {/* Permission Info Row */}
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-start space-x-3">
-                  <div
-                    className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-2xs ${perm.iconBg}`}
-                  >
-                    {perm.icon}
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                      <h4 className="text-xs font-black text-slate-900 leading-snug">{perm.name}</h4>
-                      {perm.id === 'overlay' && (
-                        <span className="text-[10px] bg-blue-100 text-blue-900 border border-blue-300 px-2 py-0.5 rounded-full font-black flex items-center gap-1 shadow-2xs">
-                          ⭐ Quyền hiển thị cốt lõi
-                        </span>
-                      )}
-                      {perm.isGranted ? (
-                        <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                          <CheckCircle2 size={11} className="text-emerald-600" /> Đã cấp quyền
-                        </span>
-                      ) : (
-                        <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full font-black flex items-center gap-1 animate-pulse">
-                          <AlertTriangle size={11} className="text-rose-600" /> Chưa cấp quyền !
-                        </span>
-                      )}
+            {missingList.map((perm) => (
+              <div
+                key={perm.id}
+                className="bg-white p-3 rounded-2xl border-2 border-rose-200/90 shadow-2xs space-y-2 relative overflow-hidden"
+              >
+                {/* Header row: Icon + Title + Tag */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start space-x-2.5">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-2xs ${perm.iconBg}`}
+                    >
+                      {perm.icon}
                     </div>
-                    <p className="text-[11px] text-slate-500 leading-relaxed">{perm.desc}</p>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-xs font-black text-slate-900 leading-tight">
+                          {perm.name}
+                        </h4>
+                        <span className="px-1.5 py-0.2 bg-rose-50 text-rose-700 text-[9px] font-bold rounded-md border border-rose-200">
+                          {perm.tag}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-snug">
+                        {perm.desc}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Step-by-step Instruction Guide */}
-              <div
-                className={`p-3 rounded-2xl border text-[11px] flex items-start space-x-2 ${
-                  perm.isGranted
-                    ? "bg-slate-50 border-slate-100 text-slate-600"
-                    : perm.id === 'overlay'
-                    ? "bg-blue-50/90 border-blue-200 text-blue-950 font-medium"
-                    : "bg-rose-50/70 border-rose-100 text-rose-950 font-medium"
-                }`}
-              >
-                <Info
-                  size={15}
-                  className={`shrink-0 mt-0.5 ${
-                    perm.isGranted ? "text-blue-500" : perm.id === 'overlay' ? "text-blue-600" : "text-rose-500"
-                  }`}
-                />
-                <span className="leading-relaxed">
-                  <strong>Cách bật:</strong> {perm.instruction}
-                </span>
-              </div>
+                {/* Compact Instruction Tip */}
+                <div className="bg-rose-50/70 border border-rose-100 rounded-xl px-2.5 py-1.5 text-[10.5px] text-rose-950 flex items-center gap-1.5">
+                  <Info size={13} className="text-rose-500 shrink-0" />
+                  <span className="truncate">
+                    <strong>Bật tại:</strong> {perm.instruction}
+                  </span>
+                </div>
 
-              {/* Direct Grant Action Button on Every Permission */}
-              <div>
-                {!perm.isGranted ? (
-                  <button
-                    onClick={() => handlePermissionAction(perm)}
-                    className={`w-full py-2.5 text-white rounded-2xl font-black text-xs shadow-md flex items-center justify-center space-x-2 transition-all active:scale-[0.98] cursor-pointer ${
-                      perm.id === 'overlay'
-                        ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 shadow-blue-500/25 ring-2 ring-blue-300'
-                        : 'bg-gradient-to-r from-rose-600 via-pink-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 shadow-rose-500/20'
-                    }`}
-                  >
-                    <ExternalLink size={14} />
-                    <span>{perm.id === 'overlay' ? '👉 Cấp quyền Hiển thị trên các ứng dụng khác ➔' : 'Bấm để cấp quyền trong Cài đặt ➔'}</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handlePermissionAction(perm)}
-                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
-                    title="Mở lại cài đặt để kiểm tra hoặc tắt"
-                  >
-                    <CheckCircle2 size={14} className="text-emerald-600" />
-                    <span>Đã cấp quyền • Bấm để kiểm tra lại</span>
-                  </button>
-                )}
+                {/* 1-Tap Action Button */}
+                <button
+                  onClick={() => handlePermissionAction(perm)}
+                  className="w-full py-2 px-3 bg-gradient-to-r from-rose-600 via-pink-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white rounded-xl font-black text-xs shadow-xs flex items-center justify-center space-x-1.5 active:scale-[0.98] transition cursor-pointer"
+                >
+                  <ExternalLink size={13} />
+                  <span>Bật quyền này trong Cài đặt ➔</span>
+                </button>
               </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Brand Specific Optimization Guide */}
-        <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-xs space-y-2.5 text-xs">
-          <div className="flex items-center space-x-2 text-slate-900 font-black">
-            <div className="w-7 h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <Smartphone size={16} />
-            </div>
-            <span>Hướng dẫn tối ưu theo hãng máy (Xiaomi, Samsung, Oppo):</span>
+            ))}
           </div>
-          <ul className="list-disc pl-4 space-y-1.5 text-[11px] text-slate-600 leading-relaxed">
-            <li>
-              <strong>Xiaomi / Redmi (HyperOS / MIUI):</strong> Vào <em>Cài đặt &gt; Ứng dụng &gt; Quản lý ứng dụng &gt; KidCare</em> &gt; Bật <strong>"Tự khởi chạy (Autostart)"</strong> và chọn Tiết kiệm pin là <strong>"Không hạn chế"</strong>.
-            </li>
-            <li>
-              <strong>Samsung (One UI):</strong> Vào <em>Cài đặt &gt; Chăm sóc thiết bị &gt; Pin &gt; Giới hạn sử dụng dưới nền</em> &gt; Thêm KidCare vào mục <strong>"Ứng dụng không bao giờ nghỉ"</strong>.
-            </li>
-            <li>
-              <strong>Oppo / Realme / Vivo:</strong> Mở màn hình Đa nhiệm &gt; Bấm giữ biểu tượng KidCare &gt; Chọn <strong>Khóa (Lock)</strong> để ứng dụng chạy ngầm liên tục không bị giải phóng RAM.
-            </li>
-          </ul>
-        </div>
+        )}
 
-        {/* Action Buttons: Hoàn tất & Để sau (1 tháng) */}
-        <div className="pt-2 space-y-2.5">
-          <button
-            onClick={handleExit}
-            className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs rounded-2xl shadow-md shadow-blue-500/20 flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
+        {/* SECTION 2: GRANTED PERMISSIONS (Clean Compact List / Accordion) */}
+        {grantedList.length > 0 && (
+          <div className="space-y-1.5">
+            <div
+              onClick={() => setShowGrantedSection(!showGrantedSection)}
+              className="flex items-center justify-between px-1 py-1 cursor-pointer select-none"
+            >
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 size={13} className="text-emerald-600" />
+                <h3 className="text-xs font-bold text-slate-700">
+                  Đã kích hoạt ({grantedList.length}/{permissions.length})
+                </h3>
+              </div>
+              <div className="flex items-center gap-1 text-[11px] text-blue-600 font-semibold">
+                <span>{showGrantedSection ? "Thu gọn" : "Xem danh sách"}</span>
+                {showGrantedSection ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </div>
+            </div>
+
+            {/* Compact 1-line list for granted permissions */}
+            {showGrantedSection && (
+              <div className="bg-white rounded-2xl border border-slate-200/80 divide-y divide-slate-100 overflow-hidden shadow-2xs">
+                {grantedList.map((perm) => (
+                  <div
+                    key={perm.id}
+                    className="p-2.5 px-3 flex items-center justify-between hover:bg-slate-50 transition"
+                  >
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${perm.iconBg}`}>
+                        {perm.icon}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate">
+                          {perm.name}
+                        </p>
+                        <p className="text-[10px] text-slate-400 truncate">
+                          {perm.tag}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
+                        <CheckCircle2 size={11} className="text-emerald-600" /> Đã bật
+                      </span>
+                      <button
+                        onClick={() => handlePermissionAction(perm)}
+                        className="p-1 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                        title="Mở lại cài đặt để kiểm tra"
+                      >
+                        <ExternalLink size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Collapsible Brand Specific Optimization Guide (Xiaomi, Samsung, Oppo) */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
+          <div
+            onClick={() => setShowBrandGuide(!showBrandGuide)}
+            className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition select-none"
           >
-            <span>Đã hoàn tất kiểm tra</span>
-          </button>
+            <div className="flex items-center space-x-2 text-slate-800 font-bold text-xs">
+              <Smartphone size={15} className="text-blue-600" />
+              <span>Hướng dẫn chạy ngầm theo hãng máy (Xiaomi, Samsung, Oppo)</span>
+            </div>
+            {showBrandGuide ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+          </div>
 
-          <button
-            onClick={handleSnoozeForOneMonth}
-            className="w-full py-3 bg-white hover:bg-slate-50 text-slate-600 font-bold text-xs rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
-            title="Sẽ nhắc lại sau 30 ngày"
-          >
-            <Clock size={14} className="text-slate-500" />
-            <span>Để sau (Nhắc lại sau 1 tháng)</span>
-          </button>
-
-          <p className="text-center text-[10.5px] text-slate-400 font-medium px-4 leading-normal">
-            ℹ️ Nếu chọn "Để sau", hệ thống sẽ hoãn thông báo tự động trong 30 ngày. Bạn có thể mở lại trang cấp quyền bất cứ lúc nào từ nút cảnh báo trên màn hình chính.
-          </p>
+          {showBrandGuide && (
+            <div className="p-3 pt-0 border-t border-slate-100 space-y-2 text-[11px] text-slate-600 leading-relaxed">
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1.5">
+                <p>
+                  <strong>• Xiaomi / Redmi (HyperOS / MIUI):</strong> Vào <em>Cài đặt &gt; Ứng dụng &gt; Quản lý ứng dụng &gt; KidCare</em> &gt; Bật <strong>"Tự khởi chạy"</strong> và chọn Tiết kiệm pin là <strong>"Không hạn chế"</strong>.
+                </p>
+                <p>
+                  <strong>• Samsung (One UI):</strong> Vào <em>Cài đặt &gt; Chăm sóc thiết bị &gt; Pin &gt; Giới hạn sử dụng dưới nền</em> &gt; Thêm KidCare vào <strong>"Ứng dụng không bao giờ nghỉ"</strong>.
+                </p>
+                <p>
+                  <strong>• Oppo / Realme / Vivo:</strong> Mở màn hình Đa nhiệm &gt; Bấm giữ biểu tượng KidCare &gt; Chọn <strong>Khóa (Lock)</strong> để không bị giải phóng RAM khi dọn dẹp.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Privacy Policy Link Card */}
         <div
           onClick={() => setShowPrivacyModal(true)}
-          className="p-3 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between cursor-pointer transition active:scale-98 shadow-xs"
+          className="p-2.5 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between cursor-pointer transition active:scale-98 shadow-2xs"
         >
-          <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <FileText size={16} />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-slate-800">Chính Sách Quyền Riêng Tư & Bảo Vệ Trẻ Em</p>
-              <p className="text-[10px] text-slate-500">Xem điều khoản bảo mật và cam kết bảo vệ dữ liệu</p>
-            </div>
+          <div className="flex items-center space-x-2">
+            <FileText size={14} className="text-blue-600" />
+            <span className="text-xs font-bold text-slate-700">Chính sách quyền riêng tư & bảo vệ dữ liệu</span>
           </div>
-          <span className="text-xs text-blue-600 font-bold">Xem ➔</span>
+          <span className="text-[11px] text-blue-600 font-bold">Xem ➔</span>
         </div>
       </div>
 
-      {/* Persistent Bottom Bar - Always visible, never stuck with Safe Area Inset */}
-      <div className="shrink-0 p-3 pb-[max(12px,calc(10px+env(safe-area-inset-bottom)))] bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-lg flex items-center gap-2 z-30">
-        <button
-          onClick={handleExit}
-          className="flex-1 py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs rounded-2xl shadow-md shadow-blue-500/20 flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
-        >
-          <span>Tiếp tục vào Màn Hình Chính</span>
-        </button>
-        <button
-          onClick={handleSnoozeForOneMonth}
-          className="px-4 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl border border-slate-200 transition active:scale-[0.98] cursor-pointer"
-          title="Sẽ nhắc lại sau 30 ngày"
-        >
-          <span>Để sau</span>
-        </button>
+      {/* Persistent Sticky Bottom Bar - Contextual 1-Click Action & Snooze */}
+      <div className="shrink-0 p-3 pb-[max(12px,calc(10px+env(safe-area-inset-bottom)))] bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-lg flex items-center gap-2 z-30">
+        {isFullyProtected ? (
+          <button
+            onClick={handleExit}
+            className="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs rounded-xl shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer"
+          >
+            <CheckCircle2 size={15} />
+            <span>Vào Màn Hình Chính 🎉</span>
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={handleGrantNext}
+              className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs rounded-xl shadow-md shadow-blue-500/20 flex items-center justify-center space-x-1.5 transition active:scale-[0.98] cursor-pointer min-w-0"
+            >
+              <Zap size={14} className="text-yellow-300 fill-yellow-300 shrink-0" />
+              <span className="truncate">
+                {nextPermission ? `Bật tiếp: ${nextPermission.name} ➔` : "Tiếp tục vào App"}
+              </span>
+            </button>
+
+            <button
+              onClick={handleSnoozeForOneMonth}
+              className="px-3.5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl border border-slate-200 transition active:scale-[0.98] cursor-pointer shrink-0"
+              title="Sẽ nhắc lại sau 30 ngày"
+            >
+              Để sau
+            </button>
+          </>
+        )}
       </div>
 
       {/* Privacy Policy Modal */}

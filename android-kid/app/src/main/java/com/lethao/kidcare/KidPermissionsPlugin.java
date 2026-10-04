@@ -21,6 +21,10 @@ import java.net.NetworkInterface;
 import java.util.Collections;
 import java.util.List;
 import java.util.Calendar;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Set;
+import java.util.HashSet;
 import androidx.core.content.ContextCompat;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiInfo;
@@ -93,6 +97,17 @@ public class KidPermissionsPlugin extends Plugin {
     @Override
     public void load() {
         super.load();
+        // Force hardware camera flashlight/torch OFF on startup
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                CameraManager cm = (CameraManager) getContext().getSystemService(Context.CAMERA_SERVICE);
+                if (cm != null && cm.getCameraIdList().length > 0) {
+                    cm.setTorchMode(cm.getCameraIdList()[0], false);
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Safety check: torch mode init off skipped: " + t.getMessage());
+        }
         registerScreenStateReceiver();
         initHardwareSensors(false);
     }
@@ -322,6 +337,30 @@ public class KidPermissionsPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    private String categorizeApp(String appName, String pkgName, int nativeCategory) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (nativeCategory == ApplicationInfo.CATEGORY_GAME) return "game";
+            if (nativeCategory == ApplicationInfo.CATEGORY_VIDEO) return "video";
+            if (nativeCategory == ApplicationInfo.CATEGORY_SOCIAL) return "social";
+            if (nativeCategory == ApplicationInfo.CATEGORY_PRODUCTIVITY) return "study";
+        }
+
+        String lowerName = appName != null ? appName.toLowerCase() : "";
+        String lowerPkg = pkgName != null ? pkgName.toLowerCase() : "";
+        if (lowerPkg.contains("youtube") || lowerPkg.contains("video") || lowerPkg.contains("vlc") || lowerPkg.contains("netflix") || lowerPkg.contains("tiktok")) {
+            return "video";
+        } else if (lowerPkg.contains("game") || lowerPkg.contains("roblox") || lowerPkg.contains("freefire") || lowerPkg.contains("pubg") || lowerPkg.contains("play")) {
+            return "game";
+        } else if (lowerPkg.contains("zalo") || lowerPkg.contains("facebook") || lowerPkg.contains("messenger") || lowerPkg.contains("instagram") || lowerPkg.contains("viber") || lowerPkg.contains("tele")) {
+            return "social";
+        } else if (lowerPkg.contains("browser") || lowerPkg.contains("chrome") || lowerPkg.contains("firefox") || lowerPkg.contains("opera")) {
+            return "browser";
+        } else if (lowerName.contains("học") || lowerName.contains("toán") || lowerName.contains("anh") || lowerName.contains("sách") || lowerPkg.contains("duolingo") || lowerPkg.contains("study") || lowerPkg.contains("class") || lowerPkg.contains("zoom") || lowerPkg.contains("meet") || lowerPkg.contains("monkey") || lowerPkg.contains("edu") || lowerPkg.contains("camera") || lowerPkg.contains("calculator") || lowerPkg.contains("deskclock") || lowerPkg.contains("gallery")) {
+            return "study";
+        }
+        return "other";
+    }
+
     @PluginMethod
     public void getInstalledApps(PluginCall call) {
         new Thread(() -> {
@@ -332,65 +371,120 @@ public class KidPermissionsPlugin extends Plugin {
 
                 Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
                 mainIntent.addCategory(Intent.CATEGORY_LAUNCHER);
-                List<ResolveInfo> pkgAppsList = pm.queryIntentActivities(mainIntent, 0);
+                List<ResolveInfo> pkgAppsList;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    pkgAppsList = pm.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL);
+                } else {
+                    pkgAppsList = pm.queryIntentActivities(mainIntent, 0);
+                }
 
                 String myPackage = context.getPackageName();
-                int iconLimit = 32; // Optimized: Convert real icon thumbnail for top 32 apps only to reduce launch latency
+                int iconLimit = 150; // Raised from 32 to 150 to load icons for all installed user apps
                 int iconCount = 0;
+                Set<String> seenPackages = new HashSet<>();
 
-                for (ResolveInfo resolveInfo : pkgAppsList) {
-                    try {
-                        if (resolveInfo.activityInfo == null) continue;
-                        String pkgName = resolveInfo.activityInfo.packageName;
-                        if (pkgName == null || pkgName.equals(myPackage)) continue; // Skip KidCare itself
+                if (pkgAppsList != null) {
+                    for (ResolveInfo resolveInfo : pkgAppsList) {
+                        try {
+                            if (resolveInfo.activityInfo == null) continue;
+                            String pkgName = resolveInfo.activityInfo.packageName;
+                            if (pkgName == null || pkgName.isEmpty()) continue;
+                            if (pkgName.equals(myPackage)) continue; // Skip KidCare itself
+                            if ("com.android.systemui".equals(pkgName)) continue; // Skip SystemUI
+                            if (seenPackages.contains(pkgName)) continue;
 
-                        String appName = resolveInfo.loadLabel(pm).toString();
-                        if (appName == null || appName.isEmpty()) {
-                            appName = pkgName;
-                        }
+                            seenPackages.add(pkgName);
 
-                        boolean isSystem = false;
-                        if (resolveInfo.activityInfo.applicationInfo != null) {
-                            isSystem = (resolveInfo.activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-                        }
+                            String appName = resolveInfo.loadLabel(pm).toString();
+                            if (appName == null || appName.isEmpty()) {
+                                appName = pkgName;
+                            }
 
-                        JSObject appObj = new JSObject();
-                        appObj.put("id", "app_" + pkgName.replace(".", "_"));
-                        appObj.put("packageName", pkgName);
-                        appObj.put("name", appName);
-                        appObj.put("isSystem", isSystem);
-
-                        // Categorize heuristically
-                        String cat = "other";
-                        String lowerName = appName.toLowerCase();
-                        String lowerPkg = pkgName.toLowerCase();
-                        if (lowerPkg.contains("youtube") || lowerPkg.contains("video") || lowerPkg.contains("vlc") || lowerPkg.contains("netflix") || lowerPkg.contains("tiktok")) {
-                            cat = "video";
-                        } else if (lowerPkg.contains("game") || lowerPkg.contains("roblox") || lowerPkg.contains("freefire") || lowerPkg.contains("pubg") || lowerPkg.contains("play")) {
-                            cat = "game";
-                        } else if (lowerPkg.contains("zalo") || lowerPkg.contains("facebook") || lowerPkg.contains("messenger") || lowerPkg.contains("instagram") || lowerPkg.contains("viber") || lowerPkg.contains("tele")) {
-                            cat = "social";
-                        } else if (lowerPkg.contains("browser") || lowerPkg.contains("chrome") || lowerPkg.contains("firefox") || lowerPkg.contains("opera")) {
-                            cat = "browser";
-                        } else if (lowerName.contains("học") || lowerName.contains("toán") || lowerName.contains("anh") || lowerName.contains("sách") || lowerPkg.contains("duolingo") || lowerPkg.contains("study") || lowerPkg.contains("class") || lowerPkg.contains("zoom") || lowerPkg.contains("meet") || lowerPkg.contains("monkey") || lowerPkg.contains("edu") || lowerPkg.contains("camera") || lowerPkg.contains("calculator") || lowerPkg.contains("deskclock") || lowerPkg.contains("gallery")) {
-                            cat = "study";
-                        }
-                        appObj.put("category", cat);
-
-                        if (iconCount < iconLimit) {
-                            try {
-                                Drawable iconDrawable = resolveInfo.loadIcon(pm);
-                                String iconBase64 = drawableToBase64(iconDrawable);
-                                if (iconBase64 != null) {
-                                    appObj.put("icon", iconBase64);
-                                    iconCount++;
+                            boolean isSystem = false;
+                            int appCategory = -1;
+                            if (resolveInfo.activityInfo.applicationInfo != null) {
+                                isSystem = (resolveInfo.activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    appCategory = resolveInfo.activityInfo.applicationInfo.category;
                                 }
-                            } catch (Throwable ignored) {}
-                        }
+                            }
 
-                        appList.put(appObj);
-                    } catch (Exception ignored) {}
+                            JSObject appObj = new JSObject();
+                            appObj.put("id", "app_" + pkgName.replace(".", "_"));
+                            appObj.put("packageName", pkgName);
+                            appObj.put("name", appName);
+                            appObj.put("isSystem", isSystem);
+                            appObj.put("category", categorizeApp(appName, pkgName, appCategory));
+
+                            if (iconCount < iconLimit) {
+                                try {
+                                    Drawable iconDrawable = resolveInfo.loadIcon(pm);
+                                    String iconBase64 = drawableToBase64(iconDrawable);
+                                    if (iconBase64 != null) {
+                                        appObj.put("icon", iconBase64);
+                                        iconCount++;
+                                    }
+                                } catch (Throwable ignored) {}
+                            }
+
+                            appList.put(appObj);
+                        } catch (Exception ignored) {}
+                    }
                 }
+
+                // In addition, scan all installed applications to make sure NO launchable app is omitted
+                // while strictly filtering out hidden background services/daemons (which have no launch intent)
+                try {
+                    List<ApplicationInfo> allApps = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+                    if (allApps != null) {
+                        for (ApplicationInfo appInfo : allApps) {
+                            try {
+                                if (appInfo == null || !appInfo.enabled) continue;
+                                String pkgName = appInfo.packageName;
+                                if (pkgName == null || pkgName.isEmpty()) continue;
+                                if (seenPackages.contains(pkgName)) continue;
+                                if (pkgName.equals(myPackage) || "com.android.systemui".equals(pkgName)) continue;
+
+                                // STRICT FILTER: Hidden background services and daemons have no launch intent
+                                Intent launchIntent = pm.getLaunchIntentForPackage(pkgName);
+                                if (launchIntent == null) continue;
+
+                                seenPackages.add(pkgName);
+
+                                String appName = appInfo.loadLabel(pm).toString();
+                                if (appName == null || appName.isEmpty()) {
+                                    appName = pkgName;
+                                }
+
+                                boolean isSystem = (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                                int appCategory = -1;
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    appCategory = appInfo.category;
+                                }
+
+                                JSObject appObj = new JSObject();
+                                appObj.put("id", "app_" + pkgName.replace(".", "_"));
+                                appObj.put("packageName", pkgName);
+                                appObj.put("name", appName);
+                                appObj.put("isSystem", isSystem);
+                                appObj.put("category", categorizeApp(appName, pkgName, appCategory));
+
+                                if (iconCount < iconLimit) {
+                                    try {
+                                        Drawable iconDrawable = appInfo.loadIcon(pm);
+                                        String iconBase64 = drawableToBase64(iconDrawable);
+                                        if (iconBase64 != null) {
+                                            appObj.put("icon", iconBase64);
+                                            iconCount++;
+                                        }
+                                    } catch (Throwable ignored) {}
+                                }
+
+                                appList.put(appObj);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                } catch (Exception ignored) {}
 
                 JSObject ret = new JSObject();
                 ret.put("apps", appList);
@@ -1223,24 +1317,64 @@ public class KidPermissionsPlugin extends Plugin {
                         cal.set(Calendar.HOUR_OF_DAY, 0);
                         cal.set(Calendar.MINUTE, 0);
                         cal.set(Calendar.SECOND, 0);
+                        cal.set(Calendar.MILLISECOND, 0);
                         long startTime = cal.getTimeInMillis();
                         long endTime = System.currentTimeMillis();
 
-                        List<UsageStats> stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
+                        Map<String, UsageStats> statsMap = null;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            statsMap = usm.queryAndAggregateUsageStats(startTime, endTime);
+                        }
                         JSArray appUsageList = new JSArray();
                         long totalMinutesToday = 0;
+                        String myPkg = context.getPackageName();
 
-                        if (stats != null) {
-                            for (UsageStats u : stats) {
+                        if (statsMap != null && !statsMap.isEmpty()) {
+                            for (UsageStats u : statsMap.values()) {
+                                String pkg = u.getPackageName();
+                                if (pkg == null || pkg.equals("com.android.systemui") || pkg.contains("inputmethod")) {
+                                    continue;
+                                }
                                 long totalTimeMillis = u.getTotalTimeInForeground();
                                 if (totalTimeMillis > 30000) {
-                                    long mins = totalTimeMillis / 60000;
+                                    long mins = Math.max(1, totalTimeMillis / 60000);
                                     totalMinutesToday += mins;
-                                    JSObject item = new JSObject();
-                                    item.put("packageName", u.getPackageName());
-                                    item.put("usedMinutes", mins);
-                                    item.put("lastTimeUsed", u.getLastTimeUsed());
-                                    appUsageList.put(item);
+                                    if (!pkg.equals(myPkg)) {
+                                        JSObject item = new JSObject();
+                                        item.put("packageName", pkg);
+                                        item.put("usedMinutes", mins);
+                                        item.put("lastTimeUsed", u.getLastTimeUsed());
+                                        appUsageList.put(item);
+                                    }
+                                }
+                            }
+                        } else {
+                            List<UsageStats> stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
+                            Map<String, Long> deduplicated = new HashMap<>();
+                            Map<String, Long> lastUsedMap = new HashMap<>();
+                            if (stats != null) {
+                                for (UsageStats u : stats) {
+                                    String pkg = u.getPackageName();
+                                    if (pkg == null || pkg.equals("com.android.systemui") || pkg.contains("inputmethod")) {
+                                        continue;
+                                    }
+                                    long time = u.getTotalTimeInForeground();
+                                    deduplicated.put(pkg, deduplicated.getOrDefault(pkg, 0L) + time);
+                                    long last = Math.max(lastUsedMap.getOrDefault(pkg, 0L), u.getLastTimeUsed());
+                                    lastUsedMap.put(pkg, last);
+                                }
+                                for (Map.Entry<String, Long> entry : deduplicated.entrySet()) {
+                                    if (entry.getValue() > 30000) {
+                                        long mins = Math.max(1, entry.getValue() / 60000);
+                                        totalMinutesToday += mins;
+                                        if (!entry.getKey().equals(myPkg)) {
+                                            JSObject item = new JSObject();
+                                            item.put("packageName", entry.getKey());
+                                            item.put("usedMinutes", mins);
+                                            item.put("lastTimeUsed", lastUsedMap.getOrDefault(entry.getKey(), 0L));
+                                            appUsageList.put(item);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1597,6 +1731,53 @@ public class KidPermissionsPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Error getting media status: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Emergency Phone Call:
+     * Directly calls parent's phone number if CALL_PHONE permission is granted,
+     * or opens the system dialer with the number pre-filled as a reliable fallback.
+     */
+    @PluginMethod
+    public void makeEmergencyPhoneCall(PluginCall call) {
+        String phoneNumber = call.getString("phoneNumber");
+        if (phoneNumber == null || phoneNumber.trim().isEmpty()) {
+            call.reject("Phone number is required");
+            return;
+        }
+        String cleanPhone = phoneNumber.replaceAll("[^0-9+]", "");
+        Context context = getContext();
+        JSObject ret = new JSObject();
+
+        try {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                Intent callIntent = new Intent(Intent.ACTION_CALL);
+                callIntent.setData(Uri.parse("tel:" + cleanPhone));
+                callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(callIntent);
+                ret.put("success", true);
+                ret.put("mode", "call");
+                ret.put("phoneNumber", cleanPhone);
+                call.resolve(ret);
+                return;
+            }
+        } catch (Exception e) {
+            Log.w("KidPermissionsPlugin", "ACTION_CALL failed, falling back to ACTION_DIAL: " + e.getMessage());
+        }
+
+        try {
+            Intent dialIntent = new Intent(Intent.ACTION_DIAL);
+            dialIntent.setData(Uri.parse("tel:" + cleanPhone));
+            dialIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(dialIntent);
+            ret.put("success", true);
+            ret.put("mode", "dial");
+            ret.put("phoneNumber", cleanPhone);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e("KidPermissionsPlugin", "Failed to start phone call intent", e);
+            call.reject("Could not start phone call: " + e.getMessage());
         }
     }
 }

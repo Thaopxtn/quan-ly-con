@@ -13,13 +13,13 @@ type EventCallback = (data: any) => void;
 
 const SERVER_URL_STORAGE_KEY = 'parentpro_server_url';
 const DEFAULT_LOCAL_PORT = 3000;
-export const DEFAULT_4G_SERVER_URL = 'https://eco-take-richards-dresses.trycloudflare.com';
+export const DEFAULT_4G_SERVER_URL = 'https://ellen-centuries-polyphonic-lighting.trycloudflare.com';
 const JSDELIVR_SERVER_URL = 'https://cdn.jsdelivr.net/gh/Thaopxtn/quan-ly-con@main/server-url.txt';
 const GITHUB_RAW_SERVER_URL = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.txt';
 const GITHUB_RAW_SERVER_JSON = 'https://raw.githubusercontent.com/Thaopxtn/quan-ly-con/main/server-url.json';
 const GITHUB_API_SERVER_URL = 'https://api.github.com/repos/Thaopxtn/quan-ly-con/contents/server-url.txt';
 const GITHUB_PAGES_SERVER_URL = 'https://thaopxtn.github.io/quan-ly-con/server-url.txt';
-const FALLBACK_LAN_IPS = ['http://192.168.1.4:3000'];
+const FALLBACK_LAN_IPS = ['http://127.0.0.1:3000', 'http://localhost:3000', 'http://192.168.1.4:3000'];
 
 export class ServerApiClient {
   private static instance: ServerApiClient;
@@ -62,15 +62,10 @@ export class ServerApiClient {
   private initServerUrl(): string {
     if (typeof window === 'undefined') return DEFAULT_4G_SERVER_URL;
 
-    // 1. User configured URL in localStorage (ignore if it's localhost / 127.0.0.1)
+    // 1. User configured URL in localStorage
     const saved = localStorage.getItem(SERVER_URL_STORAGE_KEY);
-    if (saved && saved.trim() && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
+    if (saved && saved.trim()) {
       return saved.trim().replace(/\/+$/, '');
-    }
-
-    // Clean up stale localhost in localStorage
-    if (saved && (saved.includes('localhost') || saved.includes('127.0.0.1'))) {
-      try { localStorage.removeItem(SERVER_URL_STORAGE_KEY); } catch (_) {}
     }
 
     // 2. Running on web server directly (e.g. trycloudflare.com or custom domain)
@@ -89,12 +84,7 @@ export class ServerApiClient {
 
   public setServerUrl(newUrl: string): void {
     const cleanUrl = (newUrl || '').trim().replace(/\/+$/, '');
-    // If someone passes localhost on phone/webview, keep 4G URL instead
-    if (cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1')) {
-      this.serverUrl = DEFAULT_4G_SERVER_URL;
-    } else {
-      this.serverUrl = cleanUrl || DEFAULT_4G_SERVER_URL;
-    }
+    this.serverUrl = cleanUrl || DEFAULT_4G_SERVER_URL;
     if (typeof window !== 'undefined') {
       localStorage.setItem(SERVER_URL_STORAGE_KEY, this.serverUrl);
     }
@@ -270,14 +260,15 @@ export class ServerApiClient {
         return null;
       };
 
-      // Quick check LAN Wi-Fi IP (only if phone is on the same home Wi-Fi)
+      // Quick check LAN Wi-Fi IP (only if phone is on the same home Wi-Fi or USB adb reverse)
       const lanChecks = FALLBACK_LAN_IPS.map(async (ip) => {
         const h = await this.checkHealth(ip);
-        return h.ok ? ip : null;
+        if (h && h.ok) return ip;
+        throw new Error('Unhealthy: ' + ip);
       });
       const quickLanResult = await Promise.race([
         Promise.any(lanChecks).catch(() => null),
-        new Promise<null>((r) => setTimeout(() => r(null), 1000))
+        new Promise<null>((r) => setTimeout(() => r(null), 1200))
       ]);
       if (quickLanResult) {
         console.log(`[ServerApiClient] 🏠 Nhận diện kết nối mạng nội bộ Wi-Fi LAN: ${quickLanResult}`);
@@ -639,6 +630,12 @@ export class ServerApiClient {
   public async sendCommandAck(ackData: any): Promise<boolean> {
     const res = await this.request('/api/command/ack', 'POST', ackData);
     return Boolean(res && res.success);
+  }
+
+  public async getLastCommandAck(childId?: string): Promise<any | null> {
+    const qs = childId ? `?childId=${encodeURIComponent(childId)}` : '';
+    const res = await this.request<any>(`/api/command/lastack${qs}`);
+    return res || null;
   }
 
   // ─── Child Settings ─────────────────────────────────────────────────────

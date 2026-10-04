@@ -556,10 +556,20 @@ export const createDefaultChildSettings = (
   }
 
   // Default: child_1 (Bé An) or new child
+  const cleanScreenTime: ScreenTimeData = {
+    todayTotalMinutes: 0,
+    yesterdayTotalMinutes: 0,
+    percentChangeVsYesterday: 0,
+    hourlyUsage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    weekTotalHours: 0,
+    studyHours: 0,
+    entertainmentHours: 0,
+  };
+
   return {
     screenTimeLimitMinutes: 135,
     apps: INITIAL_APPS,
-    screenTime: INITIAL_SCREEN_TIME,
+    screenTime: childId === 'child_1' ? INITIAL_SCREEN_TIME : cleanScreenTime,
     hardwareControls: DEFAULT_HARDWARE_CONTROLS,
     kioskMode: { isEnabled: false, pinnedAppId: null, pinnedAppName: null },
     lockChallenge: {
@@ -750,6 +760,44 @@ function getInitialDemoState(): AppState {
   };
 }
 
+/**
+ * Smart Multi-Child Routing: Picks the best active child based on online status and recency.
+ * Rule 3: Always prioritize online/recently active devices over stale/offline devices.
+ */
+export function pickBestActiveChild(children: ChildProfile[], currentSelectedId?: string): ChildProfile | undefined {
+  if (!children || children.length === 0) return undefined;
+  if (children.length === 1) return children[0];
+
+  const currentChild = children.find(c => c.id === currentSelectedId);
+
+  // Filter out demo mock children if real paired children exist
+  const realChildren = children.filter(c => !['child_1', 'child_2', 'child_3'].includes(c.id));
+  const pool = realChildren.length > 0 ? realChildren : children;
+
+  // Sort candidates:
+  // 1. Online children first (status === 'online')
+  // 2. Most recent activity (updatedAt descending)
+  const sorted = [...pool].sort((a, b) => {
+    const aOnline = a.status === 'online' ? 1 : 0;
+    const bOnline = b.status === 'online' ? 1 : 0;
+    if (aOnline !== bOnline) return bOnline - aOnline;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+
+  const best = sorted[0];
+
+  // If current child is valid and is actively online, keep current unless another child is actively online and current child has been inactive for > 15 minutes
+  if (currentChild && pool.some(c => c.id === currentChild.id)) {
+    const isCurrentActive = currentChild.status === 'online';
+    const bestIsActive = best.status === 'online';
+    if (isCurrentActive && (!bestIsActive || (best.updatedAt || 0) - (currentChild.updatedAt || 0) < 900000)) {
+      return currentChild;
+    }
+  }
+
+  return best;
+}
+
 function getInitialRealState(): AppState {
   const currentParent = getCurrentParentAccount();
   const realFamily: FamilyMember[] = currentParent
@@ -885,11 +933,8 @@ function getInitialRealState(): AppState {
           ? parsed.children
           : defaultRealState.children;
 
-        const activeChild =
-          realChildren.find((c: any) => c.id === parsed.selectedChildId) ||
-          realChildren[0] ||
-          parsed.child ||
-          emptyChildPlaceholder;
+        const bestChild = pickBestActiveChild(realChildren, parsed.selectedChildId);
+        const activeChild = bestChild || realChildren[0] || parsed.child || emptyChildPlaceholder;
 
         const kidPaired = isKidAppMode() ? getKidDevicePairedInfo() : null;
         const effectiveKidId = kidPaired?.childId;
@@ -902,7 +947,7 @@ function getInitialRealState(): AppState {
           activeReminder: null,
           children: realChildren,
           child: activeChild,
-          selectedChildId: effectiveKidId || (realChildren.length > 0 ? (parsed.selectedChildId || realChildren[0].id) : defaultRealState.selectedChildId),
+          selectedChildId: effectiveKidId || activeChild.id || defaultRealState.selectedChildId,
           family: (parsed.family && parsed.family.length > 0) ? parsed.family : defaultRealState.family,
           alerts: parsed.alerts || [],
           timeRequests: parsed.timeRequests || [],
@@ -1307,9 +1352,25 @@ export function syncParentWithAllChildren(parentId: string, children: ChildProfi
       } else if (sosData && sosData.active === false && globalState.activeSOS) {
         if (globalState.sosDetails?.childId === childId || !globalState.sosDetails?.childId) {
           lastHandledSosByChild[childId] = 0;
+          const childDisplayName = childName || (globalState.children.find(c => c.id === childId)?.name) || 'Con';
+          const cancelTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
           applyCloudStateUpdate((prev) => ({
             ...prev,
             activeSOS: false,
+            alerts: [
+              {
+                id: `sos_cancel_${childId}_${Date.now()}`,
+                type: 'sos',
+                title: `🛡️ Bé ${childDisplayName} đã an toàn (Đã hủy SOS)`,
+                message: `Bé đã hủy cảnh báo cứu hộ lúc ${cancelTime}. Tình hình đã an toàn.`,
+                time: cancelTime,
+                isRead: false,
+                priority: 'high',
+                childId,
+                childName: childDisplayName,
+              },
+              ...prev.alerts,
+            ],
           }));
           eventBus.publish('SOS_CANCELLED', { childId, childName }, 'parent');
         }
@@ -1843,7 +1904,9 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
 
           const incomingUsed = (cloudSettings.screenTime && typeof cloudSettings.screenTime.todayTotalMinutes === 'number' && cloudSettings.screenTime.todayTotalMinutes > 0)
             ? cloudSettings.screenTime.todayTotalMinutes
-            : 0;
+            : (typeof (cloudSettings as any).screenTimeUsedMinutes === 'number' && (cloudSettings as any).screenTimeUsedMinutes > 0
+              ? (cloudSettings as any).screenTimeUsedMinutes
+              : 0);
           const finalUsedMinutes = Math.max(localUsedMinutes, incomingUsed);
 
           const mergedScreenTime: ScreenTimeData = {
@@ -1862,10 +1925,67 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             ...cloudSettings,
             screenTimeLimitMinutes: mergedDailyLimit,
             screenTime: mergedScreenTime,
-            isLocked: cloudSettings.isLocked !== undefined
-              ? Boolean(cloudSettings.isLocked)
-              : (cloudSettings.lockChallenge ? Boolean(cloudSettings.lockChallenge.isLocked) : curSettings.isLocked),
           };
+
+          // CHECK SCREEN TIME EXPIRATION & LOCK STATE:
+          const isScreenTimeExpired = mergedDailyLimit > 0 && finalUsedMinutes >= mergedDailyLimit;
+          const isLockedFromCloud = Boolean(cloudSettings.isLocked || cloudSettings.lockChallenge?.isLocked);
+          const isLockedLocally = Boolean(curSettings.isLocked || curSettings.lockChallenge?.isLocked);
+
+          const localLockedAt = curSettings.lockChallenge?.lockedAt || (curSettings.isLocked ? 1 : 0);
+          const cloudUnlockedAt = (cloudSettings as any)?.unlockedAt || 0;
+          const isExplicitCloudUnlock = !isLockedFromCloud && cloudUnlockedAt > 0 && cloudUnlockedAt >= localLockedAt;
+
+          // PROTECT LOCAL LOCK STATE:
+          // A kid device locked locally (via parent command, routine, or screentime) MUST NOT be unlocked
+          // by a stale cloud settings packet where isLocked: false unless there is an explicit newer unlock timestamp.
+          let effectiveIsLocked: boolean;
+          if (isScreenTimeExpired) {
+            effectiveIsLocked = true;
+          } else if (isLockedFromCloud) {
+            effectiveIsLocked = true;
+          } else if (isExplicitCloudUnlock) {
+            effectiveIsLocked = false;
+          } else if (isLockedLocally) {
+            effectiveIsLocked = true;
+            // Proactively heal cloud settings so cloud knows device is locked
+            if (parentId && effectiveChildId) {
+              syncChildSettingsToCloud(parentId, effectiveChildId, {
+                isLocked: true,
+                lockChallenge: curSettings.lockChallenge,
+              }, childName).catch(() => {});
+            }
+          } else {
+            effectiveIsLocked = false;
+          }
+
+          let effectiveLockChallenge: LockChallengeState;
+          if (effectiveIsLocked) {
+            if (cloudSettings.lockChallenge && cloudSettings.lockChallenge.isLocked) {
+              effectiveLockChallenge = cloudSettings.lockChallenge;
+            } else if (curSettings.lockChallenge && curSettings.lockChallenge.isLocked) {
+              effectiveLockChallenge = curSettings.lockChallenge;
+            } else if (isScreenTimeExpired) {
+              effectiveLockChallenge = {
+                isLocked: true,
+                lockType: 'instant',
+                title: 'Đã hết thời gian dùng máy hôm nay!',
+                description: `Bé đã dùng đủ ${Math.floor(mergedDailyLimit / 60)}h ${mergedDailyLimit % 60}p giới hạn được bố mẹ đặt.`,
+              };
+            } else {
+              effectiveLockChallenge = {
+                isLocked: true,
+                lockType: 'instant',
+                title: 'Thiết bị đang bị khóa từ xa',
+                description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+              };
+            }
+          } else {
+            effectiveLockChallenge = cloudSettings.lockChallenge || curSettings.lockChallenge || { isLocked: false, lockType: 'none', title: '', description: '' };
+          }
+
+          mergedSettings.isLocked = effectiveIsLocked;
+          mergedSettings.lockChallenge = effectiveLockChallenge;
 
           let cleanBroadcast = mergedSettings.broadcastMessage !== undefined ? mergedSettings.broadcastMessage : prev.broadcastMessage;
           if (cleanBroadcast) {
@@ -1879,9 +1999,7 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
           }
           return {
             ...prev,
-            isLocked: mergedSettings.isLocked !== undefined
-              ? Boolean(mergedSettings.isLocked)
-              : (mergedSettings.lockChallenge ? Boolean(mergedSettings.lockChallenge.isLocked) : prev.isLocked),
+            isLocked: effectiveIsLocked,
             childSettings: {
               ...prev.childSettings,
               [effectiveChildId]: {
@@ -1892,7 +2010,7 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             apps: mergedSettings.apps || prev.apps,
             hardwareControls: mergedSettings.hardwareControls || prev.hardwareControls,
             kioskMode: mergedSettings.kioskMode || prev.kioskMode,
-            lockChallenge: mergedSettings.lockChallenge || prev.lockChallenge,
+            lockChallenge: effectiveLockChallenge,
             smartRoutines: mergedSettings.smartRoutines || prev.smartRoutines,
             broadcastMessage: cleanBroadcast,
             kidTasks: mergedSettings.kidTasks || prev.kidTasks,
@@ -2033,15 +2151,9 @@ export function syncWithCloudForChild(parentId: string, childId?: string, childN
             }),
           ];
 
-          const curChildObj = mergedChildren.find((c) => c.id === prev.selectedChildId);
-          // Sort children by recent activity to pick the active device
-          const sortedByActivity = [...mergedChildren].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-          const mostActiveChild = sortedByActivity[0];
-
-          // Auto-select the active child if current selection is empty or stale by > 12 hours while another child is active
-          const isCurStale = !curChildObj || (mostActiveChild && (mostActiveChild.updatedAt || 0) > ((curChildObj.updatedAt || 0) + 43200000));
-          const nextSelectedChildId = isCurStale && mostActiveChild ? mostActiveChild.id : (curChildObj ? prev.selectedChildId : (mostActiveChild?.id || ''));
-          const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
+          const bestActive = pickBestActiveChild(mergedChildren, prev.selectedChildId);
+          const nextSelectedChildId = bestActive ? bestActive.id : (prev.selectedChildId || mergedChildren[0]?.id || '');
+          const nextChild = bestActive || mergedChildren[0] || prev.child;
 
           return {
             ...prev,
@@ -2106,17 +2218,9 @@ export async function syncAllChildrenFromCloud(explicitParentId?: string): Promi
           ...preservedLocal,
         ];
 
-        let nextSelectedChildId = prev.selectedChildId;
-        const curIdValid = mergedChildren.some((c) => c.id === nextSelectedChildId);
-        const isCurrentDemo = ['child_1', 'child_2', 'child_3'].includes(nextSelectedChildId);
-
-        // Auto-switch to real paired child if currently on demo mock child
-        if (!curIdValid || (isCurrentDemo && hasRealCloudChildren)) {
-          const realChild = mergedChildren.find((c) => !['child_1', 'child_2', 'child_3'].includes(c.id));
-          nextSelectedChildId = realChild ? realChild.id : (mergedChildren[0]?.id || '');
-        }
-
-        const nextChild = mergedChildren.find((c) => c.id === nextSelectedChildId) || mergedChildren[0] || prev.child;
+        const bestActive = pickBestActiveChild(mergedChildren, prev.selectedChildId);
+        const nextSelectedChildId = bestActive ? bestActive.id : (prev.selectedChildId || mergedChildren[0]?.id || '');
+        const nextChild = bestActive || mergedChildren[0] || prev.child;
 
         return {
           ...prev,
@@ -2658,8 +2762,84 @@ export const useAppState = () => {
         lastCommandAck: pendingStatus,
       });
 
+      // 2. Active Fallback Polling (Every 2s for 15s):
+      // Checks local server / tunnel if the child has acknowledged execution
+      const ackPoller = setInterval(async () => {
+        try {
+          const lastAck = await serverApiClient.getLastCommandAck(childId);
+          if (lastAck && (lastAck.id === cmdId || lastAck.commandId === cmdId || (lastAck.executedAt && lastAck.executedAt >= now))) {
+            if (lastAck.status === 'executed' || lastAck.status === 'received') {
+              clearInterval(ackPoller);
+              applyCloudStateUpdate((prev) => {
+                if (prev.lastCommandAck && prev.lastCommandAck.status !== 'executed') {
+                  const ackChildName = lastAck.childName || childName;
+                  const ackTitle = REMOTE_COMMAND_TITLES[lastAck.command || command] || title;
+                  const isLock = (lastAck.command || command) === 'lock_now';
+                  const isUnlock = (lastAck.command || command) === 'unlock_now' || (lastAck.command || command) === 'extend_time';
+
+                  let nextChildren = prev.children;
+                  let nextChild = prev.child;
+                  let nextSettings = prev.childSettings;
+                  let nextLock = prev.lockChallenge;
+
+                  if (lastAck.status === 'executed' && (isLock || isUnlock)) {
+                    nextChildren = (prev.children || []).map((c) =>
+                      c.id === childId ? { ...c, isLocked: isLock, lockType: isLock ? 'instant' : 'none' } : c
+                    );
+                    if (prev.child && prev.child.id === childId) {
+                      nextChild = { ...prev.child, isLocked: isLock, lockType: isLock ? 'instant' : 'none' };
+                    }
+                    const curSet = prev.childSettings[childId] || createDefaultChildSettings(childId);
+                    const updatedLockChallenge: LockChallengeState = {
+                      ...curSet.lockChallenge,
+                      isLocked: isLock,
+                      lockType: isLock ? 'instant' : 'none',
+                      title: isLock ? 'Thiết bị đang bị khóa từ xa' : '',
+                      description: isLock ? 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!' : '',
+                    };
+                    nextSettings = {
+                      ...prev.childSettings,
+                      [childId]: {
+                        ...curSet,
+                        isLocked: isLock,
+                        lockChallenge: updatedLockChallenge,
+                      },
+                    };
+                    if (childId === prev.selectedChildId) {
+                      nextLock = updatedLockChallenge;
+                    }
+                  }
+
+                  return {
+                    ...prev,
+                    lastCommandAck: {
+                      id: cmdId,
+                      command: lastAck.command || command,
+                      commandTitle: ackTitle,
+                      status: lastAck.status,
+                      childId,
+                      childName: ackChildName,
+                      deviceName: lastAck.deviceName || '',
+                      sentAt: now,
+                      executedAt: lastAck.executedAt || Date.now(),
+                      detail: lastAck.detail || (lastAck.status === 'executed' ? 'Đã thực thi thành công trên thiết bị con' : 'Máy con đã nhận lệnh'),
+                    },
+                    children: nextChildren,
+                    child: nextChild,
+                    childSettings: nextSettings,
+                    lockChallenge: nextLock,
+                  };
+                }
+                return prev;
+              });
+            }
+          }
+        } catch (_) {}
+      }, 2000);
+
       // 3. Set a 15-second timeout: If child has not acknowledged execution after 15s, inform parent
       setTimeout(() => {
+        clearInterval(ackPoller);
         applyCloudStateUpdate((prev) => {
           if (prev.lastCommandAck && prev.lastCommandAck.id === cmdId && (prev.lastCommandAck.status === 'pending' || prev.lastCommandAck.status === 'received')) {
             return {
@@ -2688,7 +2868,9 @@ export const useAppState = () => {
     let nextBrightness = partial.brightness !== undefined ? partial.brightness : globalState.hardwareControls.brightness;
 
     if (sender === 'child') {
-      if (globalState.hardwareControls.isHardwareLocked || !globalState.hardwareControls.allowChildAdjustment) {
+      // Always allow turning off flashlight for safety & battery preservation
+      const isOnlyTurningOffFlashlight = partial.flashlight === false && Object.keys(partial).every(k => k === 'flashlight');
+      if (!isOnlyTurningOffFlashlight && (globalState.hardwareControls.isHardwareLocked || !globalState.hardwareControls.allowChildAdjustment)) {
         return false;
       }
       nextVolume = Math.min(nextVolume, globalState.hardwareControls.maxAllowedVolume);
@@ -3008,7 +3190,13 @@ export const useAppState = () => {
   };
 
   // Lock challenges
-  const setLockChallenge = (lockType: LockType, title?: string, desc?: string, customChallengeData?: Partial<LockChallengeState>) => {
+  const setLockChallenge = (
+    lockType: LockType,
+    title?: string,
+    desc?: string,
+    customChallengeData?: Partial<LockChallengeState>,
+    targetChildIdParam?: string
+  ) => {
     let customTitle = (customChallengeData && customChallengeData.title) || title || 'Thiết bị đang bị khóa';
     let customDesc = (customChallengeData && customChallengeData.description) || desc || 'Con hãy hoàn thành thử thách để mở máy nhé!';
 
@@ -3083,25 +3271,27 @@ export const useAppState = () => {
       lockType,
     };
 
+    const curChildId = targetChildIdParam || (isKidAppMode() ? getKidDevicePairedInfo()?.childId : null) || state.selectedChildId || getActiveChildId();
+
     if (!isKidAppMode()) {
       dispatchRemoteCommand('lock_now', {
         lockType,
         title: challengeData.title,
         description: challengeData.description,
         challengeData: fullState,
-      }, state.selectedChildId, `Khóa thử thách ${lockType}`);
+      }, curChildId, `Khóa thử thách ${lockType}`);
       return;
     }
 
     const updatedChildSettings = { ...state.childSettings };
-    const curChildId = state.selectedChildId || getActiveChildId();
-    if (curChildId && updatedChildSettings[curChildId]) {
+    if (curChildId) {
+      const curSet = updatedChildSettings[curChildId] || createDefaultChildSettings(curChildId);
       updatedChildSettings[curChildId] = {
-        ...updatedChildSettings[curChildId],
+        ...curSet,
         lockChallenge: fullState,
         isLocked: lockType !== 'none',
         smartRoutines: {
-          ...updatedChildSettings[curChildId].smartRoutines,
+          ...(curSet.smartRoutines || {}),
           ...(lockType === 'mealtime' ? { mealtimeLock: true } : {}),
           ...(lockType === 'bedtime' ? { bedtimeLock: true } : {}),
         },
@@ -3160,7 +3350,8 @@ export const useAppState = () => {
       const curSet = updatedChildSettings[curChildId] || createDefaultChildSettings(curChildId);
       const curUsed = curSet.screenTime?.todayTotalMinutes || 0;
       const curLimit = curSet.screenTimeLimitMinutes || 135;
-      const effectiveLimit = curUsed >= curLimit ? (curUsed + 60) : curLimit;
+      const baseLimit = Math.max(curLimit, curUsed);
+      const effectiveLimit = curUsed >= curLimit ? (baseLimit + 60) : curLimit;
       updatedChildSettings[curChildId] = {
         ...curSet,
         lockChallenge: updatedLock,
@@ -3196,6 +3387,26 @@ export const useAppState = () => {
       broadcastMessage: null,
       childSettings: updatedChildSettings,
     }, curChildId);
+
+    if (isKidAppMode() && curChildId) {
+      const parentId = getActiveParentId();
+      const targetChild = state.children.find((c) => c.id === curChildId) || state.child;
+      if (parentId) {
+        syncChildSettingsToCloud(parentId, curChildId, {
+          isLocked: false,
+          lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
+          broadcastMessage: null,
+        }, targetChild?.name).catch(() => {});
+      }
+      serverApiClient.saveChildSettings(curChildId, {
+        isLocked: false,
+        lockChallenge: updatedLock,
+        smartRoutines: updatedRoutines,
+        broadcastMessage: null,
+      }, parentId).catch(() => {});
+    }
+
     eventBus.publish('LOCK_CHALLENGE_UPDATED', updatedLock, 'child');
     eventBus.publish('SMART_ROUTINE_CHANGED', updatedRoutines, 'child');
   };
@@ -3585,6 +3796,14 @@ export const useAppState = () => {
     eventBus.publish('SOS_TRIGGERED', sosInfo, 'child');
     if (parentId && effectiveChildId) {
       triggerCloudSOS(parentId, effectiveChildId, sosInfo).catch(() => {});
+      serverApiClient.triggerSos({
+        childId: effectiveChildId,
+        childName: sosInfo.childName,
+        lat: sosInfo.lat,
+        lng: sosInfo.lng,
+        address: sosInfo.address,
+        time: sosInfo.time,
+      }).catch(() => {});
     }
   };
 
@@ -3605,6 +3824,7 @@ export const useAppState = () => {
     clearAllFamilySosInCloud(parentId, childrenToClear).catch(() => {});
     if (effectiveChildId) {
       resolveCloudSOS(parentId, effectiveChildId).catch(() => {});
+      serverApiClient.resolveSos(effectiveChildId).catch(() => {});
     }
   };
 
@@ -3650,10 +3870,10 @@ export const useAppState = () => {
     const targetChildId = pendingReq?.childId || state.selectedChildId;
     const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
     const childName = pendingReq?.childName || targetChild?.name;
+    const extraMinutes = pendingReq?.requestedMinutes !== undefined ? pendingReq.requestedMinutes : 15;
 
-    resolveCloudTimeRequest(parentId, targetChildId, reqId, status, childName).catch(() => {});
+    resolveCloudTimeRequest(parentId, targetChildId, reqId, status, childName, extraMinutes).catch(() => {});
     if (status === 'approved') {
-      const extraMinutes = pendingReq?.requestedMinutes || 15;
       extendChildTimeNow(extraMinutes, targetChildId);
     } else {
       dispatchRemoteCommand('broadcast_msg', {
@@ -3664,9 +3884,9 @@ export const useAppState = () => {
         speakTTS: false,
       }, targetChildId, 'Từ chối xin thêm giờ ⏱️');
     }
-    const updated = state.timeRequests.map((r) => (r.id === reqId ? { ...r, status } : r));
+    const updated = state.timeRequests.map((r) => (r.id === reqId ? { ...r, status, approvedMinutes: extraMinutes } : r));
     saveAndNotify({ ...state, timeRequests: updated });
-    eventBus.publish('TIME_EXTENSION_RESOLVED', { reqId, status, childId: targetChildId, childName }, 'parent');
+    eventBus.publish('TIME_EXTENSION_RESOLVED', { reqId, status, childId: targetChildId, childName, approvedMinutes: extraMinutes }, 'parent');
   };
 
   const buzzKidPhone = (childId?: string) => {
@@ -3704,10 +3924,36 @@ export const useAppState = () => {
       });
       return;
     }
-    // Parent mode: Dispatch remote command. DO NOT flip isLocked optimistically before kid confirms!
+    // Parent mode: Proactively sync cloud settings so cloud is never stale, then dispatch remote command
+    const parentId = getActiveParentId();
+    const curChild = state.children.find((c) => c.id === targetId) || state.child;
+    const nowLockTime = Date.now();
+    if (parentId && targetId) {
+      syncChildSettingsToCloud(parentId, targetId, {
+        isLocked: true,
+        lockChallenge: {
+          isLocked: true,
+          lockType: 'instant',
+          title: 'Thiết bị đang bị khóa từ xa',
+          description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+          lockedAt: nowLockTime,
+        },
+      }, curChild?.name).catch(() => {});
+      serverApiClient.saveChildSettings(targetId, {
+        isLocked: true,
+        lockChallenge: {
+          isLocked: true,
+          lockType: 'instant',
+          title: 'Thiết bị đang bị khóa từ xa',
+          description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+          lockedAt: nowLockTime,
+        },
+      }, parentId).catch(() => {});
+    }
     dispatchRemoteCommand('lock_now', {
       title: 'Thiết bị đang bị khóa từ xa',
       description: 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!',
+      lockedAt: nowLockTime,
     }, targetId, 'Khóa máy tức thì 🔒');
   };
 
@@ -3759,15 +4005,40 @@ export const useAppState = () => {
       });
       return;
     }
-    // Parent mode: Dispatch remote command. DO NOT flip isLocked optimistically before kid confirms!
-    dispatchRemoteCommand('unlock_now', undefined, targetId, 'Mở khóa thiết bị 🔓');
+    // Parent mode: Proactively sync cloud settings with unlockedAt timestamp, then dispatch remote command
+    const parentId = getActiveParentId();
+    const curChild = state.children.find((c) => c.id === targetId) || state.child;
+    const nowUnlockTime = Date.now();
+    if (parentId && targetId) {
+      syncChildSettingsToCloud(parentId, targetId, {
+        isLocked: false,
+        unlockedAt: nowUnlockTime,
+        lockChallenge: {
+          isLocked: false,
+          lockType: 'none',
+          title: '',
+          description: '',
+        },
+      }, curChild?.name).catch(() => {});
+      serverApiClient.saveChildSettings(targetId, {
+        isLocked: false,
+        unlockedAt: nowUnlockTime,
+        lockChallenge: {
+          isLocked: false,
+          lockType: 'none',
+        },
+      }, parentId).catch(() => {});
+    }
+    dispatchRemoteCommand('unlock_now', { unlockedAt: nowUnlockTime }, targetId, 'Mở khóa thiết bị 🔓');
   };
 
   const extendChildTimeNow = (minutes: number, childId?: string) => {
     const targetId = childId || state.selectedChildId;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
     const currentLimit = currentSettings.screenTimeLimitMinutes || 135;
-    const newLimit = minutes === -1 ? Math.max(currentLimit, 1440) : (currentLimit + minutes);
+    const currentUsed = currentSettings.screenTime?.todayTotalMinutes || 0;
+    const baseLimit = Math.max(currentLimit, currentUsed);
+    const newLimit = minutes === -1 ? Math.max(baseLimit, 1440) : (baseLimit + minutes);
     const updatedLock: LockChallengeState = {
       ...currentSettings.lockChallenge,
       isLocked: false,
@@ -3807,11 +4078,16 @@ export const useAppState = () => {
       },
     });
     if (!isKidAppMode()) {
-      if (minutes === -1) {
-        dispatchRemoteCommand('unlock_now', { minutes: -1 }, targetId, 'Mở khóa dùng tự do 🔓');
-      } else {
-        dispatchRemoteCommand('extend_time', { minutes }, targetId, `Cộng thêm +${minutes} phút ⏱️`);
-      }
+      // Khi cha mẹ gia hạn giờ hoặc duyệt yêu cầu từ con, máy con có thể đang bị khóa.
+      // BẮT BUỘC PHẢI GỬI 'unlock_now' kèm thông tin số phút gia hạn để máy con mở khóa triệt để và không bị loop khóa lại!
+      dispatchRemoteCommand('unlock_now', { 
+        minutes, 
+        extraMinutes: minutes,
+        screenTimeLimitMinutes: newLimit,
+        screentimeBypass: true,
+        unlockedAt: Date.now() 
+      }, targetId, minutes === -1 ? 'Mở khóa dùng tự do 🔓' : `Mở khóa + Gia hạn ${minutes}p 🔓`);
+
       const parentId = getActiveParentId();
       if (parentId) {
         const targetChild = state.children.find((c) => c.id === targetId) || state.child;
@@ -3822,6 +4098,13 @@ export const useAppState = () => {
           smartRoutines: updatedRoutines,
           broadcastMessage: null,
         }, targetChild?.name).catch(() => {});
+        serverApiClient.saveChildSettings(targetId, {
+          screenTimeLimitMinutes: newLimit,
+          isLocked: false,
+          lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
+          broadcastMessage: null,
+        }, parentId).catch(() => {});
       }
     } else {
       // Kid device local extension: sync new limit to Cloud & Server so parent state matches
@@ -3831,7 +4114,15 @@ export const useAppState = () => {
         syncChildSettingsToCloud(parentId, targetId, {
           screenTimeLimitMinutes: newLimit,
           isLocked: false,
+          lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
         }, targetChild?.name).catch(() => {});
+        serverApiClient.saveChildSettings(targetId, {
+          screenTimeLimitMinutes: newLimit,
+          isLocked: false,
+          lockChallenge: updatedLock,
+          smartRoutines: updatedRoutines,
+        }, parentId).catch(() => {});
       }
     }
   };
@@ -4010,6 +4301,32 @@ export const useAppState = () => {
     }
   };
 
+  const setScreenTimeUsed = (childId?: string, minutes: number = 0) => {
+    const targetId = childId || state.selectedChildId;
+    const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
+    const prevUsed = currentSettings.screenTime?.todayTotalMinutes || 0;
+    const newUsed = Math.max(prevUsed, minutes);
+    if (newUsed === prevUsed && currentSettings.screenTime?.todayTotalMinutes !== undefined) {
+      return; // Skip no-op to prevent re-render cascade
+    }
+    const updatedScreenTime: ScreenTimeData = {
+      ...currentSettings.screenTime,
+      todayTotalMinutes: newUsed,
+    };
+    const isCur = state.selectedChildId === targetId;
+    saveAndNotify({
+      ...state,
+      childSettings: {
+        ...state.childSettings,
+        [targetId]: {
+          ...currentSettings,
+          screenTime: updatedScreenTime,
+        },
+      },
+      ...(isCur ? { screenTime: updatedScreenTime } : {}),
+    }, targetId);
+  };
+
   const incrementScreenTimeUsed = (childId?: string, minutes: number = 1) => {
     const targetId = childId || state.selectedChildId;
     const currentSettings = state.childSettings[targetId] || createDefaultChildSettings(targetId);
@@ -4032,34 +4349,131 @@ export const useAppState = () => {
     }, targetId);
   };
 
-  const toggleTaskCompleted = (taskId: string, childId?: string) => {
+  const toggleTaskCompleted = (taskId: string, childId?: string, callerRole?: 'parent' | 'child'): { status: 'completed' | 'pending_approval' | 'uncompleted' | 'cancelled'; message: string; starsDelta?: number } => {
     const targetChildId = childId || state.selectedChildId;
     const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
     const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
     const task = currentSettings.kidTasks.find((t) => t.id === taskId) || state.kidTasks.find((t) => t.id === taskId);
-    if (!task) return;
+    if (!task) return { status: 'uncompleted', message: 'Nhiệm vụ không tồn tại!' };
 
-    const nextCompleted = !task.completed;
-    const starDelta = nextCompleted ? task.stars : -task.stars;
-    const newKidStars = Math.max(0, (currentSettings.kidStars || 0) + starDelta);
-
-    const updatedTasks = currentSettings.kidTasks.map((t) =>
-      t.id === taskId ? { ...t, completed: nextCompleted } : t
-    );
-
-    let updatedHistory = currentSettings.starHistory || [];
-    if (nextCompleted) {
-      const transaction: StarTransaction = {
-        id: 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-        childId: targetChildId,
-        childName: targetChild.name,
-        type: 'task_reward',
-        stars: task.stars,
-        title: `Hoàn thành việc: ${task.title}`,
-        timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay',
+    // Case 1: Task was already completed, toggling off
+    if (task.completed) {
+      const starDelta = -task.stars;
+      const newKidStars = Math.max(0, (currentSettings.kidStars || 0) + starDelta);
+      const updatedTasks = currentSettings.kidTasks.map((t) =>
+        t.id === taskId ? { ...t, completed: false, status: 'todo' as const, approvedAt: undefined } : t
+      );
+      const updatedChildSettings = {
+        ...state.childSettings,
+        [targetChildId]: {
+          ...currentSettings,
+          kidTasks: updatedTasks,
+          kidStars: newKidStars,
+        },
       };
-      updatedHistory = [transaction, ...updatedHistory];
+      const isCur = state.selectedChildId === targetChildId;
+      const nextState: AppState = {
+        ...state,
+        childSettings: updatedChildSettings,
+        ...(isCur ? { kidTasks: updatedTasks, kidStars: newKidStars } : {}),
+      };
+      saveAndNotify(nextState, targetChildId);
+      eventBus.publish('TASK_STATUS_CHANGED', { taskId, completed: false, childId: targetChildId, starsDelta: starDelta, newStars: newKidStars }, 'child');
+      const parentId = getActiveParentId();
+      if (parentId && targetChildId) {
+        syncChildStarsToCloud(parentId, targetChildId, newKidStars, undefined, targetChild?.name).catch(() => {});
+        syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks, kidStars: newKidStars }, targetChild?.name).catch(() => {});
+      }
+      return { status: 'uncompleted', message: `Đã chuyển nhiệm vụ "${task.title}" về chưa xong`, starsDelta: starDelta };
     }
+
+    // Case 2: Task is pending approval, child taps again to cancel
+    if (task.status === 'pending_approval' && callerRole !== 'parent') {
+      const updatedTasks = currentSettings.kidTasks.map((t) =>
+        t.id === taskId ? { ...t, status: 'todo' as const, submittedAt: undefined } : t
+      );
+      const updatedChildSettings = {
+        ...state.childSettings,
+        [targetChildId]: {
+          ...currentSettings,
+          kidTasks: updatedTasks,
+        },
+      };
+      const isCur = state.selectedChildId === targetChildId;
+      const nextState: AppState = {
+        ...state,
+        childSettings: updatedChildSettings,
+        ...(isCur ? { kidTasks: updatedTasks } : {}),
+      };
+      saveAndNotify(nextState, targetChildId);
+      const parentId = getActiveParentId();
+      if (parentId && targetChildId) {
+        syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks }, targetChild?.name).catch(() => {});
+      }
+      return { status: 'cancelled', message: `Đã hủy gửi duyệt nhiệm vụ "${task.title}"` };
+    }
+
+    // Case 3: Completing/Submitting
+    const autoApproveAll = currentSettings.autoApproveAllTasks === true;
+    const requiresApproval = task.requiresApproval !== false && !autoApproveAll && callerRole !== 'parent';
+
+    // Subcase 3A: Needs parent approval
+    if (requiresApproval) {
+      const nowStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay';
+      const updatedTasks = currentSettings.kidTasks.map((t) =>
+        t.id === taskId ? { ...t, status: 'pending_approval' as const, submittedAt: nowStr } : t
+      );
+      const newAlert: AlertNotification = {
+        id: 'alt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        type: 'study',
+        title: `📝 ${targetChild.name} vừa báo hoàn thành nhiệm vụ!`,
+        message: `Bé đã làm xong: "${task.title}" (+${task.stars}⭐). Bấm để duyệt và cộng sao cho bé.`,
+        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        isRead: false,
+        priority: 'medium',
+        metadata: { taskId: task.id, childId: targetChildId, stars: task.stars },
+      };
+
+      const updatedChildSettings = {
+        ...state.childSettings,
+        [targetChildId]: {
+          ...currentSettings,
+          kidTasks: updatedTasks,
+        },
+      };
+      const isCur = state.selectedChildId === targetChildId;
+      const nextState: AppState = {
+        ...state,
+        childSettings: updatedChildSettings,
+        alerts: [newAlert, ...state.alerts],
+        ...(isCur ? { kidTasks: updatedTasks } : {}),
+      };
+      saveAndNotify(nextState, targetChildId);
+      eventBus.publish('TASK_STATUS_CHANGED', { taskId, status: 'pending_approval', childId: targetChildId }, 'child');
+      const parentId = getActiveParentId();
+      if (parentId && targetChildId) {
+        syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks }, targetChild?.name).catch(() => {});
+      }
+      return { status: 'pending_approval', message: `Đã gửi bài "${task.title}" cho bố mẹ duyệt (+${task.stars}⭐)!` };
+    }
+
+    // Subcase 3B: Auto-approved or completed by parent
+    const starDelta = task.stars;
+    const newKidStars = (currentSettings.kidStars || 0) + starDelta;
+    const nowStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay';
+    const updatedTasks = currentSettings.kidTasks.map((t) =>
+      t.id === taskId ? { ...t, completed: true, status: 'completed' as const, approvedAt: nowStr } : t
+    );
+    const transaction: StarTransaction = {
+      id: 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      childId: targetChildId,
+      childName: targetChild.name,
+      type: 'task_reward',
+      stars: task.stars,
+      title: `Hoàn thành việc: ${task.title}`,
+      timestamp: nowStr,
+    };
+    const updatedHistory = [transaction, ...(currentSettings.starHistory || [])];
 
     const updatedChildSettings = {
       ...state.childSettings,
@@ -4070,22 +4484,21 @@ export const useAppState = () => {
         starHistory: updatedHistory,
       },
     };
-
     const isCur = state.selectedChildId === targetChildId;
     const nextState: AppState = {
       ...state,
       childSettings: updatedChildSettings,
       ...(isCur ? { kidTasks: updatedTasks, kidStars: newKidStars } : {}),
-      ...(nextCompleted && updatedHistory[0] ? { starHistory: [updatedHistory[0], ...state.starHistory] } : {}),
+      starHistory: [transaction, ...state.starHistory],
     };
-
     saveAndNotify(nextState, targetChildId);
-    eventBus.publish('TASK_STATUS_CHANGED', { taskId, completed: nextCompleted, childId: targetChildId, starsDelta: starDelta, newStars: newKidStars }, 'child');
+    eventBus.publish('TASK_STATUS_CHANGED', { taskId, completed: true, childId: targetChildId, starsDelta: starDelta, newStars: newKidStars }, 'child');
     const parentId = getActiveParentId();
     if (parentId && targetChildId) {
-      syncChildStarsToCloud(parentId, targetChildId, newKidStars, nextCompleted ? updatedHistory[0] : undefined, targetChild?.name).catch(() => {});
+      syncChildStarsToCloud(parentId, targetChildId, newKidStars, transaction, targetChild?.name).catch(() => {});
       syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks, kidStars: newKidStars }, targetChild?.name).catch(() => {});
     }
+    return { status: 'completed', message: `🎉 Giỏi quá! Nhận ngay +${task.stars} Sao!`, starsDelta: starDelta };
   };
 
   const markAlertAsRead = (alertId: string) => {
@@ -4154,7 +4567,12 @@ export const useAppState = () => {
   const addKidTask = (task: KidTask, childId?: string) => {
     const targetChildId = childId || state.selectedChildId;
     const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
-    const updatedTasks = [task, ...currentSettings.kidTasks];
+    const taskWithDefaults: KidTask = {
+      ...task,
+      requiresApproval: task.requiresApproval !== undefined ? task.requiresApproval : true,
+      status: task.status || 'todo',
+    };
+    const updatedTasks = [taskWithDefaults, ...currentSettings.kidTasks];
     const isCur = state.selectedChildId === targetChildId;
 
     const updatedChildSettings = {
@@ -4171,7 +4589,11 @@ export const useAppState = () => {
       ...(isCur ? { kidTasks: updatedTasks } : {}),
     }, targetChildId);
 
-    eventBus.publish('TASK_STATUS_CHANGED', { taskId: task.id, childId: targetChildId, newTask: true }, 'parent');
+    eventBus.publish('TASK_STATUS_CHANGED', { taskId: taskWithDefaults.id, childId: targetChildId, newTask: true }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks }).catch(() => {});
+    }
   };
 
   const updateHealthGoals = (goals: { stepGoal?: number; activeGoalMinutes?: number; sleepHours?: number }) => {
@@ -4571,6 +4993,15 @@ export const useAppState = () => {
     const activeParentId = getActiveParentId();
     if (activeParentId) {
       saveChildProfileToCloud(activeParentId, updatedChild).catch(() => {});
+      serverApiClient.saveChildProfile(activeParentId, updatedChild).catch(() => {});
+      // Also send remote command to kid device to immediately update its local paired info and state
+      dispatchRemoteCommand('update_profile' as any, {
+        childId,
+        name: updatedChild.name,
+        childName: updatedChild.name,
+        avatar: updatedChild.avatar,
+        age: updatedChild.age,
+      }, childId, `Cập nhật hồ sơ con thành ${updatedChild.name}`).catch(() => {});
     }
   };
 
@@ -4960,7 +5391,7 @@ export const useAppState = () => {
 
   const assignTaskToChild = (
     childId: string,
-    taskData: { title: string; subject: string; stars: number; dueDate?: string }
+    taskData: { title: string; subject: string; stars: number; dueDate?: string; requiresApproval?: boolean }
   ) => {
     const targetChild = state.children.find((c) => c.id === childId) || state.child;
     const currentSettings = state.childSettings[childId] || createDefaultChildSettings(childId);
@@ -4971,6 +5402,8 @@ export const useAppState = () => {
       stars: taskData.stars || 5,
       completed: false,
       dueDate: taskData.dueDate || 'Hôm nay',
+      requiresApproval: taskData.requiresApproval !== undefined ? taskData.requiresApproval : true,
+      status: 'todo',
     };
 
     const updatedTasks = [newTask, ...(currentSettings.kidTasks || [])];
@@ -4991,6 +5424,10 @@ export const useAppState = () => {
 
     saveAndNotify(nextState, childId);
     eventBus.publish('TASK_ASSIGNED', { childId, task: newTask, childName: targetChild.name }, 'parent');
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, { kidTasks: updatedTasks }, targetChild?.name).catch(() => {});
+    }
   };
 
   const deleteKidTask = (taskId: string, childId?: string) => {
@@ -5013,9 +5450,143 @@ export const useAppState = () => {
       ...(isCur ? { kidTasks: updatedTasks } : {}),
     };
     saveAndNotify(nextState, targetChildId);
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks }).catch(() => {});
+    }
   };
 
-  const redeemRewardOnKid = (childId: string, rewardId: string) => {
+  const approveTaskCompleted = (taskId: string, childId?: string) => {
+    const targetChildId = childId || state.selectedChildId;
+    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+    const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
+    const task = currentSettings.kidTasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const starDelta = task.stars;
+    const newKidStars = (currentSettings.kidStars || 0) + starDelta;
+    const nowStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay';
+
+    const updatedTasks = currentSettings.kidTasks.map((t) =>
+      t.id === taskId ? { ...t, completed: true, status: 'completed' as const, approvedAt: nowStr } : t
+    );
+
+    const transaction: StarTransaction = {
+      id: 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      childId: targetChildId,
+      childName: targetChild.name,
+      type: 'task_reward',
+      stars: starDelta,
+      title: `Bố mẹ đã duyệt bài: ${task.title}`,
+      timestamp: nowStr,
+    };
+    const updatedHistory = [transaction, ...(currentSettings.starHistory || [])];
+
+    const updatedAlerts = state.alerts.map((a) =>
+      a.metadata?.taskId === taskId ? { ...a, isRead: true } : a
+    );
+
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [targetChildId]: {
+        ...currentSettings,
+        kidTasks: updatedTasks,
+        kidStars: newKidStars,
+        starHistory: updatedHistory,
+      },
+    };
+
+    const isCur = state.selectedChildId === targetChildId;
+    const nextState: AppState = {
+      ...state,
+      childSettings: updatedChildSettings,
+      alerts: updatedAlerts,
+      starHistory: [transaction, ...state.starHistory],
+      ...(isCur ? { kidTasks: updatedTasks, kidStars: newKidStars } : {}),
+    };
+
+    saveAndNotify(nextState, targetChildId);
+    eventBus.publish('TASK_APPROVED', { taskId, childId: targetChildId, stars: starDelta, newKidStars }, 'parent');
+
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildStarsToCloud(parentId, targetChildId, newKidStars, transaction, targetChild?.name).catch(() => {});
+      syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks, kidStars: newKidStars }, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const rejectTaskCompleted = (taskId: string, childId?: string, reason?: string) => {
+    const targetChildId = childId || state.selectedChildId;
+    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+    const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
+    const task = currentSettings.kidTasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const updatedTasks = currentSettings.kidTasks.map((t) =>
+      t.id === taskId ? { ...t, completed: false, status: 'rejected' as const, rejectionReason: reason || 'Chưa hoàn thành, con làm lại nhé' } : t
+    );
+
+    const updatedAlerts = state.alerts.map((a) =>
+      a.metadata?.taskId === taskId ? { ...a, isRead: true } : a
+    );
+
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [targetChildId]: {
+        ...currentSettings,
+        kidTasks: updatedTasks,
+      },
+    };
+
+    const isCur = state.selectedChildId === targetChildId;
+    const nextState: AppState = {
+      ...state,
+      childSettings: updatedChildSettings,
+      alerts: updatedAlerts,
+      ...(isCur ? { kidTasks: updatedTasks } : {}),
+    };
+
+    saveAndNotify(nextState, targetChildId);
+    eventBus.publish('TASK_REJECTED', { taskId, childId: targetChildId, reason }, 'parent');
+
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks }, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const toggleTaskRequiresApproval = (taskId: string, requiresApproval: boolean, childId?: string) => {
+    const targetChildId = childId || state.selectedChildId;
+    const targetChild = state.children.find((c) => c.id === targetChildId) || state.child;
+    const currentSettings = state.childSettings[targetChildId] || createDefaultChildSettings(targetChildId);
+
+    const updatedTasks = currentSettings.kidTasks.map((t) =>
+      t.id === taskId ? { ...t, requiresApproval } : t
+    );
+
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [targetChildId]: {
+        ...currentSettings,
+        kidTasks: updatedTasks,
+      },
+    };
+
+    const isCur = state.selectedChildId === targetChildId;
+    const nextState: AppState = {
+      ...state,
+      childSettings: updatedChildSettings,
+      ...(isCur ? { kidTasks: updatedTasks } : {}),
+    };
+
+    saveAndNotify(nextState, targetChildId);
+    const parentId = getActiveParentId();
+    if (parentId && targetChildId) {
+      syncChildSettingsToCloud(parentId, targetChildId, { kidTasks: updatedTasks }, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const redeemRewardOnKid = (childId: string, rewardId: string): { success: boolean; message: string; pendingApproval?: boolean } => {
     const targetChild = state.children.find((c) => c.id === childId) || state.child;
     const reward = state.rewardsCatalog.find((r) => r.id === rewardId);
     if (!reward) return { success: false, message: 'Phần thưởng không tồn tại!' };
@@ -5027,7 +5598,12 @@ export const useAppState = () => {
       return { success: false, message: `Con chưa đủ sao (còn thiếu ${reward.starsCost - currentStars} sao nữa)` };
     }
 
+    const autoApproveAll = currentSettings.autoApproveAllRewards === true;
+    const requiresApproval = reward.requiresApproval !== false && !autoApproveAll;
+
     const newStars = currentStars - reward.starsCost;
+    const nowStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay';
+
     const redemption: RewardRedemption = {
       id: 'rd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
       childId,
@@ -5036,8 +5612,8 @@ export const useAppState = () => {
       rewardTitle: reward.title,
       starsCost: reward.starsCost,
       icon: reward.icon,
-      timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay',
-      status: 'pending',
+      timestamp: nowStr,
+      status: requiresApproval ? 'pending' : 'completed',
     };
 
     const transaction: StarTransaction = {
@@ -5047,18 +5623,21 @@ export const useAppState = () => {
       type: 'redeem_gift',
       stars: -reward.starsCost,
       title: `Đã đổi: ${reward.title}`,
-      note: 'Phiếu đổi quà gửi bố mẹ duyệt',
-      timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay',
+      note: requiresApproval ? 'Phiếu đổi quà gửi bố mẹ duyệt' : 'Đã đổi quà thành công (Tự động duyệt)',
+      timestamp: nowStr,
     };
 
     const newAlert: AlertNotification = {
       id: 'alt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      type: 'study',
-      title: `🎁 ${targetChild.name} vừa đổi quà!`,
-      message: `Bé đã đổi ${reward.starsCost}⭐ lấy "${reward.title}". Hãy chuẩn bị quà cho bé nhé!`,
+      type: 'reward',
+      title: requiresApproval ? `🎁 ${targetChild.name} vừa gửi yêu cầu đổi quà!` : `🎁 ${targetChild.name} vừa đổi quà!`,
+      message: requiresApproval
+        ? `Bé đã đổi ${reward.starsCost}⭐ lấy "${reward.title}". Chờ bố mẹ phê duyệt trao quà!`
+        : `Bé đã đổi ${reward.starsCost}⭐ lấy "${reward.title}". Bố mẹ hãy chuẩn bị quà cho bé nhé!`,
       time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
       isRead: false,
       priority: 'medium',
+      metadata: { redemptionId: redemption.id, childId, rewardId: reward.id },
     };
 
     const updatedChildSettings = {
@@ -5082,7 +5661,7 @@ export const useAppState = () => {
     };
 
     saveAndNotify(nextState, childId);
-    eventBus.publish('REWARD_REDEEMED', { childId, reward, redemption, newStars: newStars }, 'child');
+    eventBus.publish('REWARD_REDEEMED', { childId, reward, redemption, newStars }, 'child');
     const parentId = getActiveParentId();
     if (parentId && childId) {
       syncChildStarsToCloud(parentId, childId, newStars, transaction, targetChild?.name).catch(() => {});
@@ -5091,29 +5670,152 @@ export const useAppState = () => {
         kidStars: newStars,
       }, targetChild?.name).catch(() => {});
     }
-    return { success: true, message: `Chúc mừng! Con đã đổi thành công "${reward.title}" (-${reward.starsCost}⭐)!` };
+
+    if (requiresApproval) {
+      return { success: true, pendingApproval: true, message: `Đã gửi yêu cầu đổi "${reward.title}" cho bố mẹ duyệt! (-${reward.starsCost}⭐)` };
+    }
+    return { success: true, pendingApproval: false, message: `🎉 Chúc mừng! Con đã đổi thành công "${reward.title}" (-${reward.starsCost}⭐)!` };
   };
 
   const approveRewardRedemption = (redemptionId: string) => {
+    const nowStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay';
     const updatedRedemptions = state.redemptions.map((r) =>
-      r.id === redemptionId ? { ...r, status: 'completed' as const } : r
+      r.id === redemptionId ? { ...r, status: 'completed' as const, resolvedAt: nowStr } : r
     );
     const updatedChildSettings = { ...state.childSettings };
     Object.keys(updatedChildSettings).forEach((cid) => {
       if (updatedChildSettings[cid].redemptions) {
         updatedChildSettings[cid].redemptions = updatedChildSettings[cid].redemptions?.map((r) =>
-          r.id === redemptionId ? { ...r, status: 'completed' as const } : r
+          r.id === redemptionId ? { ...r, status: 'completed' as const, resolvedAt: nowStr } : r
         );
       }
     });
+
+    const updatedAlerts = state.alerts.map((a) =>
+      a.metadata?.redemptionId === redemptionId ? { ...a, isRead: true } : a
+    );
 
     const nextState: AppState = {
       ...state,
       redemptions: updatedRedemptions,
       childSettings: updatedChildSettings,
+      alerts: updatedAlerts,
     };
     saveAndNotify(nextState);
     eventBus.publish('REWARD_APPROVED', { redemptionId }, 'parent');
+
+    const parentId = getActiveParentId();
+    const rd = state.redemptions.find((r) => r.id === redemptionId);
+    if (parentId && rd?.childId) {
+      syncChildSettingsToCloud(parentId, rd.childId, {
+        redemptions: updatedChildSettings[rd.childId]?.redemptions || [],
+      }).catch(() => {});
+    }
+  };
+
+  const rejectRewardRedemption = (redemptionId: string, reason?: string) => {
+    const rd = state.redemptions.find((r) => r.id === redemptionId);
+    if (!rd) return;
+
+    const childId = rd.childId;
+    const targetChild = state.children.find((c) => c.id === childId) || state.child;
+    const currentSettings = state.childSettings[childId] || createDefaultChildSettings(childId);
+    const nowStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) + ' Hôm nay';
+
+    const shouldRefund = rd.status === 'pending';
+    const newStars = shouldRefund ? (currentSettings.kidStars || 0) + rd.starsCost : (currentSettings.kidStars || 0);
+
+    let updatedHistory = currentSettings.starHistory || [];
+    let refundTx: StarTransaction | undefined;
+    if (shouldRefund) {
+      refundTx = {
+        id: 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        childId,
+        childName: targetChild.name,
+        type: 'gift',
+        stars: rd.starsCost,
+        title: `Hoàn sao đổi quà: ${rd.rewardTitle}`,
+        note: reason ? `Bố mẹ từ chối (${reason})` : 'Bố mẹ không duyệt yêu cầu đổi quà',
+        timestamp: nowStr,
+      };
+      updatedHistory = [refundTx, ...updatedHistory];
+    }
+
+    const updatedRedemptions = state.redemptions.map((r) =>
+      r.id === redemptionId ? { ...r, status: 'rejected' as const, rejectionReason: reason || 'Chưa được bố mẹ duyệt', resolvedAt: nowStr } : r
+    );
+
+    const updatedChildSettings = { ...state.childSettings };
+    if (updatedChildSettings[childId]) {
+      updatedChildSettings[childId] = {
+        ...updatedChildSettings[childId],
+        kidStars: newStars,
+        starHistory: updatedHistory,
+        redemptions: updatedChildSettings[childId].redemptions?.map((r) =>
+          r.id === redemptionId ? { ...r, status: 'rejected' as const, rejectionReason: reason || 'Chưa được bố mẹ duyệt', resolvedAt: nowStr } : r
+        ),
+      };
+    }
+
+    const updatedAlerts = state.alerts.map((a) =>
+      a.metadata?.redemptionId === redemptionId ? { ...a, isRead: true } : a
+    );
+
+    const isCur = state.selectedChildId === childId;
+    const nextState: AppState = {
+      ...state,
+      redemptions: updatedRedemptions,
+      childSettings: updatedChildSettings,
+      alerts: updatedAlerts,
+      ...(shouldRefund && refundTx ? { starHistory: [refundTx, ...state.starHistory] } : {}),
+      ...(isCur && shouldRefund ? { kidStars: newStars } : {}),
+    };
+
+    saveAndNotify(nextState, childId);
+    eventBus.publish('REWARD_REJECTED', { redemptionId, childId, refundedStars: rd.starsCost }, 'parent');
+
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      if (shouldRefund && refundTx) {
+        syncChildStarsToCloud(parentId, childId, newStars, refundTx, targetChild?.name).catch(() => {});
+      }
+      syncChildSettingsToCloud(parentId, childId, {
+        redemptions: updatedChildSettings[childId]?.redemptions || [],
+        kidStars: newStars,
+      }, targetChild?.name).catch(() => {});
+    }
+  };
+
+  const toggleRewardRequiresApproval = (rewardId: string, requiresApproval: boolean) => {
+    const updatedCatalog = state.rewardsCatalog.map((r) =>
+      r.id === rewardId ? { ...r, requiresApproval } : r
+    );
+    saveAndNotify({ ...state, rewardsCatalog: updatedCatalog });
+    eventBus.publish('REWARD_CATALOG_UPDATED', updatedCatalog, 'parent');
+  };
+
+  const setAutoApproveSettings = (childId: string, settings: { autoApproveAllTasks?: boolean; autoApproveAllRewards?: boolean }) => {
+    const currentSettings = state.childSettings[childId] || createDefaultChildSettings(childId);
+    const updatedChildSettings = {
+      ...state.childSettings,
+      [childId]: {
+        ...currentSettings,
+        ...(settings.autoApproveAllTasks !== undefined ? { autoApproveAllTasks: settings.autoApproveAllTasks } : {}),
+        ...(settings.autoApproveAllRewards !== undefined ? { autoApproveAllRewards: settings.autoApproveAllRewards } : {}),
+      },
+    };
+    const nextState: AppState = {
+      ...state,
+      childSettings: updatedChildSettings,
+    };
+    saveAndNotify(nextState, childId);
+    const parentId = getActiveParentId();
+    if (parentId && childId) {
+      syncChildSettingsToCloud(parentId, childId, {
+        autoApproveAllTasks: settings.autoApproveAllTasks,
+        autoApproveAllRewards: settings.autoApproveAllRewards,
+      }).catch(() => {});
+    }
   };
 
   const addRewardItem = (item: Omit<RewardItem, 'id'>) => {
@@ -5130,6 +5832,7 @@ export const useAppState = () => {
       isCustom: true,
       targetChildId,
       targetChildName,
+      requiresApproval: item.requiresApproval !== undefined ? item.requiresApproval : true,
     };
     const updatedCatalog = [newItem, ...state.rewardsCatalog];
     saveAndNotify({ ...state, rewardsCatalog: updatedCatalog });
@@ -5633,11 +6336,18 @@ export const useAppState = () => {
     deleteKidTask,
     redeemRewardOnKid,
     approveRewardRedemption,
+    rejectRewardRedemption,
+    approveTaskCompleted,
+    rejectTaskCompleted,
+    toggleTaskRequiresApproval,
+    toggleRewardRequiresApproval,
+    setAutoApproveSettings,
     addRewardItem,
     updateRewardItem,
     deleteRewardItem,
     setCustomScreenTimeLimit,
     incrementScreenTimeUsed,
+    setScreenTimeUsed,
     setSensorThresholds,
     setSmartRoutineTimeRange,
     setHardwareControls,

@@ -16,9 +16,13 @@ import {
   Megaphone,
   Users,
   ShieldCheck,
+  Shield,
   Star,
   Gift,
   CheckCircle2,
+  XCircle,
+  AlertCircle,
+  RotateCcw,
   Camera,
   Award,
   ListTodo,
@@ -34,7 +38,9 @@ import {
   Monitor,
   Laptop,
   RefreshCw,
-  Loader2
+  Loader2,
+  Zap,
+  Settings
 } from 'lucide-react';
 import { PairChildDeviceModal } from './PairChildDeviceModal';
 import { CloudSettingsModal } from './CloudSettingsModal';
@@ -79,7 +85,14 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
     updateChildAvatar,
     giftStarsToChild,
     assignTaskToChild,
+    approveTaskCompleted,
+    rejectTaskCompleted,
+    toggleTaskRequiresApproval,
+    deleteKidTask,
     approveRewardRedemption,
+    rejectRewardRedemption,
+    toggleRewardRequiresApproval,
+    setAutoApproveSettings,
     addRewardItem,
     updateRewardItem,
     deleteRewardItem,
@@ -128,9 +141,11 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   const [taskSubject, setTaskSubject] = useState<string>('Học tập');
   const [taskStars, setTaskStars] = useState<number>(5);
   const [taskDueDate, setTaskDueDate] = useState<string>('Hôm nay');
+  const [taskRequiresApproval, setTaskRequiresApproval] = useState<boolean>(true);
+  const [taskModalTab, setTaskModalTab] = useState<'pending' | 'assign' | 'list'>('assign');
 
   // Rewards modal tab & custom reward creation
-  const [rewardsTab, setRewardsTab] = useState<'catalog' | 'redemptions' | 'history'>('catalog');
+  const [rewardsTab, setRewardsTab] = useState<'catalog' | 'redemptions' | 'history' | 'settings'>('catalog');
   const [catalogScopeFilter, setCatalogScopeFilter] = useState<string>('all_both'); // 'all_both', 'all_shared', or childId
   const [showAddRewardModal, setShowAddRewardModal] = useState(false);
   const [newRewardTitle, setNewRewardTitle] = useState('');
@@ -138,6 +153,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   const [newRewardIcon, setNewRewardIcon] = useState('🎁');
   const [newRewardScope, setNewRewardScope] = useState<string>('all'); // 'all' or childId
   const [newRewardDesc, setNewRewardDesc] = useState('');
+  const [newRewardRequiresApproval, setNewRewardRequiresApproval] = useState<boolean>(true);
 
   // Family Broadcast quick modal state
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
@@ -250,6 +266,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
       subject: taskSubject,
       stars: taskStars,
       dueDate: taskDueDate,
+      requiresApproval: taskRequiresApproval,
     });
     setTaskTitle('');
     setShowTaskModal(false);
@@ -278,6 +295,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
       targetChildId: newRewardScope,
       targetChildName,
       isCustom: true,
+      requiresApproval: newRewardRequiresApproval,
     });
 
     showToast(`Đã thêm quà "${newRewardTitle.trim()}" (${newRewardStars}⭐) vào ${newRewardScope === 'all' ? 'Kho chung' : `Kho của ${targetChildName}`}! 🎉`);
@@ -296,6 +314,11 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
   const usedMins = activeChildSettings?.screenTime?.todayTotalMinutes ?? state.screenTime.todayTotalMinutes ?? 0;
   const limitMins = activeChildSettings?.screenTimeLimitMinutes ?? 120;
   const progressPercent = limitMins > 0 ? Math.min(100, Math.round((usedMins / limitMins) * 100)) : 0;
+
+  const activeChildTasks = (activeChildSettings?.kidTasks || state.kidTasks || [])
+    .filter((t) => !t.childId || t.childId === activeChild?.id);
+  const activeChildPendingTasks = activeChildTasks.filter((t) => t.status === 'pending_approval');
+  const pendingRedemptionsCount = (state.redemptions || []).filter((r) => r.status === 'pending').length;
 
   // Determine prev and next child indices for circular wheel
   const prevIndex = totalChildren > 0 ? (((activeIndex - 1) % totalChildren) + totalChildren) % totalChildren : 0;
@@ -708,7 +731,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
           })()}
         </div>
 
-        {/* 4. Kids360 Signature Circular Radial Gauge & 4 Quick Action Modes */}
+        {/* 3. Kids360 Signature Circular Radial Gauge & HW Vitals (Hợp nhất) */}
         {activeChild && (() => {
           const isActiveChildLocked = Boolean(
             activeChild.isLocked ||
@@ -727,6 +750,8 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                 isStudyMode={studyModeOnly}
                 battery={activeChild.battery}
                 onNavigate={onNavigate}
+                child={activeChild}
+                childSettings={activeChildSettings}
               />
             </div>
           );
@@ -799,19 +824,33 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                if (activeChildPendingTasks.length > 0) {
+                  setTaskModalTab('pending');
+                } else {
+                  setTaskModalTab('assign');
+                }
                 setShowTaskModal(true);
               }}
-              className="flex items-center justify-center space-x-1 py-2 px-1 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-800 rounded-xl border border-blue-200 font-bold text-[10.5px] shadow-2xs transition active:scale-95 cursor-pointer"
-              title="Giao việc nhận sao cho con"
+              className="flex items-center justify-center space-x-1 py-2 px-1 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 text-blue-800 rounded-xl border border-blue-200 font-bold text-[10.5px] shadow-2xs transition active:scale-95 cursor-pointer relative"
+              title="Giao việc & Duyệt hoàn thành cho con"
             >
               <CheckCircle2 size={12} className="text-blue-600" />
               <span>Giao việc</span>
+              {activeChildPendingTasks.length > 0 && (
+                <span className="w-3.5 h-3.5 bg-amber-500 text-white rounded-full text-[8px] font-black flex items-center justify-center animate-pulse">
+                  {activeChildPendingTasks.length}
+                </span>
+              )}
             </button>
 
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setRewardsTab('catalog');
+                if (pendingRedemptionsCount > 0) {
+                  setRewardsTab('redemptions');
+                } else {
+                  setRewardsTab('catalog');
+                }
                 setShowRewardsModal(true);
               }}
               className="flex items-center justify-center space-x-1 py-2 px-1 bg-gradient-to-r from-pink-50 to-rose-50 hover:from-pink-100 hover:to-rose-100 text-pink-800 rounded-xl border border-pink-200 font-bold text-[10.5px] shadow-2xs transition active:scale-95 cursor-pointer relative"
@@ -819,9 +858,9 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             >
               <Gift size={12} className="text-pink-600" />
               <span>Kho quà</span>
-              {(state.redemptions?.filter((r) => r.status === 'pending').length || 0) > 0 && (
+              {pendingRedemptionsCount > 0 && (
                 <span className="w-3.5 h-3.5 bg-rose-500 text-white rounded-full text-[8px] font-black flex items-center justify-center animate-pulse">
-                  {state.redemptions.filter((r) => r.status === 'pending').length}
+                  {pendingRedemptionsCount}
                 </span>
               )}
             </button>
@@ -1115,121 +1154,337 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
         </div>
       )}
 
-      {/* MODAL 3: Giao Nhiệm Vụ Nhận Sao Cho Bé */}
+      {/* MODAL 3: Giao Nhiệm Vụ & Phê Duyệt Hoàn Thành Cho Bé */}
       {showTaskModal && activeChild && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-5 space-y-3.5 shadow-2xl border border-slate-100 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
                   <ListTodo size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Giao việc cho {activeChild.name}</h3>
-                  <p className="text-[10px] text-slate-500 font-medium">Bé hoàn thành sẽ nhận được sao thưởng</p>
+                  <h3 className="text-sm font-bold text-slate-900">Nhiệm Vụ Của {activeChild.name}</h3>
+                  <p className="text-[10px] text-slate-500 font-medium">Giao việc, rèn luyện & duyệt sao khi hoàn thành</p>
                 </div>
               </div>
               <button
                 onClick={() => setShowTaskModal(false)}
-                className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center"
+                className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center cursor-pointer"
               >
                 <X size={15} />
               </button>
             </div>
 
-            <form onSubmit={handleAssignTask} className="space-y-3">
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                  Tên nhiệm vụ <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="VD: Làm bài tập Toán trang 45..."
-                  value={taskTitle}
-                  onChange={(e) => setTaskTitle(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                />
-              </div>
+            {/* Sub-tabs */}
+            <div className="bg-slate-100 p-1 rounded-xl flex text-xs font-bold shrink-0">
+              <button
+                type="button"
+                onClick={() => setTaskModalTab('pending')}
+                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                  taskModalTab === 'pending' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                <span>Chờ duyệt</span>
+                {activeChildPendingTasks.length > 0 && (
+                  <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[9px] font-black">
+                    {activeChildPendingTasks.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTaskModalTab('assign')}
+                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer ${
+                  taskModalTab === 'assign' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                Giao việc mới
+              </button>
+              <button
+                type="button"
+                onClick={() => setTaskModalTab('list')}
+                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer ${
+                  taskModalTab === 'list' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                Danh sách ({activeChildTasks.length})
+              </button>
+            </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Môn / Danh mục:</label>
-                  <select
-                    value={taskSubject}
-                    onChange={(e) => setTaskSubject(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  >
-                    <option value="Học tập">Học tập chung</option>
-                    <option value="Toán học">Toán học</option>
-                    <option value="Tiếng Anh">Tiếng Anh</option>
-                    <option value="Tiếng Việt">Tiếng Việt</option>
-                    <option value="Việc nhà">Việc nhà</option>
-                    <option value="Kỹ năng sống">Kỹ năng sống</option>
-                    <option value="Thể chất">Thể chất / Thể dục</option>
-                  </select>
+            <div className="space-y-3 overflow-y-auto pr-1 flex-1">
+              {/* TAB 1: Danh sách chờ phê duyệt */}
+              {taskModalTab === 'pending' && (
+                <div className="space-y-2.5">
+                  {activeChildPendingTasks.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs space-y-2">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+                        <CheckCircle2 size={24} />
+                      </div>
+                      <p className="font-bold text-slate-700">Không có nhiệm vụ nào chờ duyệt</p>
+                      <p className="text-[11px] text-slate-400 max-w-[240px] mx-auto leading-relaxed">
+                        Khi bé {activeChild.name} hoàn thành bài tập hoặc việc nhà và bấm gửi, danh sách sẽ hiện ở đây để ba mẹ duyệt cộng sao.
+                      </p>
+                    </div>
+                  ) : (
+                    activeChildPendingTasks.map((t) => (
+                      <div key={t.id} className="p-3 bg-amber-50/70 border border-amber-200/90 rounded-2xl space-y-2.5 animate-fadeIn">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-1.5 py-0.5 bg-amber-200/80 text-amber-900 text-[9px] font-black rounded-md flex items-center gap-0.5">
+                                <Clock size={10} />
+                                <span>Chờ duyệt</span>
+                              </span>
+                              <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[9px] font-bold rounded-md">
+                                {t.subject}
+                              </span>
+                            </div>
+                            <h4 className="text-xs font-bold text-slate-900 mt-1">{t.title}</h4>
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              Hạn: {t.dueDate || 'Hôm nay'} {t.submittedAt ? `• Nộp lúc: ${t.submittedAt}` : ''}
+                            </p>
+                          </div>
+                          <span className="px-2 py-1 bg-amber-100 text-amber-900 font-black text-xs rounded-xl border border-amber-300 shrink-0">
+                            +{t.stars} ⭐
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-1 border-t border-amber-200/60">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              rejectTaskCompleted(t.id, activeChild.id, 'Chưa đạt yêu cầu, con làm lại nhé!');
+                              showToast(`Đã yêu cầu bé ${activeChild.name} làm lại nhiệm vụ! ✍️`);
+                            }}
+                            className="flex-1 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <XCircle size={13} />
+                            <span>Làm lại</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              approveTaskCompleted(t.id, activeChild.id);
+                              showToast(`Đã duyệt & cộng +${t.stars}⭐ cho bé ${activeChild.name}! 🎉`);
+                            }}
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <CheckCircle2 size={13} />
+                            <span>Duyệt & +{t.stars}⭐</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
+              )}
 
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Sao thưởng:</label>
-                  <div className="flex space-x-1.5">
-                    {[3, 5, 10].map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setTaskStars(s)}
-                        className={`flex-1 py-1.5 rounded-xl text-xs font-black transition border flex items-center justify-center gap-0.5 cursor-pointer ${
-                          taskStars === s
-                            ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
-                            : 'bg-slate-50 hover:bg-blue-50 text-slate-700 border-slate-200'
-                        }`}
-                      >
-                        <span>+{s}</span>
-                        <Star size={10} className={taskStars === s ? 'fill-white text-white' : 'fill-amber-500 text-amber-500'} />
-                      </button>
-                    ))}
+              {/* TAB 2: Giao việc mới */}
+              {taskModalTab === 'assign' && (
+                <form onSubmit={handleAssignTask} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Tên nhiệm vụ <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="VD: Làm bài tập Toán trang 45, Dọn phòng..."
+                      value={taskTitle}
+                      onChange={(e) => setTaskTitle(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
                   </div>
-                </div>
-              </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 block mb-1">Thời hạn hoàn thành:</label>
-                <div className="flex space-x-1.5">
-                  {['Hôm nay', '17:00', '20:00', 'Ngày mai'].map((due) => (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Môn / Danh mục:</label>
+                      <select
+                        value={taskSubject}
+                        onChange={(e) => setTaskSubject(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                      >
+                        <option value="Học tập">Học tập chung</option>
+                        <option value="Toán học">Toán học</option>
+                        <option value="Tiếng Anh">Tiếng Anh</option>
+                        <option value="Tiếng Việt">Tiếng Việt</option>
+                        <option value="Việc nhà">Việc nhà</option>
+                        <option value="Kỹ năng sống">Kỹ năng sống</option>
+                        <option value="Thể chất">Thể chất / Thể dục</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Sao thưởng:</label>
+                      <div className="flex space-x-1.5">
+                        {[3, 5, 10].map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => setTaskStars(s)}
+                            className={`flex-1 py-1.5 rounded-xl text-xs font-black transition border flex items-center justify-center gap-0.5 cursor-pointer ${
+                              taskStars === s
+                                ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                                : 'bg-slate-50 hover:bg-blue-50 text-slate-700 border-slate-200'
+                            }`}
+                          >
+                            <span>+{s}</span>
+                            <Star size={10} className={taskStars === s ? 'fill-white text-white' : 'fill-amber-500 text-amber-500'} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Thời hạn hoàn thành:</label>
+                    <div className="flex space-x-1.5">
+                      {['Hôm nay', '17:00', '20:00', 'Ngày mai'].map((due) => (
+                        <button
+                          key={due}
+                          type="button"
+                          onClick={() => setTaskDueDate(due)}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition border cursor-pointer ${
+                            taskDueDate === due
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {due}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Toggle: Yêu cầu cha mẹ xác nhận */}
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-2">
+                    <div className="min-w-0 pr-1">
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                        <Shield size={13} className="text-blue-600 shrink-0" />
+                        <span>Yêu cầu cha mẹ duyệt để nhận sao</span>
+                      </span>
+                      <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">
+                        {taskRequiresApproval
+                          ? 'Khi con bấm hoàn thành, việc chuyển sang chờ cha mẹ kiểm tra duyệt mới cộng sao.'
+                          : '⚡ Con bấm hoàn thành là tự động nhận sao ngay không cần duyệt.'}
+                      </p>
+                    </div>
                     <button
-                      key={due}
                       type="button"
-                      onClick={() => setTaskDueDate(due)}
-                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition border cursor-pointer ${
-                        taskDueDate === due
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                      onClick={() => setTaskRequiresApproval(!taskRequiresApproval)}
+                      className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                        taskRequiresApproval ? 'bg-blue-600' : 'bg-slate-300'
                       }`}
                     >
-                      {due}
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                          taskRequiresApproval ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
                     </button>
-                  ))}
-                </div>
-              </div>
+                  </div>
 
-              <div className="pt-2 flex space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowTaskModal(false)}
-                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAssignTask()}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center space-x-1 cursor-pointer"
-                >
-                  <CheckCircle2 size={14} />
-                  <span>Giao việc ngay</span>
-                </button>
-              </div>
-            </form>
+                  <div className="pt-1 flex space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTaskModal(false)}
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAssignTask()}
+                      className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center space-x-1 cursor-pointer"
+                    >
+                      <CheckCircle2 size={14} />
+                      <span>Giao việc ngay</span>
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 3: Toàn bộ danh sách nhiệm vụ */}
+              {taskModalTab === 'list' && (
+                <div className="space-y-2">
+                  {activeChildTasks.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      <p>Chưa có nhiệm vụ nào được giao cho {activeChild.name}.</p>
+                    </div>
+                  ) : (
+                    activeChildTasks.map((t) => (
+                      <div key={t.id} className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-2 hover:border-blue-200 transition">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-slate-900 truncate">{t.title}</span>
+                            {t.status === 'completed' || t.completed ? (
+                              <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[8.5px] font-bold rounded-md">
+                                Đã xong ✅
+                              </span>
+                            ) : t.status === 'pending_approval' ? (
+                              <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[8.5px] font-bold rounded-md">
+                                Chờ duyệt ⏳
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 bg-blue-50 text-blue-700 text-[8.5px] font-bold rounded-md">
+                                Đang làm 🚀
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-medium block mt-0.5">
+                            {t.subject} • Hạn: {t.dueDate || 'Hôm nay'} • +{t.stars} ⭐
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* Toggle per-task approval */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextReq = t.requiresApproval === false ? true : false;
+                              toggleTaskRequiresApproval(t.id, nextReq, activeChild.id);
+                              showToast(nextReq ? `Nhiệm vụ "${t.title}" giờ sẽ cần cha mẹ duyệt!` : `Nhiệm vụ "${t.title}" giờ sẽ tự động nhận sao ngay! ⚡`);
+                            }}
+                            className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold border transition flex items-center gap-0.5 cursor-pointer ${
+                              t.requiresApproval !== false
+                                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                            }`}
+                            title="Bấm để bật/tắt yêu cầu duyệt cho nhiệm vụ này"
+                          >
+                            {t.requiresApproval !== false ? (
+                              <>
+                                <Shield size={9} className="text-amber-600" />
+                                <span>Cần duyệt</span>
+                              </>
+                            ) : (
+                              <>
+                                <Zap size={9} className="text-emerald-600" />
+                                <span>Tự động</span>
+                              </>
+                            )}
+                          </button>
+
+                          {/* Delete task */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              deleteKidTask(t.id, activeChild.id);
+                              showToast(`Đã xóa nhiệm vụ "${t.title}"!`);
+                            }}
+                            className="w-7 h-7 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 flex items-center justify-center transition cursor-pointer"
+                            title="Xóa nhiệm vụ này"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1259,14 +1514,21 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
             {/* Sub-tabs */}
             <div className="bg-slate-100 p-1 rounded-xl flex text-xs font-bold shrink-0">
               <button
+                type="button"
                 onClick={() => setRewardsTab('redemptions')}
-                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer ${
+                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
                   rewardsTab === 'redemptions' ? 'bg-white text-pink-600 shadow-xs' : 'text-slate-600'
                 }`}
               >
-                Yêu cầu đổi ({state.redemptions?.length || 0})
+                <span>Yêu cầu đổi</span>
+                {(state.redemptions?.filter((r) => r.status === 'pending').length || 0) > 0 && (
+                  <span className="px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[9px] font-black">
+                    {state.redemptions.filter((r) => r.status === 'pending').length}
+                  </span>
+                )}
               </button>
               <button
+                type="button"
                 onClick={() => setRewardsTab('catalog')}
                 className={`flex-1 py-1.5 rounded-lg transition cursor-pointer ${
                   rewardsTab === 'catalog' ? 'bg-white text-pink-600 shadow-xs' : 'text-slate-600'
@@ -1275,16 +1537,28 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                 Kho quà ({state.rewardsCatalog?.length || 0})
               </button>
               <button
+                type="button"
                 onClick={() => setRewardsTab('history')}
                 className={`flex-1 py-1.5 rounded-lg transition cursor-pointer ${
                   rewardsTab === 'history' ? 'bg-white text-pink-600 shadow-xs' : 'text-slate-600'
                 }`}
               >
-                Lịch sử sao
+                Lịch sử
+              </button>
+              <button
+                type="button"
+                onClick={() => setRewardsTab('settings')}
+                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-0.5 ${
+                  rewardsTab === 'settings' ? 'bg-white text-pink-600 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                <Settings size={11} />
+                <span>Cài đặt</span>
               </button>
             </div>
 
             <div className="space-y-2.5 overflow-y-auto pr-1 flex-1">
+              {/* TAB 1: Yêu cầu đổi quà từ con */}
               {rewardsTab === 'redemptions' && (
                 <div className="space-y-2">
                   {(!state.redemptions || state.redemptions.length === 0) ? (
@@ -1293,9 +1567,9 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                     </div>
                   ) : (
                     state.redemptions.map((rd, idx) => (
-                      <div key={`${rd.id}-${idx}`} className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
-                        <div className="flex items-center space-x-2.5 min-w-0 pr-2">
-                          <span className="text-2xl">{rd.icon}</span>
+                      <div key={`${rd.id}-${idx}`} className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-2">
+                        <div className="flex items-center space-x-2.5 min-w-0 pr-1 flex-1">
+                          <span className="text-2xl shrink-0">{rd.icon}</span>
                           <div className="min-w-0">
                             <h4 className="text-xs font-bold text-slate-900 truncate">{rd.rewardTitle}</h4>
                             <span className="text-[10px] text-slate-500 font-medium block">
@@ -1303,20 +1577,41 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                             </span>
                           </div>
                         </div>
+
                         {rd.status === 'completed' ? (
                           <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-lg shrink-0">
                             Đã trao ✅
                           </span>
+                        ) : rd.status === 'rejected' ? (
+                          <span className="px-2.5 py-1 bg-rose-100 text-rose-800 text-[10px] font-bold rounded-lg shrink-0">
+                            Đã hoàn sao ↩️
+                          </span>
                         ) : (
-                          <button
-                            onClick={() => {
-                              approveRewardRedemption(rd.id);
-                              showToast(`Đã xác nhận trao quà "${rd.rewardTitle}" cho ${rd.childName}! 🎉`);
-                            }}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded-lg shadow-xs shrink-0 transition cursor-pointer"
-                          >
-                            Duyệt trao quà
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                rejectRewardRedemption(rd.id, 'Cha mẹ từ chối yêu cầu đổi quà');
+                                showToast(`Đã từ chối & hoàn lại +${rd.starsCost}⭐ cho ${rd.childName}! ↩️`);
+                              }}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold rounded-lg transition cursor-pointer flex items-center gap-0.5"
+                              title="Từ chối và hoàn lại số sao cho con"
+                            >
+                              <RotateCcw size={10} />
+                              <span>Hoàn sao</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                approveRewardRedemption(rd.id);
+                                showToast(`Đã xác nhận trao quà "${rd.rewardTitle}" cho ${rd.childName}! 🎉`);
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded-lg shadow-xs transition cursor-pointer flex items-center gap-0.5"
+                            >
+                              <CheckCircle2 size={10} />
+                              <span>Duyệt trao</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))
@@ -1324,6 +1619,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                 </div>
               )}
 
+              {/* TAB 2: Kho quà */}
               {rewardsTab === 'catalog' && (
                 <div className="space-y-3">
                   {/* Scope filter pills & Add button */}
@@ -1462,7 +1758,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                           </div>
                         </div>
 
-                        {/* Đối tượng áp dụng: Kho chung hay riêng bé */}
+                        {/* Đối tượng áp dụng */}
                         <div>
                           <label className="text-[10.5px] font-bold text-slate-700 block mb-0.5">Kho áp dụng:</label>
                           <select
@@ -1477,6 +1773,34 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                               </option>
                             ))}
                           </select>
+                        </div>
+
+                        {/* Toggle: Yêu cầu cha mẹ xác nhận */}
+                        <div className="p-2 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                          <div className="min-w-0 pr-1">
+                            <span className="text-[10.5px] font-bold text-slate-800 flex items-center gap-1">
+                              <Shield size={12} className="text-pink-600 shrink-0" />
+                              <span>Cần cha mẹ duyệt trao quà</span>
+                            </span>
+                            <p className="text-[9.5px] text-slate-500 mt-0.5 leading-snug">
+                              {newRewardRequiresApproval
+                                ? 'Con đổi sẽ gửi yêu cầu chờ ba mẹ duyệt.'
+                                : '⚡ Con đổi là hoàn tất ngay không cần duyệt.'}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setNewRewardRequiresApproval(!newRewardRequiresApproval)}
+                            className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                              newRewardRequiresApproval ? 'bg-pink-600' : 'bg-slate-300'
+                            }`}
+                          >
+                            <span
+                              className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                                newRewardRequiresApproval ? 'translate-x-4' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
                         </div>
 
                         {/* Mô tả */}
@@ -1524,8 +1848,8 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                       .map((rew) => {
                         const isShared = !rew.targetChildId || rew.targetChildId === 'all';
                         return (
-                          <div key={rew.id} className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:border-pink-200 transition">
-                            <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                          <div key={rew.id} className="p-2.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:border-pink-200 transition gap-2">
+                            <div className="flex items-center space-x-2.5 min-w-0 pr-1 flex-1">
                               <span className="text-2xl shrink-0">{rew.icon}</span>
                               <div className="min-w-0">
                                 <div className="flex items-center space-x-1.5 flex-wrap gap-y-0.5">
@@ -1545,10 +1869,40 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                                 <p className="text-[10px] text-slate-500 truncate mt-0.5">{rew.description}</p>
                               </div>
                             </div>
+
                             <div className="flex items-center space-x-1.5 shrink-0">
-                              <span className="px-2.5 py-1 bg-amber-100 text-amber-900 font-black text-xs rounded-xl border border-amber-200">
+                              {/* Toggle per-reward approval */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextReq = rew.requiresApproval === false ? true : false;
+                                  toggleRewardRequiresApproval(rew.id, nextReq);
+                                  showToast(nextReq ? `Món quà "${rew.title}" giờ sẽ cần cha mẹ duyệt!` : `Món quà "${rew.title}" giờ có thể đổi ngay không cần duyệt! ⚡`);
+                                }}
+                                className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold border transition flex items-center gap-0.5 cursor-pointer ${
+                                  rew.requiresApproval !== false
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                                }`}
+                                title="Bấm để chuyển đổi giữa Cần cha mẹ duyệt / Đổi ngay"
+                              >
+                                {rew.requiresApproval !== false ? (
+                                  <>
+                                    <Shield size={9} className="text-amber-600" />
+                                    <span>Cần duyệt</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Zap size={9} className="text-emerald-600" />
+                                    <span>Đổi ngay</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-900 font-black text-xs rounded-xl border border-amber-200">
                                 {rew.starsCost} ⭐
                               </span>
+
                               {rew.isCustom && (
                                 <button
                                   type="button"
@@ -1570,6 +1924,7 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                 </div>
               )}
 
+              {/* TAB 3: Lịch sử sao */}
               {rewardsTab === 'history' && (
                 <div className="space-y-2">
                   {(!state.starHistory || state.starHistory.length === 0) ? (
@@ -1589,6 +1944,92 @@ export const UnifiedChildHub: React.FC<UnifiedChildHubProps> = ({ onNavigate }) 
                       </div>
                     ))
                   )}
+                </div>
+              )}
+
+              {/* TAB 4: Cài đặt phê duyệt */}
+              {rewardsTab === 'settings' && activeChild && (
+                <div className="space-y-3 p-1">
+                  <div className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl">
+                    <h4 className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                      <Settings size={14} className="text-blue-600" />
+                      <span>Cài đặt phê duyệt cho {activeChild.name}</span>
+                    </h4>
+                    <p className="text-[10.5px] text-blue-700 mt-1 leading-relaxed">
+                      Thiết lập các quyền tự động để tiết kiệm thời gian hoặc yêu cầu xác nhận để kiểm soát chặt chẽ.
+                    </p>
+                  </div>
+
+                  {/* Setting 1: Auto approve tasks */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <ListTodo size={15} className="text-blue-600 shrink-0" />
+                        <h5 className="text-xs font-bold text-slate-900">Tự động duyệt mọi nhiệm vụ</h5>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 leading-normal">
+                        {activeChildSettings?.autoApproveAllTasks
+                          ? '🟢 Đang bật: Khi con báo hoàn thành bài tập, hệ thống tự động cộng sao ngay không cần ba mẹ duyệt.'
+                          : '⚪ Đang tắt (Khuyên dùng): Khi con hoàn thành, hệ thống yêu cầu ba mẹ xác nhận rồi mới cộng sao.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = !activeChildSettings?.autoApproveAllTasks;
+                        setAutoApproveSettings(activeChild.id, { autoApproveAllTasks: nextVal });
+                        showToast(nextVal ? 'Đã bật tự động duyệt tất cả nhiệm vụ ⚡' : 'Đã bật chế độ yêu cầu duyệt nhiệm vụ 🛡️');
+                      }}
+                      className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                        activeChildSettings?.autoApproveAllTasks ? 'bg-emerald-500' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                          activeChildSettings?.autoApproveAllTasks ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Setting 2: Auto approve rewards */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <Gift size={15} className="text-pink-600 shrink-0" />
+                        <h5 className="text-xs font-bold text-slate-900">Tự động duyệt mọi đổi quà</h5>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 leading-normal">
+                        {activeChildSettings?.autoApproveAllRewards
+                          ? '🟢 Đang bật: Khi con đổi quà, hệ thống trao quà ngay không cần ba mẹ duyệt.'
+                          : '⚪ Đang tắt (Khuyên dùng): Khi con đổi quà, hệ thống gửi yêu cầu để ba mẹ duyệt trao quà hoặc hoàn sao.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = !activeChildSettings?.autoApproveAllRewards;
+                        setAutoApproveSettings(activeChild.id, { autoApproveAllRewards: nextVal });
+                        showToast(nextVal ? 'Đã bật tự động duyệt tất cả đổi quà ⚡' : 'Đã bật chế độ yêu cầu duyệt đổi quà 🛡️');
+                      }}
+                      className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                        activeChildSettings?.autoApproveAllRewards ? 'bg-emerald-500' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                          activeChildSettings?.autoApproveAllRewards ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-2xl text-[10px] text-amber-900 leading-relaxed flex items-start gap-2">
+                    <Shield size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Gợi ý:</strong> Bạn cũng có thể cài đặt riêng từng nhiệm vụ hoặc từng món quà cụ thể tại các tab <strong>Nhiệm vụ</strong> và <strong>Kho quà</strong> bằng cách bấm vào nhãn <strong>[🛡️ Cần duyệt / ⚡ Đổi ngay]</strong>.
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

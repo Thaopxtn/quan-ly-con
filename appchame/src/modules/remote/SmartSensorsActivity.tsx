@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { SmartRoutines } from '@shared/types';
-import { ChildSwitcherBar } from '../../components/ChildSwitcherBar';
 
 interface SmartSensorsActivityProps {
   onBack: () => void;
@@ -69,10 +68,7 @@ export const SmartSensorsActivity: React.FC<SmartSensorsActivityProps> = ({ onBa
           {toastMsg}
         </div>
       )}
-
       <div className="p-4 space-y-4">
-        {/* Multi-Child Selector */}
-        <ChildSwitcherBar />
 
         {/* Section 1: Routine Automation Schedules */}
         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-3">

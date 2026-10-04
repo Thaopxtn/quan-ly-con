@@ -149,7 +149,9 @@ export interface KidPermissionsPluginInterface {
   startSensorStream(): Promise<{ success: boolean; streaming: boolean }>;
   stopSensorStream(): Promise<{ success: boolean; streaming: boolean }>;
   getMediaStatus(): Promise<NativeMediaStatusResult>;
+  getRecentNotifications(): Promise<{ notifications: any[] }>;
   requestAllAppPermissions(): Promise<{ requested: boolean }>;
+  makeEmergencyPhoneCall(options: { phoneNumber: string }): Promise<{ success: boolean; mode: 'call' | 'dial'; phoneNumber: string }>;
   addListener(
     eventName: 'screenStateChange',
     listenerFunc: (data: { isScreenOn: boolean; action?: string }) => void
@@ -746,5 +748,47 @@ export async function getNativeMediaStatus(): Promise<NativeMediaStatusResult> {
     isPlaying: false,
     volume: 50,
   };
+}
+
+/**
+ * Make emergency phone call natively or fallback to standard system dialer
+ */
+export async function makeNativeEmergencyPhoneCall(phoneNumber: string): Promise<boolean> {
+  const cleanNumber = (phoneNumber || '').replace(/[^0-9+]/g, '');
+  if (!cleanNumber) return false;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await KidPermissionsPlugin.makeEmergencyPhoneCall({ phoneNumber: cleanNumber });
+      if (res && res.success) {
+        return true;
+      }
+    } catch (e) {
+      console.warn('KidPermissionsPlugin.makeEmergencyPhoneCall error, fallback:', e);
+    }
+  }
+
+  // Fallback to web/system tel: protocol
+  try {
+    const telUri = `tel:${cleanNumber}`;
+    if (Capacitor.isNativePlatform()) {
+      window.open(telUri, '_system');
+      return true;
+    }
+    const a = document.createElement('a');
+    a.href = telUri;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try {
+        document.body.removeChild(a);
+      } catch (e) {}
+    }, 1000);
+    return true;
+  } catch (err) {
+    console.error('makeNativeEmergencyPhoneCall fallback error:', err);
+    return false;
+  }
 }
 

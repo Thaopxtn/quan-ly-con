@@ -12,6 +12,9 @@ import {
   X,
   Star,
   CheckCircle2,
+  XCircle,
+  Shield,
+  Zap,
   Calendar,
   Clock,
   FileCheck
@@ -24,7 +27,7 @@ interface LearningScreenProps {
 }
 
 export const LearningScreen: React.FC<LearningScreenProps> = ({ onBack }) => {
-  const { state, addKidTask } = useAppState();
+  const { state, addKidTask, approveTaskCompleted, rejectTaskCompleted } = useAppState();
   const { studySubjects, exercises, kidTasks, child, children, selectedChildId } = state;
   const currentChild = children?.find((c) => c.id === selectedChildId) || child;
 
@@ -39,6 +42,7 @@ export const LearningScreen: React.FC<LearningScreenProps> = ({ onBack }) => {
   const [taskSubject, setTaskSubject] = useState('Toán học');
   const [taskStars, setTaskStars] = useState(5);
   const [taskDueDate, setTaskDueDate] = useState('Hôm nay');
+  const [taskRequiresApproval, setTaskRequiresApproval] = useState(true);
 
   const getSubjectIcon = (name: string) => {
     if (name.includes('Toán')) return <Calculator size={18} className="text-blue-600" />;
@@ -84,6 +88,10 @@ export const LearningScreen: React.FC<LearningScreenProps> = ({ onBack }) => {
       stars: taskStars,
       completed: false,
       dueDate: taskDueDate,
+      requiresApproval: taskRequiresApproval,
+      status: 'todo',
+      childId: currentChild.id,
+      childName: currentChild.name,
     };
 
     if (addKidTask) {
@@ -213,6 +221,60 @@ export const LearningScreen: React.FC<LearningScreenProps> = ({ onBack }) => {
           ))}
         </div>
 
+        {/* Pending Approval Section in Learning Screen */}
+        {effectiveTasks.filter((t) => t.status === 'pending_approval').length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-amber-900 flex items-center gap-1">
+                <Clock size={13} className="text-amber-600" />
+                <span>Nhiệm vụ chờ duyệt ({effectiveTasks.filter((t) => t.status === 'pending_approval').length})</span>
+              </h3>
+            </div>
+            {effectiveTasks.filter((t) => t.status === 'pending_approval').map((t) => (
+              <div key={t.id} className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="px-1.5 py-0.5 bg-amber-200 text-amber-900 text-[9px] font-black rounded-md flex items-center gap-0.5">
+                        <Clock size={10} />
+                        <span>Chờ duyệt</span>
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[9px] font-bold rounded-md">
+                        {t.subject}
+                      </span>
+                    </div>
+                    <h4 className="text-xs font-bold text-slate-900 mt-1">{t.title}</h4>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Hạn: {t.dueDate || 'Hôm nay'} {t.submittedAt ? `• Nộp: ${t.submittedAt}` : ''}
+                    </p>
+                  </div>
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-900 font-black text-xs rounded-xl border border-amber-300 shrink-0">
+                    +{t.stars} ⭐
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 pt-1 border-t border-amber-200/60">
+                  <button
+                    type="button"
+                    onClick={() => rejectTaskCompleted(t.id, currentChild.id, 'Chưa đạt yêu cầu')}
+                    className="flex-1 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <XCircle size={13} />
+                    <span>Làm lại</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => approveTaskCompleted(t.id, currentChild.id)}
+                    className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <CheckCircle2 size={13} />
+                    <span>Duyệt & +{t.stars}⭐</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Recent Exercises List */}
         <div className="flex items-center justify-between pt-1">
           <h3 className="text-xs font-bold text-slate-800">Bài tập & Nhiệm vụ gần đây</h3>
@@ -339,6 +401,34 @@ export const LearningScreen: React.FC<LearningScreenProps> = ({ onBack }) => {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Toggle: Yêu cầu cha mẹ xác nhận */}
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                <div className="min-w-0 pr-1">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                    <Shield size={13} className="text-blue-600 shrink-0" />
+                    <span>Yêu cầu cha mẹ duyệt mới cộng sao</span>
+                  </span>
+                  <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">
+                    {taskRequiresApproval
+                      ? 'Con hoàn thành sẽ gửi yêu cầu chờ ba mẹ duyệt.'
+                      : '⚡ Con bấm hoàn thành là tự động nhận sao ngay.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTaskRequiresApproval(!taskRequiresApproval)}
+                  className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                    taskRequiresApproval ? 'bg-blue-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                      taskRequiresApproval ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
               </div>
             </div>
 

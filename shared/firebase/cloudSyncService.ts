@@ -87,6 +87,7 @@ export type RemoteCommandType =
   | "request_usage_permission"
   | "open_usage_settings"
   | "unpair_device"
+  | "update_profile"
   | "none";
 
 export interface RemoteCommandData {
@@ -107,6 +108,7 @@ export interface CommandAckData {
   executedAt?: number;
   childId: string;
   childName: string;
+  parentId?: string;
   deviceId?: string;
   deviceName?: string;
   detail?: string;
@@ -1194,6 +1196,8 @@ export async function sendRemoteCommandAck(
   const syncKey = getPartitionedSyncKey(parentId, childId);
   const ackData: CommandAckData = {
     ...ack,
+    childId: ack.childId || childId,
+    parentId: (ack as any).parentId || parentId,
     executedAt: ack.executedAt || now,
     receivedAt: ack.receivedAt || now,
   };
@@ -1368,8 +1372,10 @@ export function subscribeRemoteCommandsOnKid(
       return;
     }
 
-    // 3. TTL Freshness Check (TTL 300s / 5 mins): Discard any command older than 5 minutes
-    if (now - cmdTimestamp > 300000) {
+    // 3. TTL Freshness Check: 5 mins for transient commands (buzz/sync), 24 hours for unlock_now/unpair_device
+    const isCriticalCmd = data.command === 'unlock_now' || data.command === 'unpair_device';
+    const ttlMs = isCriticalCmd ? (24 * 60 * 60 * 1000) : 300000;
+    if (now - cmdTimestamp > ttlMs) {
       clearRemoteCommand(parentId, childId, childName).catch(() => {});
       return;
     }
@@ -1381,7 +1387,7 @@ export function subscribeRemoteCommandsOnKid(
     }
 
     // 5. Monotonic Sequence Check: Discard any command significantly older than the last executed command (10s clock-skew tolerance)
-    if (lastHandledCmdTimestamp > 0 && cmdTimestamp < (lastHandledCmdTimestamp - 10000)) {
+    if (!isCriticalCmd && lastHandledCmdTimestamp > 0 && cmdTimestamp < (lastHandledCmdTimestamp - 10000)) {
       return;
     }
 
@@ -1409,6 +1415,25 @@ export function subscribeRemoteCommandsOnKid(
       unsubs.push(u1);
     } catch (err) {}
   }
+
+  // ⚡ Kênh 1: Server SSE tức thời (0ms latency theo Quy Tắc 2)
+  const handleSseCommand = (cmd: any) => {
+    if (!cmd || (cmd.childId && cmd.childId !== childId)) return;
+    const normalizedCmd: RemoteCommandData = {
+      id: cmd.id || `cmd_${cmd.timestamp || Date.now()}`,
+      command: cmd.command || cmd.type,
+      timestamp: typeof cmd.timestamp === 'number' ? cmd.timestamp : Date.now(),
+      payload: cmd.payload,
+      childId: cmd.childId || childId,
+      parentId: cmd.parentId || parentId,
+      childName: cmd.childName || childName || '',
+    };
+    handleIncoming(normalizedCmd);
+  };
+  const unsubSse1 = serverApiClient.on('command', handleSseCommand);
+  const unsubSse2 = serverApiClient.on('remote_command', handleSseCommand);
+  unsubs.push(unsubSse1);
+  unsubs.push(unsubSse2);
 
   // 🛡️ Active polling fallback (every 3 seconds):
   // Guarantees command delivery on mobile even if Android OS suspends/drops background SSE connection!
@@ -1519,6 +1544,11 @@ export async function sendCloudTimeRequest(
       await setDoc(docRef, { ...timeReqData, createdAt: serverTimestamp() });
     } catch (err) {}
   }
+
+  // Dual-channel direct delivery to local server / Cloudflare tunnel
+  try {
+    serverApiClient.sendTimeRequest(timeReqData).catch(() => {});
+  } catch (_) {}
 }
 
 // 12. Time Extension: Parent subscribes to time requests (strictly partitioned)
@@ -1535,12 +1565,29 @@ export function subscribeCloudTimeRequests(
   const syncKey = getPartitionedSyncKey(parentId, childId);
 
   const enrichRequests = (items: any[]): TimeRequest[] => {
-    return items.map((raw) => ({
-      ...raw,
-      childId: raw.childId || childId,
-      childName: raw.childName || childName || 'Con',
-    }));
+    if (!Array.isArray(items)) return [];
+    return items
+      .filter((raw) => raw && typeof raw === 'object' && (raw.id || raw.appName || raw.requestedMinutes !== undefined))
+      .map((raw) => ({
+        ...raw,
+        id: String(raw.id || ('req_' + Date.now())),
+        childId: raw.childId || childId,
+        childName: raw.childName || childName || 'Con',
+        appName: raw.appName || 'Thời gian dùng máy',
+        requestedMinutes: Number(raw.requestedMinutes) || 15,
+        reason: raw.reason || 'Con xin thêm thời gian sử dụng',
+        status: raw.status || 'pending',
+        time: raw.time || new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+        createdAt: raw.createdAt || raw.timestamp || Date.now(),
+      }));
   };
+
+  // Immediate fetch from local server / tunnel
+  serverApiClient.getTimeRequests(childId).then((reqs) => {
+    if (Array.isArray(reqs) && reqs.length > 0) {
+      onRequests(enrichRequests(reqs.slice(0, 20)));
+    }
+  }).catch(() => {});
 
   if (rtdb) {
     // 1. Authoritative partitioned channel
@@ -1550,8 +1597,19 @@ export function subscribeCloudTimeRequests(
         (snap) => {
           if (snap.exists()) {
             const val = snap.val();
-            const list: TimeRequest[] = Object.values(val);
-            onRequests(enrichRequests(list.reverse().slice(0, 20)));
+            let list: any[] = [];
+            if (Array.isArray(val)) {
+              list = val;
+            } else if (val && typeof val === 'object') {
+              if (val.id && (val.requestedMinutes !== undefined || val.appName)) {
+                list = [val];
+              } else {
+                list = Object.values(val);
+              }
+            }
+            if (list.length > 0) {
+              onRequests(enrichRequests(list.reverse().slice(0, 20)));
+            }
           }
         },
         () => {}
@@ -1567,8 +1625,19 @@ export function subscribeCloudTimeRequests(
           (snap) => {
             if (snap.exists()) {
               const val = snap.val();
-              const list: TimeRequest[] = Object.values(val);
-              onRequests(enrichRequests(list.reverse().slice(0, 20)));
+              let list: any[] = [];
+              if (Array.isArray(val)) {
+                list = val;
+              } else if (val && typeof val === 'object') {
+                if (val.id && (val.requestedMinutes !== undefined || val.appName)) {
+                  list = [val];
+                } else {
+                  list = Object.values(val);
+                }
+              }
+              if (list.length > 0) {
+                onRequests(enrichRequests(list.reverse().slice(0, 20)));
+              }
             }
           },
           () => {}
@@ -1610,10 +1679,11 @@ export async function resolveCloudTimeRequest(
   childId: string,
   reqId: string,
   status: "approved" | "rejected",
-  childName?: string
+  childName?: string,
+  approvedMinutes?: number
 ): Promise<void> {
   const { db, rtdb, auth } = getFirebaseInstance();
-  if (!isFirebaseConfigured() || !childId) return;
+  if (!childId) return;
 
   const now = Date.now();
   const syncKey = getPartitionedSyncKey(parentId, childId);
@@ -1626,12 +1696,18 @@ export async function resolveCloudTimeRequest(
     summary: `Phụ huynh đã ${status === 'approved' ? 'CHẤP THUẬN' : 'TỪ CHỐI'} yêu cầu thêm giờ (${reqId})`,
     childId,
     childName,
-    payload: { reqId, status },
+    payload: { reqId, status, approvedMinutes },
   });
+
+  // Direct sync to server
+  try {
+    serverApiClient.resolveTimeRequest(reqId, childId, status, approvedMinutes).catch(() => {});
+  } catch (_) {}
 
   if (rtdb) {
     rtdbUpdate(rtdbRef(rtdb, `pairings/sync/${syncKey}/time_requests/${reqId}`), {
       status,
+      approvedMinutes: approvedMinutes !== undefined ? approvedMinutes : null,
       resolvedAt: now,
     }).catch(() => {});
 
@@ -1639,6 +1715,7 @@ export async function resolveCloudTimeRequest(
       try {
         await rtdbUpdate(rtdbRef(rtdb, `users/${parentId}/children/${childId}/time_requests/${reqId}`), {
           status,
+          approvedMinutes: approvedMinutes !== undefined ? approvedMinutes : null,
           resolvedAt: now,
         });
       } catch (err) {}
@@ -1648,7 +1725,11 @@ export async function resolveCloudTimeRequest(
   if (db && parentId && parentId !== "family_primary") {
     try {
       const docRef = doc(db, "users", parentId, "children", childId, "time_requests", reqId);
-      await updateDoc(docRef, { status, resolvedAt: serverTimestamp() });
+      await updateDoc(docRef, { 
+        status, 
+        approvedMinutes: approvedMinutes !== undefined ? approvedMinutes : null, 
+        resolvedAt: serverTimestamp() 
+      });
     } catch (err) {}
   }
 }
@@ -2091,9 +2172,14 @@ export async function saveChildProfileToCloud(
   child: any
 ): Promise<void> {
   const { db, rtdb, auth } = getFirebaseInstance();
-  if (!isFirebaseConfigured() || !child?.id) return;
+  if (!child?.id) return;
 
   const now = Date.now();
+
+  // Dual save to local server / tunnel immediately
+  try {
+    serverApiClient.saveChildProfile(parentId, child).catch(() => {});
+  } catch (_) {}
 
   // Register in open registry for auto-discovery
   registerActiveChildInCloud(parentId, child).catch(() => {});
@@ -2122,7 +2208,12 @@ export async function deleteChildFromCloud(
   childName?: string
 ): Promise<void> {
   const { db, rtdb } = getFirebaseInstance();
-  if (!isFirebaseConfigured() || !childId) return;
+  if (!childId) return;
+
+  // Direct sync to server
+  try {
+    serverApiClient.deleteChild(parentId, childId).catch(() => {});
+  } catch (_) {}
 
   const slug = normalizeChildSlug(childName);
   const syncKey = getPartitionedSyncKey(parentId, childId);

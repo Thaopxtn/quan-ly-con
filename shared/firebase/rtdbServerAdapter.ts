@@ -292,6 +292,10 @@ export async function rtdbGet(ref: ServerRtdbRef): Promise<{ exists: () => boole
       const commands = await serverApiClient.getCommands(childId);
       val = commands && commands.length > 0 ? commands[0] : null;
     }
+    // 5.2 Remote Command Last ACK
+    else if (p.includes("/commands/lastack")) {
+      val = await serverApiClient.getLastCommandAck(childId);
+    }
     // 6. Safe zones
     else if (p.includes("/safezones")) {
       const zones = await serverApiClient.getSafeZones(childId || parentId);
@@ -300,6 +304,11 @@ export async function rtdbGet(ref: ServerRtdbRef): Promise<{ exists: () => boole
     // 7. Live tracking
     else if (p.includes("/live_tracking") && childId) {
       val = await serverApiClient.getLiveTracking(childId);
+    }
+    // 8. Time Requests
+    else if (p.includes("/time_requests")) {
+      const list = await serverApiClient.getTimeRequests(childId);
+      val = Array.isArray(list) ? list : [];
     }
   } catch (err) {
     console.warn("rtdbGet adapter error for path:", ref.path, err);
@@ -352,10 +361,11 @@ export function rtdbOnValue(
     filterFn = (d: any) => !childId || d?.childId === childId;
   } else if (p.includes("/commands/lastack")) {
     eventName = "command_ack";
-    filterFn = (d: any) => !childId || d?.childId === childId;
+    filterFn = (d: any) => !childId || d?.childId === childId || !d?.childId;
   } else if (p.includes("/time_requests")) {
     eventName = "time_request";
     filterFn = (d: any) => !childId || d?.childId === childId;
+    transformFn = (d: any) => (d && d.id ? { [d.id]: d } : d);
   } else if (p.includes("/chat_messages")) {
     eventName = "chat";
     filterFn = (d: any) => !childId || d?.childId === childId;
@@ -384,7 +394,9 @@ export function rtdbOnValue(
     return () => {};
   }
 
-  const unsub = serverApiClient.on(eventName, (rawPayload: any) => {
+  const unsubs: Array<() => void> = [];
+
+  const unsubPrimary = serverApiClient.on(eventName, (rawPayload: any) => {
     if (filterFn(rawPayload)) {
       const transformed = transformFn(rawPayload);
       callback({
@@ -393,21 +405,36 @@ export function rtdbOnValue(
       });
     }
   });
+  unsubs.push(unsubPrimary);
 
-  // Fast polling fallback for commands & settings (ensures 100% reliable execution even if SSE stream is buffered by Cloudflare tunnel/mobile carrier)
+  // If listening to time_requests, also subscribe to time_request_resolved
+  if (p.includes("/time_requests")) {
+    const unsubResolved = serverApiClient.on("time_request_resolved", (rawPayload: any) => {
+      if (filterFn(rawPayload)) {
+        const transformed = transformFn(rawPayload);
+        callback({
+          exists: () => transformed !== null && transformed !== undefined,
+          val: () => transformed,
+        });
+      }
+    });
+    unsubs.push(unsubResolved);
+  }
+
+  // Fast polling fallback for commands, lastack, settings & SOS (ensures 100% reliable execution even if SSE stream is buffered by Cloudflare tunnel/mobile carrier)
   let pollTimer: any = null;
-  if (p.includes("/commands/active") || p.includes("/pc_commands/active") || p.includes("/settings")) {
+  if (p.includes("/commands/active") || p.includes("/pc_commands/active") || p.includes("/commands/lastack") || p.includes("/settings") || p.includes("/sos")) {
     pollTimer = setInterval(() => {
       rtdbGet(ref).then((snap) => {
         if (snap.exists()) {
           callback(snap);
         }
       }).catch(() => {});
-    }, 3000);
+    }, 2500);
   }
 
   return () => {
     if (pollTimer) clearInterval(pollTimer);
-    unsub();
+    unsubs.forEach((u) => { try { u(); } catch (_) {} });
   };
 }

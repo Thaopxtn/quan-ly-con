@@ -3,17 +3,24 @@ import {
   Lock,
   Unlock,
   PlusCircle,
-  BookOpen,
   Volume2,
   Sparkles,
   Sliders,
   CheckCircle2,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Wifi,
+  WifiOff,
+  Smartphone,
+  Signal,
+  Zap,
+  MapPin,
+  ChevronRight
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { haptics } from '@shared/utils/haptics';
 import { UsageAccessPermissionAlert } from './UsageAccessPermissionAlert';
+import type { ChildProfile, ChildSpecificSettings } from '@shared/types';
 
 interface Kids360ScreenTimeGaugeProps {
   childId: string;
@@ -25,6 +32,8 @@ interface Kids360ScreenTimeGaugeProps {
   battery?: number;
   onNavigate?: (screenKey: string) => void;
   onOpenLimitModal?: () => void;
+  child?: ChildProfile;
+  childSettings?: ChildSpecificSettings;
 }
 
 export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
@@ -37,12 +46,13 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
   battery = 100,
   onNavigate,
   onOpenLimitModal,
+  child,
+  childSettings,
 }) => {
   const {
     state,
     lockChildDeviceNow,
     unlockChildDeviceNow,
-    toggleStudyModeAll,
     buzzKidPhone,
     setCustomScreenTimeLimit,
   } = useAppState();
@@ -141,6 +151,13 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
     statusBg = 'bg-amber-50 text-amber-700 border-amber-200';
   }
 
+  // Child Network & Wi-Fi Connection Information
+  const localChildSettings = state.childSettings?.[childId];
+  const networkInfo = localChildSettings?.networkInfo;
+  const isWifiConnected = Boolean(networkInfo?.wifiConnected || (networkInfo?.wifiSSID && networkInfo.wifiSSID !== 'Chưa kết nối'));
+  const wifiSSID = isWifiConnected ? (networkInfo?.wifiSSID || 'Wi-Fi Gia Đình') : (networkInfo?.cellConnected ? (networkInfo?.carrierName || 'Dữ liệu 4G/LTE') : 'Chưa kết nối Wi-Fi');
+  const wifiSignal = networkInfo?.wifiSignalDbm ?? -65;
+
   // Fast action handlers with Anti-Spam protection
   const handleToggleLock = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -164,13 +181,6 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
     const newLimit = limitMinutes + 15;
     setCustomScreenTimeLimit(childId, newLimit);
     triggerFeedback(`Đã tặng thêm +15 phút cho ${childName}! ⏳`);
-  };
-
-  const handleToggleStudyMode = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    haptics.light();
-    toggleStudyModeAll(!isStudyMode);
-    triggerFeedback(!isStudyMode ? 'Đã bật Chế độ Học tập (Khóa game & MXH) 📚' : 'Đã tắt Chế độ Học tập 🎓');
   };
 
   const handleLoudSignal = (e: React.MouseEvent) => {
@@ -229,6 +239,88 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
 
       {/* Usage Permission Alert if child device hasn't granted PACKAGE_USAGE_STATS */}
       <UsageAccessPermissionAlert childId={childId} compact={true} className="mb-2.5" />
+
+      {/* Connected Wi-Fi Card - Light Modern Clean iOS Style */}
+      <div
+        onClick={() => onNavigate && onNavigate('network')}
+        className={`mb-3 p-2.5 rounded-2xl border transition-all flex items-center justify-between shadow-2xs select-none ${
+          isWifiConnected
+            ? 'bg-sky-50/70 hover:bg-sky-50 border-sky-100/90 cursor-pointer active:scale-[0.99]'
+            : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200/70 cursor-pointer active:scale-[0.99]'
+        }`}
+        title={onNavigate ? 'Bấm để xem chi tiết tình trạng mạng & Bluetooth của con' : undefined}
+      >
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-2xs ${
+              isWifiConnected ? 'bg-sky-500/15 text-sky-600' : 'bg-slate-200/80 text-slate-500'
+            }`}
+          >
+            {isWifiConnected ? <Wifi size={18} strokeWidth={2.3} /> : <WifiOff size={18} />}
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-black text-slate-800 leading-tight">
+                {isWifiConnected ? `Wi-Fi: ${wifiSSID}` : wifiSSID}
+              </span>
+              {isWifiConnected && (
+                <span className="text-[9.5px] font-bold text-sky-700 bg-sky-100/70 px-1.5 py-0.2 rounded-md">
+                  {networkInfo?.cellType === 'WiFi' ? '5GHz' : '2.4/5GHz'}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 mt-1">
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
+                  isWifiConnected
+                    ? 'bg-emerald-100/80 text-emerald-800'
+                    : 'bg-slate-200/70 text-slate-600'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isWifiConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                  }`}
+                />
+                {isWifiConnected ? 'Đã kết nối' : 'Ngoại tuyến / Chưa kết nối'}
+              </span>
+
+              {isWifiConnected && (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-semibold text-slate-600 bg-white/90 border border-slate-200/60 px-1.5 py-0.2 rounded-md">
+                  ⚡ 15ms
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 4-bar Signal Strength Indicator */}
+        <div className="flex items-end gap-0.5 h-4.5 px-1 shrink-0" title="Cường độ sóng">
+          {[1, 2, 3, 4].map((bar) => {
+            const activeLevel =
+              wifiSignal >= -55
+                ? 4
+                : wifiSignal >= -68
+                ? 3
+                : wifiSignal >= -80
+                ? 2
+                : wifiSignal >= -92
+                ? 1
+                : 0;
+            const isLit = isWifiConnected && bar <= activeLevel;
+            return (
+              <span
+                key={bar}
+                className={`w-1 rounded-xs transition-all ${
+                  isLit ? 'bg-sky-500 shadow-2xs' : 'bg-slate-200'
+                }`}
+                style={{ height: `${bar * 3.5 + 3}px` }}
+              />
+            );
+          })}
+        </div>
+      </div>
 
       {/* Radial Donut Gauge Center Piece */}
       <div className="flex flex-col sm:flex-row items-center justify-center gap-5 py-4">
@@ -385,38 +477,111 @@ export const Kids360ScreenTimeGauge: React.FC<Kids360ScreenTimeGaugeProps> = ({
           </div>
         )}
 
-        {/* Row 2: 2 Secondary Quick Toggles */}
-        <div className="grid grid-cols-2 gap-2.5">
-          {/* Button 3: Chế độ giờ học */}
-          <button
-            type="button"
-            onClick={handleToggleStudyMode}
-            className={`py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border flex items-center justify-center gap-1.5 ${
-              isStudyMode
-                ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-extrabold shadow-2xs'
-                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
-            }`}
-          >
-            <BookOpen size={14} className={isStudyMode ? 'text-indigo-600' : 'text-slate-400'} />
-            <span>{isStudyMode ? '📚 Đang Giờ Học' : 'Giờ Học Bài'}</span>
-          </button>
-
-          {/* Button 4: Đổ chuông tìm máy */}
-          <button
-            type="button"
-            disabled={Boolean(gaugeCooldown['buzz'])}
-            onClick={handleLoudSignal}
-            className={`py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border flex items-center justify-center gap-1.5 ${
-              gaugeCooldown['buzz']
-                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                : 'bg-white hover:bg-sky-50 border-slate-200 hover:border-sky-300 text-slate-600 hover:text-sky-700'
-            }`}
-          >
-            <Volume2 size={14} className={gaugeCooldown['buzz'] ? 'text-slate-400' : 'text-sky-500'} />
-            <span>{gaugeCooldown['buzz'] ? `Chờ ${gaugeCooldown['buzz']}s` : 'Chuông Tìm Máy'}</span>
-          </button>
-        </div>
+        {/* Row 2: Chuông Tìm Máy (nút đơn lẻ) */}
+        <button
+          type="button"
+          disabled={Boolean(gaugeCooldown['buzz'])}
+          onClick={handleLoudSignal}
+          className={`w-full py-2 px-3 rounded-xl font-bold text-[11px] transition-all active:scale-95 cursor-pointer border flex items-center justify-center gap-1.5 ${
+            gaugeCooldown['buzz']
+              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+              : 'bg-white hover:bg-sky-50 border-slate-200 hover:border-sky-300 text-slate-600 hover:text-sky-700'
+          }`}
+        >
+          <Volume2 size={14} className={gaugeCooldown['buzz'] ? 'text-slate-400' : 'text-sky-500'} />
+          <span>{gaugeCooldown['buzz'] ? `Chờ ${gaugeCooldown['buzz']}s` : '🔔 Chuông Tìm Máy'}</span>
+        </button>
       </div>
+
+      {/* ═══════════════════════════════════════════════ */}
+      {/* DEVICE HARDWARE VITALS (Tích hợp từ ChildDeviceQuickStatusCard) */}
+      {/* ═══════════════════════════════════════════════ */}
+      {child && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+              <Smartphone size={11} />
+              Thông số thiết bị
+            </span>
+            {onNavigate && (
+              <button
+                type="button"
+                onClick={() => onNavigate('remote')}
+                className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+              >
+                Điều khiển <ChevronRight size={10} />
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5">
+            {/* Pin */}
+            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-center">
+              <div className="text-[10px] text-slate-500 font-bold">Pin</div>
+              <div className={`text-sm font-black ${
+                (child.battery ?? 100) <= 20 ? 'text-rose-600'
+                : (child.battery ?? 100) <= 50 ? 'text-amber-600'
+                : 'text-emerald-600'
+              }`}>
+                {child.battery ?? '--'}%
+              </div>
+              <div className="text-[9px] text-slate-400">
+                {child.isCharging ? '⚡ Sạc' : 'Dùng pin'}
+              </div>
+            </div>
+
+            {/* Màn hình */}
+            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-center">
+              <div className="text-[10px] text-slate-500 font-bold">Màn hình</div>
+              <div className="text-sm font-black text-slate-800 truncate px-0.5">
+                {child.screenState === 'screen_off' || child.isScreenOn === false ? '💤 Tắt' : '📱 Sáng'}
+              </div>
+              <div className="text-[9px] text-slate-400 truncate" title={child.currentApp || ''}>
+                {child.currentApp || '--'}
+              </div>
+            </div>
+
+            {/* Vị trí */}
+            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-center">
+              <div className="text-[10px] text-slate-500 font-bold">Vị trí</div>
+              <div className="text-[11px] font-bold text-slate-700 truncate px-0.5"
+                   title={child.currentAddress || ''}>
+                📍 {child.currentAddress ? child.currentAddress.split(',')[0] : 'GPS...'}
+              </div>
+              <div className="text-[9px] text-slate-400">
+                {child.speed ? `${Math.round(child.speed)} km/h` : 'Đứng yên'}
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Phần cứng nhỏ */}
+          <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+            {/* Âm lượng */}
+            <div className="p-1.5 rounded-lg bg-slate-50/80 border border-slate-100/80 flex items-center gap-1.5">
+              <Volume2 size={11} className="text-indigo-400 shrink-0" />
+              <span className="text-[9.5px] font-bold text-slate-600 truncate">
+                {child.isMuted ? 'Tắt âm' : `${child.volume ?? '--'}%`}
+              </span>
+            </div>
+
+            {/* Đèn Flash */}
+            <div className="p-1.5 rounded-lg bg-slate-50/80 border border-slate-100/80 flex items-center gap-1.5">
+              <Zap size={11} className={child.isFlashlightOn ? 'text-amber-500 fill-amber-500' : 'text-slate-400'} />
+              <span className="text-[9.5px] font-bold text-slate-600">
+                {child.isFlashlightOn ? 'BẬT' : 'Tắt'}
+              </span>
+            </div>
+
+            {/* Mạng */}
+            <div className="p-1.5 rounded-lg bg-slate-50/80 border border-slate-100/80 flex items-center gap-1.5">
+              <Signal size={11} className={child.status === 'online' ? 'text-emerald-500' : 'text-slate-400'} />
+              <span className="text-[9.5px] font-bold text-slate-600 truncate">
+                {child.status === 'online' ? 'Online' : 'Offline'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

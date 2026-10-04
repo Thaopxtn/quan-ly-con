@@ -111,11 +111,19 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
       const parentName = currentParent.displayName || "Bố/Mẹ";
 
       let finalChildId = selectedChildId;
-      let finalChildName = selectedChildObj?.name || newChildName.trim() || "Bé yêu";
-      let finalAge = selectedChildObj?.age || newChildAge || 8;
-      let finalAvatar = selectedChildObj?.avatar || newChildAvatar;
-      let finalBirthYear = selectedChildObj?.birthYear || (new Date().getFullYear() - finalAge);
-      let finalGender = selectedChildObj ? undefined : newChildGender;
+      let finalChildName = targetChildMode === 'new'
+        ? (newChildName.trim() || "Bé yêu")
+        : (selectedChildObj?.name || newChildName.trim() || "Bé yêu");
+      let finalAge = targetChildMode === 'new'
+        ? (newChildAge || 8)
+        : (selectedChildObj?.age || newChildAge || 8);
+      let finalAvatar = targetChildMode === 'new'
+        ? newChildAvatar
+        : (selectedChildObj?.avatar || newChildAvatar);
+      let finalBirthYear = targetChildMode === 'new'
+        ? (new Date().getFullYear() - finalAge)
+        : (selectedChildObj?.birthYear || (new Date().getFullYear() - finalAge));
+      let finalGender = targetChildMode === 'new' ? newChildGender : undefined;
 
       if (targetChildMode === 'new' || !finalChildId) {
         finalChildId = 'child_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
@@ -197,10 +205,18 @@ export const PairChildDeviceModal: React.FC<PairChildDeviceModalProps> = ({
         isPrimary: true,
       };
 
-      const finalChildName = selectedChildObj?.name || session.childName || newChildName.trim() || "Bé yêu";
-      const finalAvatar = selectedChildObj?.avatar || session.childAvatar || newChildAvatar;
-      const finalAge = selectedChildObj?.age || session.childAge || newChildAge || 8;
-      const finalBirthYear = selectedChildObj?.birthYear || session.childBirthYear || (new Date().getFullYear() - finalAge);
+      const finalChildName = targetChildMode === 'new'
+        ? (newChildName.trim() || session.childName || "Bé yêu")
+        : (selectedChildObj?.name || session.childName || newChildName.trim() || "Bé yêu");
+      const finalAvatar = targetChildMode === 'new'
+        ? (newChildAvatar || session.childAvatar)
+        : (selectedChildObj?.avatar || session.childAvatar || newChildAvatar);
+      const finalAge = targetChildMode === 'new'
+        ? (newChildAge || session.childAge || 8)
+        : (selectedChildObj?.age || session.childAge || newChildAge || 8);
+      const finalBirthYear = targetChildMode === 'new'
+        ? (session.childBirthYear || (new Date().getFullYear() - finalAge))
+        : (selectedChildObj?.birthYear || session.childBirthYear || (new Date().getFullYear() - finalAge));
 
       if (targetChildMode === 'existing' && selectedChildId) {
         addOrUpdateChildDevice(selectedChildId, fullDevice);

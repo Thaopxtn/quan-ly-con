@@ -19,19 +19,13 @@ import {
   BatteryCharging,
   Smartphone,
   Lock,
-  Volume2,
   LogOut,
   ChevronDown,
   Layers,
   CheckCircle2,
   ExternalLink,
-  Wifi,
-  FileText,
-  MessageCircle
+  Wifi
 } from 'lucide-react';
-import { DebugLogModal } from '@shared/components/DebugLogModal';
-import { debugLogService } from '@shared/services/debugLogService';
-import { FamilyChatModal } from '../../shared/components/FamilyChatModal';
 import { ConnectionStatusBar } from './components/ConnectionStatusBar';
 
 export const ParentWebPortal: React.FC = () => {
@@ -40,17 +34,8 @@ export const ParentWebPortal: React.FC = () => {
   });
   const [activeScreen, setActiveScreen] = useState<ScreenId>('dashboard');
   const [quickActionFeedback, setQuickActionFeedback] = useState<string | null>(null);
-  const [showDebugModal, setShowDebugModal] = useState(false);
-  const [showChatModal, setShowChatModal] = useState(false);
-  const [errorCount, setErrorCount] = useState(() => debugLogService.getErrorCount());
 
-  useEffect(() => {
-    return debugLogService.subscribe(() => {
-      setErrorCount(debugLogService.getErrorCount());
-    });
-  }, []);
-
-  const { state, switchChild, lockChildDeviceNow, buzzKidPhone, markChatAlertsAsRead } = useAppState();
+  const { state, switchChild, lockChildDeviceNow } = useAppState();
   const { children, selectedChildId, child, alerts, activeSOS } = state;
   const currentParent = getCurrentParentAccount();
   const currentChild = children.find((c) => c.id === selectedChildId) 
@@ -58,7 +43,6 @@ export const ParentWebPortal: React.FC = () => {
     || children[0] || child;
 
   const unreadAlertCount = alerts.filter((a) => !a.isRead).length;
-  const unreadChatCount = alerts.filter((a) => !a.isRead && (a.id.startsWith('chat_') || a.type === 'parent_message')).length;
 
   useEffect(() => {
     const handleResize = () => {
@@ -78,13 +62,6 @@ export const ParentWebPortal: React.FC = () => {
     if (!currentChild) return;
     lockChildDeviceNow(currentChild.id);
     triggerFeedback(`Đã gửi lệnh khóa màn hình tức thì tới máy bé ${currentChild.name}!`);
-  };
-
-  const handleQuickBuzz = () => {
-    haptics.medium();
-    if (!currentChild) return;
-    buzzKidPhone(currentChild.id);
-    triggerFeedback(`Đang phát chuông tìm máy bé ${currentChild.name}...`);
   };
 
   const handleLogout = () => {
@@ -368,41 +345,6 @@ export const ParentWebPortal: React.FC = () => {
               <ConnectionStatusBar />
             </div>
 
-            {/* Debug Logs Button */}
-            <button
-              type="button"
-              onClick={() => setShowDebugModal(true)}
-              className="relative px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-slate-100 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-xs"
-              title="Xem nhật ký truyền nhận dữ liệu 2 chiều & gỡ lỗi"
-            >
-              <FileText size={14} className={errorCount > 0 ? "text-rose-400" : "text-emerald-400"} />
-              <span>Debug Log</span>
-              {errorCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[10px] font-black animate-pulse">
-                  {errorCount}
-                </span>
-              )}
-            </button>
-
-            {/* Chat With Child Button */}
-            <button
-              type="button"
-              onClick={() => {
-                markChatAlertsAsRead(currentChild?.id);
-                setShowChatModal(true);
-              }}
-              className="relative px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
-              title={`Nhắn tin trò chuyện với ${currentChild?.name || 'con'}`}
-            >
-              <MessageCircle size={15} />
-              <span>Nhắn tin với bé</span>
-              {unreadChatCount > 0 && (
-                <span className="px-1.5 py-0.2 bg-gradient-to-r from-rose-500 to-red-600 text-white rounded-full text-[10px] font-black animate-pulse shadow-xs">
-                  {unreadChatCount > 9 ? '9+' : unreadChatCount}
-                </span>
-              )}
-            </button>
-
             {/* Quick Lock Button */}
             <button
               type="button"
@@ -412,17 +354,6 @@ export const ParentWebPortal: React.FC = () => {
             >
               <Lock size={14} className="text-rose-600" />
               <span>Khóa Máy</span>
-            </button>
-
-            {/* Quick Buzz Button */}
-            <button
-              type="button"
-              onClick={handleQuickBuzz}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-amber-50 text-slate-700 hover:text-amber-700 border border-slate-200 hover:border-amber-200 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
-              title="Rung chuông tìm điện thoại của con"
-            >
-              <Volume2 size={14} className="text-amber-600" />
-              <span>Tìm Máy</span>
             </button>
 
             {/* GitHub Quick Link */}
@@ -462,24 +393,6 @@ export const ParentWebPortal: React.FC = () => {
           />
         </main>
       </div>
-
-      {/* Real-time Diagnostics & Debug Log Modal */}
-      <DebugLogModal
-        isOpen={showDebugModal}
-        onClose={() => setShowDebugModal(false)}
-        childId={currentChild?.id}
-        childName={currentChild?.name}
-      />
-
-      {/* Family Chat Modal for Desktop Web */}
-      {showChatModal && (
-        <FamilyChatModal
-          currentRole="parent"
-          childId={currentChild?.id || 'child_1'}
-          childName={currentChild?.name || 'Bé'}
-          onClose={() => setShowChatModal(false)}
-        />
-      )}
     </div>
   );
 };

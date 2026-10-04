@@ -39,12 +39,12 @@ import { LockChallengeActivity } from "./LockChallengeActivity";
 import { BroadcastOverlayActivity } from "./BroadcastOverlayActivity";
 import { SmartSensorsActivity } from "./SmartSensorsActivity";
 import { LiveMonitorActivity } from "./LiveMonitorActivity";
-import { NotificationCenterScreen } from "../../components/NotificationCenterScreen";
-import { MediaControllerScreen } from "../../components/MediaControllerScreen";
-import { NetworkMonitorScreen } from "../../components/NetworkMonitorScreen";
-import { SensorDashboardScreen } from "../../components/SensorDashboardScreen";
-import { ScheduleManagerScreen } from "../../components/ScheduleManagerScreen";
-import { ShareEducationalLinkModal } from "../../components/ShareEducationalLinkModal";
+import { NotificationCenterScreen } from "./NotificationCenterScreen";
+import { MediaControllerScreen } from "./MediaControllerScreen";
+import { NetworkMonitorScreen } from "./NetworkMonitorScreen";
+import { SensorDashboardScreen } from "./SensorDashboardScreen";
+import { ScheduleManagerScreen } from "./ScheduleManagerScreen";
+import { ShareEducationalLinkModal } from "./ShareEducationalLinkModal";
 
 export type RemoteActivityType =
   | "hub"

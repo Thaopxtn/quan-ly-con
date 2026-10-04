@@ -335,10 +335,10 @@ export const MOCK_ROUTES_BY_DAY: Record<string, RoutePoint[]> = {
 };
 
 export const INITIAL_KID_TASKS: KidTask[] = [
-  { id: 'tsk_1', title: 'Làm bài tập Toán phân số trang 42', subject: 'Toán học', stars: 5, completed: true, dueDate: 'Hôm nay' },
-  { id: 'tsk_2', title: 'Đọc sách 20 phút (Dế Mèn Phiêu Lưu Ký)', subject: 'Kỹ năng sống', stars: 3, completed: false, dueDate: '16:00' },
-  { id: 'tsk_3', title: 'Tập thể dục / nhảy dây 100 cái', subject: 'Thể chất', stars: 4, completed: false, dueDate: '17:30' },
-  { id: 'tsk_4', title: 'Học 5 từ mới Tiếng Anh Unit 5', subject: 'Tiếng Anh', stars: 5, completed: false, dueDate: '20:00' },
+  { id: 'tsk_1', title: 'Làm bài tập Toán phân số trang 42', subject: 'Toán học', stars: 5, completed: true, dueDate: 'Hôm nay', requiresApproval: true, status: 'completed' },
+  { id: 'tsk_2', title: 'Đọc sách 20 phút (Dế Mèn Phiêu Lưu Ký)', subject: 'Kỹ năng sống', stars: 3, completed: false, dueDate: '16:00', requiresApproval: true, status: 'todo' },
+  { id: 'tsk_3', title: 'Tập thể dục / nhảy dây 100 cái', subject: 'Thể chất', stars: 4, completed: false, dueDate: '17:30', requiresApproval: false, status: 'todo' },
+  { id: 'tsk_4', title: 'Học 5 từ mới Tiếng Anh Unit 5', subject: 'Tiếng Anh', stars: 5, completed: false, dueDate: '20:00', requiresApproval: true, status: 'pending_approval', submittedAt: '19:45 Hôm nay' },
 ];
 
 export const INITIAL_REWARDS_CATALOG: RewardItem[] = [
@@ -352,6 +352,7 @@ export const INITIAL_REWARDS_CATALOG: RewardItem[] = [
     targetChildId: 'all',
     targetChildName: 'Cả nhà',
     isCustom: false,
+    requiresApproval: true,
   },
   {
     id: 'rew_2',
@@ -363,6 +364,7 @@ export const INITIAL_REWARDS_CATALOG: RewardItem[] = [
     targetChildId: 'all',
     targetChildName: 'Cả nhà',
     isCustom: false,
+    requiresApproval: false,
   },
   {
     id: 'rew_3',
@@ -370,10 +372,11 @@ export const INITIAL_REWARDS_CATALOG: RewardItem[] = [
     starsCost: 50,
     icon: '📚',
     category: 'book',
-    description: 'Tập truyện tranh Doraemon, Thám tử Conan hoặc sách khoa học tự chọn',
+    description: 'Tự do lựa chọn 1 cuốn sách hoặc truyện tranh tại nhà sách',
     targetChildId: 'all',
     targetChildName: 'Cả nhà',
     isCustom: false,
+    requiresApproval: true,
   },
   {
     id: 'rew_4',

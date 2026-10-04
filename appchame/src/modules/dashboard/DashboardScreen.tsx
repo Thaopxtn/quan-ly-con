@@ -3,33 +3,21 @@ import {
   Bell,
   MapPin,
   Clock,
-  BookOpen,
-  HeartPulse,
-  Shield,
   LayoutGrid,
   Bot,
-  Settings,
-  ChevronRight,
-  Sparkles,
   CheckCircle2,
-  AlertCircle,
   Battery,
   ShieldAlert,
   ShieldCheck,
   Plus,
   MessageCircle,
   KeyRound,
-  Monitor,
-  Smartphone,
-  Lock,
-  Unlock,
-  Loader2
+  Lock
 } from 'lucide-react';
 import { useAppState } from '@shared/store';
 import { getCurrentParentAccount } from '@shared/firebase/firebaseService';
 import { UnifiedChildHub } from '../../components/UnifiedChildHub';
 import { EmptyState } from '@shared/components/EmptyState';
-import { haptics } from '@shared/utils/haptics';
 import { CreateNotificationModal } from '../../components/CreateNotificationModal';
 import { FamilyChatModal } from '../../../../shared/components/FamilyChatModal';
 import { PairChildDeviceModal } from '../../components/PairChildDeviceModal';
@@ -39,7 +27,7 @@ interface DashboardScreenProps {
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) => {
-  const { state, markChatAlertsAsRead, switchChild, unlockChildDeviceNow, extendChildTimeNow } = useAppState();
+  const { state, markChatAlertsAsRead, switchChild } = useAppState();
   const { child, alerts, children, selectedChildId } = state;
   const currentChild = children?.find((c) => c.id === selectedChildId) || children?.[0] || child;
 
@@ -47,67 +35,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
   const [showChatModal, setShowChatModal] = useState(false);
   const [showPairModal, setShowPairModal] = useState(false);
 
-  // Anti-spam quick action states
-  const [quickActionLoading, setQuickActionLoading] = useState<string | null>(null);
-  const [quickActionCooldown, setQuickActionCooldown] = useState<number>(0);
-
   const isTargetChildLocked = Boolean(
     currentChild?.isLocked ||
     state.childSettings?.[currentChild?.id]?.isLocked ||
     (currentChild?.id === selectedChildId && state.lockChallenge?.isLocked)
   );
 
-  const lockReasonTitle =
-    currentChild?.lockTitle ||
-    state.childSettings?.[currentChild?.id]?.lockTitle ||
-    (currentChild?.id === selectedChildId ? state.lockChallenge?.title : '') ||
-    'Thiết bị đang bị khóa từ xa';
-
   const childSpecificSettings = currentChild ? state.childSettings?.[currentChild.id] : null;
   const isHwLocked = Boolean(childSpecificSettings?.hardwareControls?.isHardwareLocked);
-  const blockedAppsCount = childSpecificSettings?.apps?.filter(a => a.isBlocked).length || 0;
-
-  const lockReasonType =
-    currentChild?.lockType ||
-    state.childSettings?.[currentChild?.id]?.lockType ||
-    (currentChild?.id === selectedChildId ? state.lockChallenge?.lockType : '') ||
-    'instant';
-
-  const handleQuickUnlock = () => {
-    if (quickActionCooldown > 0) return;
-    haptics.medium();
-    setQuickActionLoading('unlock');
-    setQuickActionCooldown(3);
-    unlockChildDeviceNow(currentChild?.id);
-    const interval = setInterval(() => {
-      setQuickActionCooldown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setQuickActionLoading(null);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  const handleQuickExtend = () => {
-    if (quickActionCooldown > 0) return;
-    haptics.success();
-    setQuickActionLoading('extend');
-    setQuickActionCooldown(3);
-    extendChildTimeNow(15, currentChild?.id);
-    const interval = setInterval(() => {
-      setQuickActionCooldown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setQuickActionLoading(null);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
+  const blockedAppsCount = childSpecificSettings?.apps?.filter(a => a.status === 'blocked' || (a as any).isBlocked).length || 0;
 
   const currentParent = getCurrentParentAccount();
   const parentName = currentParent?.displayName || 'Phụ huynh';
@@ -115,18 +51,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
 
   const unreadAlertCount = alerts.filter((a) => !a.isRead).length;
   const unreadChatCount = alerts.filter((a) => !a.isRead && (a.id.startsWith('chat_') || a.type === 'parent_message')).length;
-
-  const quickShortcuts = [
-    { id: 'tracking', label: 'Vị trí & An toàn', icon: MapPin, color: 'bg-blue-50 text-blue-600 border-blue-100' },
-    { id: 'screentime', label: 'Thời gian dùng', icon: Clock, color: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
-    { id: 'remote', label: 'Điều khiển máy', icon: Smartphone, color: 'bg-cyan-50 text-cyan-600 border-cyan-100' },
-    { id: 'learning', label: 'Học tập', icon: BookOpen, color: 'bg-sky-50 text-sky-600 border-sky-100' },
-    { id: 'health', label: 'Sức khỏe', icon: HeartPulse, color: 'bg-rose-50 text-rose-600 border-rose-100' },
-    { id: 'content', label: 'Nội dung web', icon: Shield, color: 'bg-amber-50 text-amber-600 border-amber-100' },
-    { id: 'apps', label: 'Quản lý app', icon: LayoutGrid, color: 'bg-purple-50 text-purple-600 border-purple-100' },
-    { id: 'ai', label: 'Trợ lý AI', icon: Bot, color: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
-    { id: 'settings', label: 'Cài đặt', icon: Settings, color: 'bg-slate-50 text-slate-600 border-slate-100' },
-  ];
 
   return (
     <div className="flex-1 p-3.5 space-y-3.5 select-none pb-6">
@@ -215,116 +139,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
         </div>
       </div>
 
-      {/* 🚨 REAL-TIME LOCK WARNING BANNER (Phản ánh thực tế khi điện thoại con đang bị khóa) */}
-      {isTargetChildLocked && (
-        <div className="p-3.5 rounded-3xl bg-gradient-to-r from-rose-600 via-red-600 to-amber-600 text-white shadow-lg border-2 border-rose-300/40 animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="flex items-start justify-between gap-2.5">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-white shrink-0 mt-0.5 animate-pulse ring-2 ring-white/30">
-                <Lock size={20} className="text-white" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="px-2 py-0.5 rounded-full bg-white text-rose-700 text-[10px] font-black uppercase tracking-wider shadow-xs">
-                    🔒 ĐANG KHÓA TOÀN BỘ MÁY
-                  </span>
-                  <span className="text-[10px] font-bold text-rose-100">
-                    • {currentChild?.name || 'Bé'}
-                  </span>
-                </div>
-                <h4 className="text-xs font-bold text-white mt-1 leading-snug line-clamp-2">
-                  {lockReasonTitle}
-                </h4>
-                <p className="text-[10.5px] text-rose-100/90 mt-0.5">
-                  {lockReasonType === 'mealtime'
-                    ? 'Đang khóa theo lịch giờ cơm gia đình 🍽️'
-                    : lockReasonType === 'bedtime'
-                    ? 'Đang khóa theo lịch giờ đi ngủ 🌙'
-                    : lockReasonType === 'screentime'
-                    ? 'Đã dùng hết thời gian màn hình trong ngày ⏱️'
-                    : 'Thiết bị của con hiện đang ở trạng thái khóa chặn.'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Action Buttons with Anti-Spam Cooldown */}
-          <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-white/20">
-            <button
-              type="button"
-              disabled={quickActionCooldown > 0}
-              onClick={handleQuickUnlock}
-              className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer ${
-                quickActionCooldown > 0
-                  ? 'bg-white/40 text-slate-700 cursor-not-allowed'
-                  : 'bg-white text-rose-700 hover:bg-rose-50 active:scale-95'
-              }`}
-            >
-              {quickActionLoading === 'unlock' ? (
-                <>
-                  <Loader2 size={14} className="animate-spin text-rose-600" />
-                  <span>Chờ {quickActionCooldown}s...</span>
-                </>
-              ) : (
-                <>
-                  <Unlock size={14} />
-                  <span>Mở khóa toàn bộ</span>
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              disabled={quickActionCooldown > 0}
-              onClick={handleQuickExtend}
-              className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer ${
-                quickActionCooldown > 0
-                  ? 'bg-white/40 text-slate-700 cursor-not-allowed'
-                  : 'bg-amber-400 hover:bg-amber-300 text-slate-950 active:scale-95'
-              }`}
-            >
-              {quickActionLoading === 'extend' ? (
-                <>
-                  <Loader2 size={14} className="animate-spin text-slate-900" />
-                  <span>Chờ {quickActionCooldown}s...</span>
-                </>
-              ) : (
-                <>
-                  <Clock size={14} />
-                  <span>Gia hạn +15p</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ⚠️ CỐ ĐỊNH PHẦN CỨNG BANNER */}
-      {!isTargetChildLocked && isHwLocked && (
-        <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
-          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-            <Lock size={14} />
-          </div>
-          <div>
-            <h4 className="text-[11px] font-bold text-indigo-900">Âm lượng & Độ sáng đang cố định</h4>
-            <p className="text-[10px] text-indigo-700">Con không thể tự điều chỉnh phần cứng.</p>
-          </div>
-        </div>
-      )}
-
-      {/* 🚫 CHẶN ỨNG DỤNG BANNER */}
-      {!isTargetChildLocked && blockedAppsCount > 0 && (
-        <div className="p-3 rounded-2xl bg-orange-50 border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
-          <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
-            <Lock size={14} />
-          </div>
-          <div>
-            <h4 className="text-[11px] font-bold text-orange-900">Có {blockedAppsCount} ứng dụng bị chặn</h4>
-            <p className="text-[10px] text-orange-700">Con không thể mở các ứng dụng này.</p>
-          </div>
-        </div>
-      )}
-
       {/* ⚠️ CỐ ĐỊNH PHẦN CỨNG BANNER */}
       {!isTargetChildLocked && isHwLocked && (
         <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 mb-3">
@@ -353,32 +167,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onNavigate }) 
 
       {/* Unified Modern Family & Multi-Child Hub */}
       <UnifiedChildHub onNavigate={onNavigate} />
-
-      {/* Remote Phone Control Banner Card */}
-      <div
-        onClick={() => onNavigate('remote')}
-        className="p-3.5 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 text-white shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-98 flex items-center justify-between gap-3 border border-blue-400/30 group"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-2xl bg-white/15 backdrop-blur-xs flex items-center justify-center text-white shrink-0 border border-white/20 group-hover:scale-105 transition">
-            <Smartphone size={22} />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h4 className="text-xs font-black tracking-wide uppercase">📱 Điều Khiển Điện Thoại Con</h4>
-              <span className="px-1.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 text-[9px] font-black uppercase">
-                Trực Tiếp
-              </span>
-            </div>
-            <p className="text-[11px] text-blue-100 font-medium truncate mt-0.5">
-              Khóa điện thoại từ xa, rung chuông tìm máy, chế độ Kiosk & quản lý phần cứng
-            </p>
-          </div>
-        </div>
-        <div className="w-8 h-8 rounded-xl bg-white/15 flex items-center justify-center text-white shrink-0 group-hover:translate-x-0.5 transition">
-          <ChevronRight size={18} />
-        </div>
-      </div>
 
       {/* 4 Clean Strategic Feature Hub Cards (2x2 Grid) */}
       <div className="space-y-2 pt-1">

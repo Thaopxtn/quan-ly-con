@@ -170,6 +170,67 @@ async function runTests() {
   assert(finalSettings?.settings?.isLocked === false, 'Cấu hình thiết bị con được xác nhận mở: isLocked = false');
   passedCount++;
 
+  // Step 6: Test Child Time Request & Parent Approval Auto-Unlock Pipeline
+  console.log(`\n[Step 6/6] Kiểm tra quy trình Con xin mở máy -> Cha Mẹ phê duyệt -> Tự động mở khóa...`);
+  // 6.1 Khóa lại máy con để kiểm tra
+  const lock2Res = await post('/api/command', { childId: CHILD_ID, command: 'lock_now', parentId: PARENT_ID, childName: CHILD_NAME }, token);
+  const lock2CmdId = lock2Res?.commandId;
+  await post('/api/command/ack', { id: lock2CmdId, commandId: lock2CmdId, command: 'lock_now', status: 'executed', childId: CHILD_ID, deviceName: DEVICE_NAME, childName: CHILD_NAME }, token);
+  const midSettings = await get(`/api/settings?childId=${CHILD_ID}`, token);
+  assert(midSettings?.settings?.isLocked === true, 'Máy con đang ở trạng thái khóa để thử nghiệm');
+  passedCount++;
+
+  // 6.2 Máy con gửi yêu cầu xin mở máy (15 phút)
+  const reqTime = await post('/api/time-requests', {
+    childId: CHILD_ID,
+    childName: CHILD_NAME,
+    appName: 'Mở khóa điện thoại',
+    requestedMinutes: 15,
+    reason: 'Con xin bố mẹ mở máy để học bài ạ',
+  }, token);
+  assert(reqTime && reqTime.success && reqTime.request?.id, 'Máy con gửi yêu cầu xin mở máy thành công');
+  const reqId = reqTime.request.id;
+  passedCount++;
+
+  // 6.3 Cha Mẹ phê duyệt yêu cầu (+15 phút)
+  const resolveRes = await post('/api/time-requests/resolve', {
+    id: reqId,
+    childId: CHILD_ID,
+    status: 'approved',
+    approvedMinutes: 15,
+  }, token);
+  assert(resolveRes && resolveRes.success && resolveRes.request?.status === 'approved', 'Cha Mẹ phê duyệt yêu cầu thành công trên server');
+  passedCount++;
+
+  // 6.4 Kiểm tra server đã tự động cập nhật settings (isLocked = false, giới hạn mới >= dùng + 15p)
+  const afterApproveSettings = await get(`/api/settings?childId=${CHILD_ID}`, token);
+  assert(afterApproveSettings?.settings?.isLocked === false, 'Server tự động giải phóng khóa máy: isLocked = false');
+  passedCount++;
+  assert(afterApproveSettings?.settings?.screenTimeLimitMinutes >= 15, 'Server tự động gia hạn thời gian sử dụng an toàn');
+  passedCount++;
+
+  // 6.5 Kiểm tra server đã tự động tạo và đẩy lệnh unlock_now vào remote_commands queue
+  const pendingUnlockCmds = await get(`/api/command?childId=${CHILD_ID}`, token);
+  const autoUnlockCmd = (pendingUnlockCmds.commands || []).find(c => c.command === 'unlock_now' && (c.payload?.source === 'time_request_approved' || c.payload?.minutes === 15));
+  assert(Boolean(autoUnlockCmd), 'Server tự động tạo lệnh [unlock_now] trong hàng đợi để máy con nhận qua polling/SSE');
+  passedCount++;
+
+  // 6.6 Máy con nhận lệnh và gửi ACK executed
+  if (autoUnlockCmd) {
+    const autoAck = await post('/api/command/ack', {
+      id: autoUnlockCmd.id,
+      commandId: autoUnlockCmd.id,
+      command: 'unlock_now',
+      status: 'executed',
+      childId: CHILD_ID,
+      deviceName: DEVICE_NAME,
+      childName: CHILD_NAME,
+      detail: 'Đã mở khóa màn hình sau khi phụ huynh phê duyệt yêu cầu',
+    }, token);
+    assert(autoAck && autoAck.success, 'Máy con gửi ACK thực thi mở khóa thành công');
+    passedCount++;
+  }
+
   console.log('\n====================================================');
   console.log(`🎉 TẤT CẢ ${passedCount}/${passedCount} BƯỚC KIỂM THỬ ĐÃ THÀNH CÔNG VÀ CHÍNH XÁC 100%!`);
   console.log('====================================================');

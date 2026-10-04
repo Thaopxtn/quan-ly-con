@@ -158,6 +158,12 @@ export interface ChildProfile {
   lastSeenMs?: number;
   lastSeenText?: string;
   updatedAt?: number;
+  // Hardware telemetry (populated from connectionMonitorService):
+  isCharging?: boolean;
+  currentApp?: string;
+  isMuted?: boolean;
+  volume?: number;
+  isFlashlightOn?: boolean;
 }
 
 export interface SafeZone {
@@ -257,6 +263,7 @@ export interface AlertNotification {
   actionUrl?: string;
   imageUrl?: string;
   speakTTS?: boolean;
+  metadata?: Record<string, any>;
 }
 
 export interface FamilyMember {
@@ -307,6 +314,13 @@ export interface KidTask {
   stars: number;
   completed: boolean;
   dueDate: string;
+  childId?: string;
+  childName?: string;
+  requiresApproval?: boolean; // Mặc định: true (cần cha mẹ duyệt)
+  status?: 'todo' | 'pending_approval' | 'approved' | 'rejected' | 'completed';
+  submittedAt?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
 }
 
 export interface TimeRequest {
@@ -315,10 +329,12 @@ export interface TimeRequest {
   childName: string;
   appName: string;
   requestedMinutes: number;
+  approvedMinutes?: number;
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   time: string;
   createdAt?: number;
+  resolvedAt?: number;
 }
 
 export interface HardwareScheduleProfile {
@@ -422,6 +438,8 @@ export interface LockChallengeState {
   movementChallenge?: MovementChallenge;
   countdownChallenge?: CountdownChallenge;
   lockedAt?: number;
+  unlockedAt?: number;
+  challengeData?: any;
 }
 
 export interface SmartRoutines {
@@ -463,6 +481,7 @@ export interface RewardItem {
   targetChildId?: string; // 'all' or specific childId ('child_1'...)
   targetChildName?: string; // 'Cả nhà' or child name e.g. 'Bé An'
   isCustom?: boolean; // created by parent
+  requiresApproval?: boolean; // Mặc định: true (cần cha mẹ duyệt trước khi đổi)
 }
 
 export interface StarTransaction {
@@ -485,7 +504,9 @@ export interface RewardRedemption {
   starsCost: number;
   icon: string;
   timestamp: string;
-  status: 'pending' | 'approved' | 'completed';
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  resolvedAt?: string;
+  rejectionReason?: string;
 }
 
 // ─── Notification ───────────────────────────────────────────
@@ -641,6 +662,7 @@ export interface ChildSpecificSettings {
   lockType?: string;
   lockTitle?: string;
   lockedAt?: number;
+  unlockedAt?: number;
   emergencyContact?: EmergencyContactConfig;
   activeSharedLink?: SharedLessonLink | null;
   safeZones?: SafeZone[];
@@ -649,6 +671,8 @@ export interface ChildSpecificSettings {
   pcConfig?: ChildPcControlConfig;
   pcTelemetry?: ChildPcTelemetry;
   lastResetDate?: string;
+  autoApproveAllTasks?: boolean; // Tự động duyệt mọi bài tập / nhiệm vụ không cần cha mẹ bấm duyệt
+  autoApproveAllRewards?: boolean; // Tự động duyệt mọi yêu cầu đổi quà không cần cha mẹ bấm duyệt
 }
 
 export interface TrackingCollectionConfig {

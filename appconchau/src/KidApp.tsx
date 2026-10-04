@@ -49,14 +49,19 @@ import {
   Leaf,
   Activity,
   MapPin,
+  Phone,
+  PhoneCall,
 } from 'lucide-react';
 import { useAppState, syncWithCloudForChild, isSimulatorMode, getActiveParentId, getLocalDateString } from '@shared/store';
 import { DebugLogModal } from '@shared/components/DebugLogModal';
 import { debugLogService } from '@shared/services/debugLogService';
 import { fireSafeConfetti, resetSafeConfetti } from '@shared/utils/safeConfetti';
+import { serverApiClient } from '@shared/services/serverApiClient';
 import { KidPairingModal } from './KidPairingModal';
+import { PermissionDisclosureModal } from './components/PermissionDisclosureModal';
 import { KidActivationScreen } from './KidActivationScreen';
 import { KidPermissionsScreen } from './KidPermissionsScreen';
+import { KidOnboardingSlides } from './components/KidOnboardingSlides';
 import {
   checkRealAndroidPermissions,
   openAndroidPermissionSettings,
@@ -79,6 +84,7 @@ import {
   getNativeSensorData,
   getNativeMediaStatus,
   getRecentNotifications,
+  makeNativeEmergencyPhoneCall,
   type RealInstalledApp,
 } from './services/nativePermissionsService';
 import { showSystemNotification, requestSystemNotificationPermission } from '@shared/services/systemNotificationService';
@@ -99,12 +105,14 @@ import {
   autoDiscoverMatchingChild,
   logChildRoutePointToCloud,
   triggerCloudSOS,
+  resolveCloudSOS,
   subscribeCloudSOS,
   subscribeCloudChatMessages,
   sendCloudChatMessage,
   syncChildSettingsToCloud,
   CloudChatMessage,
   subscribeLiveTrackingState,
+  subscribeCloudTimeRequests,
 } from '../../shared/firebase/cloudSyncService';
 import {
   getKidDevicePairedInfo,
@@ -231,11 +239,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     extendChildTimeNow,
     switchChild,
     incrementScreenTimeUsed,
+    setScreenTimeUsed,
     sendKidResponseToParent,
     updateAppRule,
     setTrackingCollectionConfig,
     cancelSOS,
   } = useAppState();
+
+  const activeSOS = state.activeSOS;
 
   const [pairedInfo, setPairedInfo] = useState<KidPairedInfo | null>(() => getKidDevicePairedInfo());
   const activeParentId = pairedInfo?.parentId || (isSimulatorMode() ? getActiveParentId() : '');
@@ -283,30 +294,216 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const lastTickRef = React.useRef<number>(Date.now());
   const sensorValuesRef = React.useRef<Partial<SensorValues>>({});
   const bypassedRoutinesRef = React.useRef<{ mealtime?: boolean; bedtime?: boolean; screentime?: boolean }>({});
+  // ─── Emergency SOS State & Delivery Management ──────────────────────────────
   const [isSosButtonCooldown, setIsSosButtonCooldown] = useState(false);
+  const [isSosModalOpen, setIsSosModalOpen] = useState(false);
+  const [sosDeliveryStatus, setSosDeliveryStatus] = useState<'idle' | 'sending' | 'delivered' | 'failed'>('idle');
+  const [autoCallCountdown, setAutoCallCountdown] = useState<number | null>(null);
+  const [showCancelSosConfirm, setShowCancelSosConfirm] = useState(false);
+  const autoCallTimerRef = useRef<any>(null);
+  const hasAutoCalledRef = useRef<boolean>(false);
 
-  const handleKidTriggerSOS = (source: 'header' | 'button') => {
+  // Resolved emergency parent phone
+  const parentEmergencyPhone = useMemo(() => {
+    return (
+      targetSettings.emergencyContact?.parentPhone ||
+      pairedInfo?.phoneNumber ||
+      (pairedInfo as any)?.parentPhone ||
+      '0987654321'
+    ).trim();
+  }, [targetSettings.emergencyContact?.parentPhone, pairedInfo]);
+
+  // Clean up auto-call countdown and reset dialogs when activeSOS becomes false
+  useEffect(() => {
+    if (!activeSOS) {
+      if (autoCallTimerRef.current) {
+        clearInterval(autoCallTimerRef.current);
+        autoCallTimerRef.current = null;
+      }
+      setAutoCallCountdown(null);
+      hasAutoCalledRef.current = false;
+      setIsSosModalOpen(false);
+      setSosDeliveryStatus('idle');
+      setShowCancelSosConfirm(false);
+    }
+  }, [activeSOS]);
+
+  // Direct manual call to parent
+  const handleCallParentImmediately = () => {
+    if (autoCallTimerRef.current) {
+      clearInterval(autoCallTimerRef.current);
+      autoCallTimerRef.current = null;
+    }
+    setAutoCallCountdown(null);
+    hasAutoCalledRef.current = true;
+    haptics.success();
+    makeNativeEmergencyPhoneCall(parentEmergencyPhone);
+    showToast(`📞 Đang quay số gọi Bố Mẹ (${parentEmergencyPhone})...`);
+  };
+
+  // Cancel SOS triggered by child
+  const handleCancelKidSOS = async () => {
+    // 1. Immediately abort any auto-call timers
+    if (autoCallTimerRef.current) {
+      clearInterval(autoCallTimerRef.current);
+      autoCallTimerRef.current = null;
+    }
+    setAutoCallCountdown(null);
+    hasAutoCalledRef.current = false;
+    setShowCancelSosConfirm(false);
+    setIsSosModalOpen(false);
+    setSosDeliveryStatus('idle');
+
+    haptics.success();
+
+    // 2. Clear SOS in local store
+    cancelSOS(targetChildId);
+
+    // 3. Resolve on Cloud and Server
+    try {
+      await resolveCloudSOS(activeParentId, targetChildId, child.name);
+    } catch (e) {}
+    try {
+      await serverApiClient.resolveSos(targetChildId);
+    } catch (e) {}
+
+    // 4. Send safety confirmation chat to parent
+    try {
+      const cancelTimeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+      await sendCloudChatMessage(activeParentId, targetChildId, {
+        id: `sos_cancel_${Date.now()}`,
+        sender: 'kid',
+        senderName: child.name || 'Con',
+        text: `🛡️ [BÉ ĐÃ AN TOÀN] Con đã bấm hủy báo động SOS lúc ${cancelTimeStr}. Tình hình hiện tại hoàn toàn bình thường và an toàn!`,
+        time: cancelTimeStr,
+        timestamp: Date.now(),
+      }, child.name);
+    } catch (e) {}
+
+    showToast('✅ Đã hủy báo động SOS! Bố Mẹ đã được thông báo con an toàn.');
+  };
+
+  // Trigger SOS with automatic fallback phone call if delivery fails
+  const handleKidTriggerSOS = async (source: 'header' | 'button') => {
+    // If SOS already active, re-open modal immediately
+    if (activeSOS) {
+      setIsSosModalOpen(true);
+      return;
+    }
+
     if (isSosButtonCooldown) {
       showToast('⏳ Tín hiệu SOS đã được gửi đi, đang chờ Bố Mẹ kết nối...');
+      setIsSosModalOpen(true);
       return;
     }
     setIsSosButtonCooldown(true);
     setTimeout(() => {
       setIsSosButtonCooldown(false);
-    }, 8000);
+    }, 5000);
 
     haptics.warning();
-    triggerSOS({
+    setIsSosModalOpen(true);
+    setSosDeliveryStatus('sending');
+    setAutoCallCountdown(null);
+    hasAutoCalledRef.current = false;
+    if (autoCallTimerRef.current) {
+      clearInterval(autoCallTimerRef.current);
+      autoCallTimerRef.current = null;
+    }
+
+    const sosInfo = {
       childId: targetChildId,
       lat: child.lat,
       lng: child.lng,
       address: child.currentAddress,
-    });
-    showToast(
-      source === 'header'
-        ? '🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN BỐ MẸ!'
-        : '🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN ĐIỆN THOẠI BỐ MẸ VÀ NGƯỜI THÂN!'
-    );
+      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      childName: child.name || 'Con',
+    };
+
+    triggerSOS(sosInfo);
+
+    // Helper: start countdown to auto-call parent if signal cannot be delivered
+    const startAutoCallCountdown = (initialSeconds = 6) => {
+      setSosDeliveryStatus('failed');
+      setAutoCallCountdown(initialSeconds);
+      if (autoCallTimerRef.current) {
+        clearInterval(autoCallTimerRef.current);
+      }
+
+      let sec = initialSeconds;
+      autoCallTimerRef.current = setInterval(() => {
+        sec -= 1;
+        if (sec <= 0) {
+          if (autoCallTimerRef.current) {
+            clearInterval(autoCallTimerRef.current);
+            autoCallTimerRef.current = null;
+          }
+          setAutoCallCountdown(0);
+          if (!hasAutoCalledRef.current) {
+            hasAutoCalledRef.current = true;
+            makeNativeEmergencyPhoneCall(parentEmergencyPhone);
+            showToast(`📞 Mất mạng không gửi được SOS! Đang tự động gọi Bố Mẹ (${parentEmergencyPhone})...`);
+          }
+        } else {
+          setAutoCallCountdown(sec);
+        }
+      }, 1000);
+    };
+
+    // Check device internet connectivity
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (!isOnline) {
+      startAutoCallCountdown(5);
+      showToast('⚠️ Không có kết nối mạng! Tự động gọi cho Bố Mẹ sau 5 giây...');
+      return;
+    }
+
+    // Try sending over both Cloud RTDB/Firestore and Server REST/SSE
+    try {
+      const dispatchPromises = [
+        triggerCloudSOS(activeParentId, targetChildId, sosInfo, child.name),
+        serverApiClient.triggerSos({
+          childId: targetChildId,
+          childName: child.name,
+          lat: child.lat,
+          lng: child.lng,
+          address: child.currentAddress,
+          time: sosInfo.time,
+        }),
+      ];
+
+      // Set timeout race (7s)
+      const timeoutPromise = new Promise<{ timeout: boolean }>((res) => {
+        setTimeout(() => res({ timeout: true }), 7000);
+      });
+
+      const res = await Promise.race([
+        Promise.allSettled(dispatchPromises),
+        timeoutPromise,
+      ]);
+
+      if ('timeout' in res) {
+        // Network lag or failure
+        startAutoCallCountdown(6);
+        showToast('⚠️ Mạng chập chờn chưa gửi được SOS! Đang chuẩn bị tự động gọi Bố Mẹ...');
+      } else {
+        const anySuccess = res.some((r) => r.status === 'fulfilled' && (r.value !== false));
+        if (anySuccess) {
+          setSosDeliveryStatus('delivered');
+          setAutoCallCountdown(null);
+          showToast(
+            source === 'header'
+              ? '🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN BỐ MẸ!'
+              : '🚨 ĐÃ PHÁT TÍN HIỆU SOS ĐẾN ĐIỆN THOẠI BỐ MẸ VÀ NGƯỜI THÂN!'
+          );
+        } else {
+          startAutoCallCountdown(6);
+        }
+      }
+    } catch (err) {
+      console.warn('SOS dispatch error:', err);
+      startAutoCallCountdown(6);
+    }
   };
 
   // Ensure store selectedChildId matches Kid device targetChildId once on load
@@ -322,6 +519,12 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   // Request system notification permission on Android 13+ / browser on app start
   useEffect(() => {
     requestSystemNotificationPermission().catch(() => {});
+  }, []);
+
+  // Ensure flashlight is forced OFF by default when opening Kid app
+  useEffect(() => {
+    setNativeFlashlight(false).catch(() => {});
+    setHardwareControls({ flashlight: false }, 'child');
   }, []);
 
   const apps = targetSettings.apps;
@@ -342,7 +545,6 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   };
 
   const {
-    activeSOS,
     studyModeOnly,
     broadcastMessage,
     lastVoiceGuide,
@@ -407,8 +609,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   const [activeSharedLesson, setActiveSharedLesson] = useState<SharedLessonLink | null>(null);
 
   const [hasMissingPermissions, setHasMissingPermissions] = useState(false);
+  const [showDisclosureModal, setShowDisclosureModal] = useState(() => {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('kidcare_prominent_disclosure_accepted_v1') !== 'true';
+  });
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showDebugModal, setShowDebugModal] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('kidcare_onboarding_done_v1') !== 'true';
+  });
   const [errorCount, setErrorCount] = useState(() => debugLogService.getErrorCount());
 
   // Battery Saver / Power Optimization handlers
@@ -495,6 +703,17 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   // Hardware back button & gesture navigation handler
   useEffect(() => {
     const handleBack = (): boolean => {
+      const isDeviceLocked = Boolean(
+        lockChallengeRef.current?.isLocked ||
+        targetSettingsRef.current?.isLocked ||
+        ((targetSettingsRef.current.screenTimeLimitMinutes || 135) > 0 &&
+          (targetSettingsRef.current.screenTime?.todayTotalMinutes || 0) >= (targetSettingsRef.current.screenTimeLimitMinutes || 135) &&
+          !bypassedRoutinesRef.current.screentime)
+      );
+      if (isDeviceLocked) {
+        // Non-dismissible: device is locked by parents, back button/gesture cannot minimize or close lock screen!
+        return true;
+      }
       if (compulsoryMessage) {
         // Non-dismissible: kid must respond to compulsory parent message
         return true;
@@ -652,10 +871,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   useEffect(() => {
     // Delay real app scan by 1500ms so initial frame paints immediately without blocking UI
     const timer = setTimeout(() => {
-      loadInstalledApps();
+      loadInstalledApps(realInstalledApps.length <= 2);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [loadInstalledApps]);
+  }, [loadInstalledApps, realInstalledApps.length]);
 
   const getPackageNameForApp = (id: string, name: string): string => {
     const lower = (name + ' ' + id).toLowerCase();
@@ -962,7 +1181,10 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   // Synchronize rules to Native Android Accessibility Service only when rules actually change
   const lastEnforcementRulesRef = React.useRef<string>('');
   useEffect(() => {
-    const isLocked = Boolean(lockChallenge.isLocked);
+    const usedMins = targetSettings.screenTime?.todayTotalMinutes || 0;
+    const limitMins = targetSettings.screenTimeLimitMinutes || 135;
+    const isScreenTimeExpired = limitMins > 0 && usedMins >= limitMins && !bypassedRoutinesRef.current.screentime;
+    const isLocked = Boolean(lockChallenge.isLocked || targetSettings.isLocked || isScreenTimeExpired);
     const kioskEnabled = Boolean(kioskMode.isEnabled);
     const kioskPackage = kioskMode.pinnedAppId || '';
     const blockedPackages = getBlockedPackagesList(launcherApps, studyModeOnly);
@@ -980,7 +1202,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     lastEnforcementRulesRef.current = serialized;
 
     updateNativeEnforcementRules(rulesPayload).catch((e) => console.warn('updateNativeEnforcementRules error:', e));
-  }, [lockChallenge.isLocked, kioskMode.isEnabled, kioskMode.pinnedAppId, launcherApps, studyModeOnly]);
+  }, [lockChallenge.isLocked, targetSettings.isLocked, targetSettings.screenTime?.todayTotalMinutes, targetSettings.screenTimeLimitMinutes, kioskMode.isEnabled, kioskMode.pinnedAppId, launcherApps, studyModeOnly]);
 
   const appsRef = useRef(apps);
   appsRef.current = apps;
@@ -1006,6 +1228,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   pairedInfoRef.current = pairedInfo;
   const trackingConfigRef = useRef(trackingConfig);
   trackingConfigRef.current = trackingConfig;
+  const setScreenTimeUsedRef = useRef(setScreenTimeUsed);
+  setScreenTimeUsedRef.current = setScreenTimeUsed;
+  const incrementScreenTimeUsedRef = useRef(incrementScreenTimeUsed);
+  incrementScreenTimeUsedRef.current = incrementScreenTimeUsed;
+  const setLockChallengeRef = useRef(setLockChallenge);
+  setLockChallengeRef.current = setLockChallenge;
+  const unlockDeviceRef = useRef(unlockDevice);
+  unlockDeviceRef.current = unlockDevice;
 
   // Active Cloud Firestore sync for kid device (Runs only when identity changes)
   useEffect(() => {
@@ -1248,11 +1478,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             const curLockType = cmd.payload?.lockType || 'instant';
             const curLockTitle = cmd.payload?.title || 'Thiết bị đang bị khóa từ xa';
             const curLockDesc = cmd.payload?.description || 'Bố mẹ đã tạm khóa thiết bị. Con hãy nghỉ ngơi một chút nhé!';
+            const nowLockedAt = Date.now();
             setLockChallenge(
               curLockType,
               curLockTitle,
               curLockDesc,
-              cmd.payload?.challengeData
+              cmd.payload?.challengeData,
+              targetChildId
             );
             if (lockChallengeRef.current) {
               lockChallengeRef.current = {
@@ -1261,7 +1493,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 lockType: curLockType,
                 title: curLockTitle,
                 description: curLockDesc,
-                lockedAt: Date.now(),
+                lockedAt: nowLockedAt,
               };
             }
             if (targetSettingsRef.current) {
@@ -1270,8 +1502,32 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 isLocked: true,
                 lockType: curLockType,
                 lockTitle: curLockTitle,
-                lockedAt: Date.now(),
+                lockedAt: nowLockedAt,
               };
+            }
+            // Immediately sync locked state to cloud and server so cloud never retains stale isLocked: false!
+            if (activeParentId && targetChildId) {
+              syncChildSettingsToCloud(activeParentId, targetChildId, {
+                isLocked: true,
+                lockChallenge: {
+                  isLocked: true,
+                  lockType: curLockType,
+                  title: curLockTitle,
+                  description: curLockDesc,
+                  lockedAt: nowLockedAt,
+                  challengeData: cmd.payload?.challengeData,
+                },
+              }, curChild?.name).catch(() => {});
+              serverApiClient.saveChildSettings(targetChildId, {
+                isLocked: true,
+                lockChallenge: {
+                  isLocked: true,
+                  lockType: curLockType,
+                  title: curLockTitle,
+                  description: curLockDesc,
+                  lockedAt: nowLockedAt,
+                },
+              }, activeParentId).catch(() => {});
             }
           }
           updateNativeEnforcementRules({
@@ -1304,8 +1560,35 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           break;
         case 'unlock_now':
           wakeUpDevice().catch(() => {});
+          const unlockMinutes = cmd.payload?.minutes !== undefined ? cmd.payload.minutes : cmd.payload?.extraMinutes;
+          if (unlockMinutes !== undefined && (unlockMinutes > 0 || unlockMinutes === -1)) {
+            extendChildTimeNow(unlockMinutes, targetChildId);
+          }
           unlockDevice(targetChildId);
           bypassedRoutinesRef.current = { mealtime: true, bedtime: true, screentime: true };
+          {
+            const nowUnlockedAt = Date.now();
+            if (activeParentId && targetChildId) {
+              syncChildSettingsToCloud(activeParentId, targetChildId, {
+                isLocked: false,
+                unlockedAt: nowUnlockedAt,
+                lockChallenge: {
+                  isLocked: false,
+                  lockType: 'none',
+                  title: '',
+                  description: '',
+                },
+              }, curChild?.name).catch(() => {});
+              serverApiClient.saveChildSettings(targetChildId, {
+                isLocked: false,
+                unlockedAt: nowUnlockedAt,
+                lockChallenge: {
+                  isLocked: false,
+                  lockType: 'none',
+                },
+              }, activeParentId).catch(() => {});
+            }
+          }
           if (lockChallengeRef.current) {
             lockChallengeRef.current = {
               ...lockChallengeRef.current,
@@ -1405,10 +1688,55 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           clearRemoteCommand(activeParentId, targetChildId, childRef.current?.name).catch(() => {});
           break;
         case 'extend_time':
+          wakeUpDevice().catch(() => {});
           const extra = cmd.payload?.minutes || 15;
+          bypassedRoutinesRef.current = { mealtime: true, bedtime: true, screentime: true };
           extendChildTimeNow(extra, targetChildId);
-          bypassedRoutinesRef.current = { ...bypassedRoutinesRef.current, screentime: true };
           unlockDevice(targetChildId);
+          {
+            const nowUnlockedAt = Date.now();
+            if (activeParentId && targetChildId) {
+              syncChildSettingsToCloud(activeParentId, targetChildId, {
+                isLocked: false,
+                unlockedAt: nowUnlockedAt,
+                lockChallenge: {
+                  isLocked: false,
+                  lockType: 'none',
+                  title: '',
+                  description: '',
+                },
+              }, curChild?.name).catch(() => {});
+              serverApiClient.saveChildSettings(targetChildId, {
+                isLocked: false,
+                unlockedAt: nowUnlockedAt,
+                lockChallenge: {
+                  isLocked: false,
+                  lockType: 'none',
+                  title: '',
+                  description: '',
+                },
+              }, activeParentId).catch(() => {});
+            }
+          }
+          if (lockChallengeRef.current) {
+            lockChallengeRef.current = {
+              ...lockChallengeRef.current,
+              isLocked: false,
+              lockType: 'none',
+              title: '',
+              description: '',
+              lockedAt: undefined,
+            };
+          }
+          if (targetSettingsRef.current) {
+            targetSettingsRef.current = {
+              ...targetSettingsRef.current,
+              isLocked: false,
+              lockType: 'none',
+              lockTitle: '',
+              lockedAt: undefined,
+            };
+          }
           updateNativeEnforcementRules({
             isLocked: false,
             kioskEnabled: Boolean(curKioskMode.isEnabled),
@@ -1671,6 +1999,33 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             showToast('⏱️ BỐ MẸ VỪA CẬP NHẬT GIỚI HẠN DÙNG ỨNG DỤNG!');
           }
           break;
+        case 'update_profile': {
+          if (cmd.payload) {
+            const newName = cmd.payload.childName || cmd.payload.name;
+            const newAvatar = cmd.payload.childAvatar || cmd.payload.avatar;
+            const newAge = cmd.payload.childAge || cmd.payload.age;
+            const curPaired = getKidDevicePairedInfo();
+            if (curPaired) {
+              const updatedPaired: KidPairedInfo = {
+                ...curPaired,
+                childName: newName || curPaired.childName,
+                childAvatar: newAvatar || curPaired.childAvatar,
+                childAge: newAge || curPaired.childAge,
+              };
+              saveKidDevicePairedInfo(updatedPaired);
+              pairedInfoRef.current = updatedPaired;
+              setPairedInfo(updatedPaired);
+            }
+            if (childRef.current && newName) {
+              childRef.current.name = newName;
+            }
+            if (newName) {
+              showToast(`👤 Bố mẹ đã đổi tên của con thành: ${newName}!`);
+            }
+            uploadCurrentTelemetrySnapshot('profile_updated').catch(() => {});
+          }
+          break;
+        }
         default:
           break;
       }
@@ -1799,6 +2154,207 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     return () => unsubChat();
   }, [activeParentId, targetChildId, child.name, showChatModal]);
 
+  // Real-time Database & Server SSE Time Request Approval Listener on Kid Device
+  // When Parent approves time request, automatically unlock device and extend screen time!
+  useEffect(() => {
+    if (!targetChildId) return;
+
+    const handledReqIds = new Set<string>();
+
+    const handleApproval = (reqId: string, approvedMinutes: number = 15) => {
+      if (handledReqIds.has(reqId)) return;
+      handledReqIds.add(reqId);
+
+      wakeUpDevice().catch(() => {});
+      bypassedRoutinesRef.current = { mealtime: true, bedtime: true, screentime: true };
+      extendChildTimeNow(approvedMinutes, targetChildId);
+      unlockDevice(targetChildId);
+
+      const nowUnlockedAt = Date.now();
+      if (activeParentId && targetChildId) {
+        syncChildSettingsToCloud(activeParentId, targetChildId, {
+          isLocked: false,
+          unlockedAt: nowUnlockedAt,
+          lockChallenge: {
+            isLocked: false,
+            lockType: 'none',
+            title: '',
+            description: '',
+          },
+        }, childRef.current?.name).catch(() => {});
+        serverApiClient.saveChildSettings(targetChildId, {
+          isLocked: false,
+          unlockedAt: nowUnlockedAt,
+          lockChallenge: {
+            isLocked: false,
+            lockType: 'none',
+            title: '',
+            description: '',
+          },
+        }, activeParentId).catch(() => {});
+      }
+
+      if (lockChallengeRef.current) {
+        lockChallengeRef.current = {
+          ...lockChallengeRef.current,
+          isLocked: false,
+          lockType: 'none',
+          title: '',
+          description: '',
+          lockedAt: undefined,
+        };
+      }
+      if (targetSettingsRef.current) {
+        targetSettingsRef.current = {
+          ...targetSettingsRef.current,
+          isLocked: false,
+          lockType: 'none',
+          lockTitle: '',
+          lockedAt: undefined,
+        };
+      }
+
+      updateNativeEnforcementRules({
+        isLocked: false,
+        kioskEnabled: Boolean(kioskModeRef.current.isEnabled),
+        kioskPackage: kioskModeRef.current.pinnedAppId || '',
+        blockedPackages: getBlockedPackagesList(appsRef.current, studyModeOnlyRef.current),
+      }).catch(() => {});
+
+      showSystemNotification(`🎉 BỐ MẸ ĐÃ DUYỆT MỞ MÁY (+${approvedMinutes === -1 ? 'Tự do' : `${approvedMinutes}p`})`, {
+        body: `Bố mẹ đã đồng ý phê duyệt yêu cầu mở máy cho con! Chúc con học tập vui vẻ.`,
+        soundType: 'success',
+        tag: `time_req_approved_${reqId || Date.now()}`,
+      });
+      speakVietnamese('Bố mẹ đã phê duyệt mở máy cho con rồi nhé!');
+      showToast(`🎉 BỐ MẸ ĐÃ DUYỆT MỞ MÁY (+${approvedMinutes === -1 ? 'Tự do' : `${approvedMinutes}p`})!`);
+    };
+
+    // 1. Lắng nghe Server SSE
+    const unsubServerResolved = serverApiClient.on('time_request_resolved', (payload: any) => {
+      if (payload && payload.childId === targetChildId && payload.status === 'approved') {
+        const approvedMins = payload.approvedMinutes !== undefined ? payload.approvedMinutes : (payload.requestedMinutes || 15);
+        handleApproval(payload.id || `srv_${Date.now()}`, approvedMins);
+      }
+    });
+
+    // 2. Lắng nghe Cloud RTDB / Firestore
+    let unsubCloudReqs = () => {};
+    if (activeParentId) {
+      unsubCloudReqs = subscribeCloudTimeRequests(activeParentId, targetChildId, (requests) => {
+        if (requests && requests.length > 0) {
+          const approved = requests.find((r) => r.status === 'approved' && (!r.resolvedAt || (Date.now() - r.resolvedAt < 60000)));
+          if (approved) {
+            const approvedMins = approved.approvedMinutes !== undefined ? approved.approvedMinutes : (approved.requestedMinutes || 15);
+            handleApproval(approved.id, approvedMins);
+          }
+        }
+      }, childRef.current?.name);
+    }
+
+    return () => {
+      unsubServerResolved();
+      unsubCloudReqs();
+    };
+  }, [activeParentId, targetChildId]);
+
+  // 🔄 Authoritative Child Settings Sync (Server Truth -> Kid Device)
+  // Đảm bảo máy con mở khóa tức thì ngay khi Bố Mẹ phê duyệt, kể cả khi máy con vừa tỉnh ngủ từ Doze mode
+  useEffect(() => {
+    if (!targetChildId) return;
+
+    const syncSettingsFromServer = async () => {
+      try {
+        const s = await serverApiClient.getChildSettings(targetChildId);
+        if (s) {
+          const isServerLocked = s.isLocked !== undefined 
+            ? Boolean(s.isLocked) 
+            : (s.lockChallenge?.isLocked !== undefined ? Boolean(s.lockChallenge.isLocked) : false);
+          const isLocalLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked);
+
+          if (!isServerLocked && isLocalLocked) {
+            console.log('[KidApp] 🔓 Máy chủ xác nhận thiết bị đã MỞ KHÓA! Tiến hành mở khóa máy con ngay lập tức...');
+            wakeUpDevice().catch(() => {});
+            bypassedRoutinesRef.current = { mealtime: true, bedtime: true, screentime: true };
+            if (s.screenTimeLimitMinutes && s.screenTimeLimitMinutes > (targetSettingsRef.current.screenTimeLimitMinutes || 0)) {
+              extendChildTimeNow(s.screenTimeLimitMinutes - (targetSettingsRef.current.screenTimeLimitMinutes || 0), targetChildId);
+            }
+            unlockDevice(targetChildId);
+            if (lockChallengeRef.current) {
+              lockChallengeRef.current = {
+                ...lockChallengeRef.current,
+                isLocked: false,
+                lockType: 'none',
+                title: '',
+                description: '',
+                lockedAt: undefined,
+              };
+            }
+            if (targetSettingsRef.current) {
+              targetSettingsRef.current = {
+                ...targetSettingsRef.current,
+                isLocked: false,
+                lockType: 'none',
+                lockTitle: '',
+                lockedAt: undefined,
+              };
+            }
+            updateNativeEnforcementRules({
+              isLocked: false,
+              kioskEnabled: Boolean(kioskModeRef.current.isEnabled),
+              kioskPackage: kioskModeRef.current.pinnedAppId || '',
+              blockedPackages: getBlockedPackagesList(appsRef.current, studyModeOnlyRef.current),
+            }).catch(() => {});
+            showSystemNotification('🔓 THIẾT BỊ ĐÃ ĐƯỢC MỞ KHÓA', {
+              body: 'Bố mẹ đã phê duyệt mở khóa thiết bị. Chúc con học tập vui vẻ!',
+              soundType: 'info',
+              tag: 'cmd_unlock_server_sync',
+            });
+            showToast('🔓 BỐ MẸ ĐÃ PHÊ DUYỆT MỞ KHÓA THIẾT BỊ!');
+          }
+        }
+      } catch (_) {}
+    };
+
+    // Kiểm tra ngay khi khởi động component
+    syncSettingsFromServer();
+
+    // 1. Lắng nghe Server SSE: sự kiện 'settings'
+    const unsubServerSettings = serverApiClient.on('settings', (payload: any) => {
+      if (payload && (payload.childId === targetChildId || !payload.childId)) {
+        syncSettingsFromServer();
+      }
+    });
+
+    // 2. Tự động kiểm tra khi màn hình sáng trở lại (visibilitychange)
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        syncSettingsFromServer();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+
+    // 3. Tự động kiểm tra khi có mạng trở lại (online)
+    const handleOnlineSync = () => {
+      syncSettingsFromServer();
+    };
+    window.addEventListener('online', handleOnlineSync);
+
+    // 4. Polling định kỳ mỗi 8s để đảm bảo mở máy dù rơi vào Doze Mode
+    const pollInterval = setInterval(syncSettingsFromServer, 8000);
+
+    return () => {
+      unsubServerSettings();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+      window.removeEventListener('online', handleOnlineSync);
+      clearInterval(pollInterval);
+    };
+  }, [targetChildId]);
+
   // Online restoration auto-flush offline telemetry queue
   useEffect(() => {
     if (!activeParentId || !targetChildId) return;
@@ -1859,66 +2415,108 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     lastTelemetryRef.current.isAppInForeground = isAppInForeground;
   }, [child.lat, child.lng, child.battery, child.speed, isScreenOn, isAppInForeground]);
 
-  // 1. Active Screen Time Ticker & Auto-Lock (Ticks every 60 seconds)
+  // 1. Active Screen Time Ticker & Auto-Lock (Checks on Mount, Resume, Settings change & every 60s)
   useEffect(() => {
-    // Initial check for native usage stats on mount
-    getNativeUsageStats().then((stats) => {
-      if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
-        const curMinutes = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
-        if (stats.totalMinutesToday > curMinutes) {
-          incrementScreenTimeUsed(targetChildId, stats.totalMinutesToday - curMinutes);
+    const checkAndEnforceLimit = (used: number) => {
+      const totalLimit = targetSettingsRef.current.screenTimeLimitMinutes || 135;
+      if (totalLimit > 0 && used >= totalLimit && !bypassedRoutinesRef.current.screentime) {
+        if (!lockChallengeRef.current?.isLocked || !targetSettingsRef.current.isLocked) {
+          setLockChallengeRef.current(
+            'instant',
+            'Đã hết thời gian dùng máy hôm nay!',
+            `Bé đã dùng đủ ${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p giới hạn được bố mẹ đặt.`,
+            undefined,
+            targetChildId
+          );
+          haptics.warning();
+          speakVietnamese('Bé ơi, đã hết thời gian sử dụng điện thoại hôm nay rồi nhé!');
+          updateNativeEnforcementRules({
+            isLocked: true,
+            kioskEnabled: Boolean(kioskModeRef.current.isEnabled),
+            kioskPackage: kioskModeRef.current.pinnedAppId || '',
+            blockedPackages: getBlockedPackagesList(appsRef.current, studyModeOnlyRef.current),
+          }).catch(() => {});
+        }
+      } else if (used < totalLimit) {
+        bypassedRoutinesRef.current.screentime = false;
+      }
+    };
+
+    const applyUsageMinutes = (statsMinutes?: number, shouldIncrement = false) => {
+      const curUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+      let newUsed = curUsed;
+
+      if (typeof statsMinutes === 'number' && statsMinutes > 0) {
+        // Native UsageStats is authoritative for foreground apps, always take the max so we never drop backwards
+        newUsed = Math.max(curUsed, statsMinutes);
+      }
+
+      // If document is visible in foreground, ensure this active minute is counted
+      if (shouldIncrement && typeof document !== 'undefined' && !document.hidden) {
+        if (newUsed <= curUsed) {
+          newUsed = curUsed + 1;
         }
       }
-    }).catch(() => {});
+
+      if (newUsed !== curUsed) {
+        setScreenTimeUsedRef.current(targetChildId, newUsed);
+      }
+
+      checkAndEnforceLimit(newUsed);
+      return newUsed;
+    };
+
+    // Initial check on mount (0ms delay)
+    const initialUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+    checkAndEnforceLimit(initialUsed);
+
+    // Initial check for native usage stats on mount (only advance if positive)
+    getNativeUsageStats().then((stats) => {
+      if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
+        applyUsageMinutes(stats.totalMinutesToday, false);
+      } else {
+        checkAndEnforceLimit(initialUsed);
+      }
+    }).catch(() => {
+      checkAndEnforceLimit(initialUsed);
+    });
 
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && !document.hidden) {
         const missedMinutes = Math.floor((Date.now() - lastTickRef.current) / 60000);
-        if (missedMinutes > 0) {
-          incrementScreenTimeUsed(targetChildId, missedMinutes);
-        }
         lastTickRef.current = Date.now();
+        getNativeUsageStats().then((stats) => {
+          if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
+            applyUsageMinutes(stats.totalMinutesToday, false);
+          } else {
+            const curUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+            const updated = missedMinutes > 0 ? curUsed + missedMinutes : curUsed;
+            if (missedMinutes > 0) {
+              setScreenTimeUsedRef.current(targetChildId, updated);
+            }
+            checkAndEnforceLimit(updated);
+          }
+        }).catch(() => {
+          const curUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
+          checkAndEnforceLimit(curUsed);
+        });
       }
     };
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibilityChange);
     }
 
-    const ticker = setInterval(() => {
+    const ticker = setInterval(async () => {
       lastTickRef.current = Date.now();
-      // Sync native usage stats first if granted
-      getNativeUsageStats().then((stats) => {
+      let nativeMinutes = 0;
+      try {
+        const stats = await getNativeUsageStats();
         if (stats && stats.isGranted && typeof stats.totalMinutesToday === 'number' && stats.totalMinutesToday > 0) {
-          const curMinutes = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
-          if (stats.totalMinutesToday > curMinutes) {
-            incrementScreenTimeUsed(targetChildId, stats.totalMinutesToday - curMinutes);
-            return;
-          }
+          nativeMinutes = stats.totalMinutesToday;
         }
-      }).catch(() => {});
+      } catch (_) {}
 
-      let timeIncremented = false;
-      if (typeof document !== 'undefined' && document.hidden) {
-        // Don't increment time, but still check limit
-      } else {
-        incrementScreenTimeUsed(targetChildId, 1);
-        timeIncremented = true;
-      }
-
-      const totalLimit = targetSettings.screenTimeLimitMinutes || 135;
-      const currentUsed = (targetSettings.screenTime?.todayTotalMinutes || 0) + (timeIncremented ? 1 : 0);
-
-      if (currentUsed >= totalLimit && !lockChallenge.isLocked && !bypassedRoutinesRef.current.screentime) {
-        setLockChallenge(
-          'instant',
-          'Đã hết thời gian dùng máy hôm nay!',
-          `Bé đã dùng đủ ${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p giới hạn được bố mẹ đặt.`
-        );
-        haptics.warning();
-        speakVietnamese('Bé ơi, đã hết thời gian sử dụng điện thoại hôm nay rồi nhé!');
-      } else if (currentUsed < totalLimit) {
-        bypassedRoutinesRef.current.screentime = false;
-      }
+      applyUsageMinutes(nativeMinutes, true);
     }, 60000);
 
     return () => {
@@ -1927,7 +2525,32 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
     };
-  }, [targetSettings.screenTimeLimitMinutes, targetSettings.screenTime?.todayTotalMinutes, lockChallenge.isLocked, targetChildId, incrementScreenTimeUsed, setLockChallenge]);
+  }, [targetChildId]);
+
+  // Immediate auto-lock reaction when parent updates screen time limit or when usage changes
+  useEffect(() => {
+    const totalLimit = targetSettings.screenTimeLimitMinutes || 135;
+    const curUsed = targetSettings.screenTime?.todayTotalMinutes || 0;
+    if (totalLimit > 0 && curUsed >= totalLimit && !bypassedRoutinesRef.current.screentime) {
+      if (!lockChallenge.isLocked || !targetSettings.isLocked) {
+        setLockChallengeRef.current(
+          'instant',
+          'Đã hết thời gian dùng máy hôm nay!',
+          `Bé đã dùng đủ ${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p giới hạn được bố mẹ đặt.`,
+          undefined,
+          targetChildId
+        );
+        haptics.warning();
+        speakVietnamese('Bé ơi, đã hết thời gian sử dụng điện thoại hôm nay rồi nhé!');
+        updateNativeEnforcementRules({
+          isLocked: true,
+          kioskEnabled: Boolean(kioskMode.isEnabled),
+          kioskPackage: kioskMode.pinnedAppId || '',
+          blockedPackages: getBlockedPackagesList(apps, studyModeOnly),
+        }).catch(() => {});
+      }
+    }
+  }, [targetSettings.screenTimeLimitMinutes, targetSettings.screenTime?.todayTotalMinutes, targetChildId]);
 
   // 2. Smart Routines Clock Watcher (Mealtime & Bedtime Schedule)
   useEffect(() => {
@@ -1976,21 +2599,23 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         speakVietnamese('Đã đến giờ đi ngủ rồi! Bé hãy tắt máy và đi ngủ sớm nhé.');
       } else if (lockChallenge.isLocked) {
         // Unlock when time window ends OR when parent turned off the routine lock
-        const shouldUnlockMealtime = lockChallenge.lockType === 'mealtime' && !inMealtime;
-        const shouldUnlockBedtime = lockChallenge.lockType === 'bedtime' && !inBedtime;
+        // Guard: If device was locked within the last 5 minutes, DO NOT auto-unlock immediately!
+        const isRecentlyLocked = Boolean(lockChallenge.lockedAt && (Date.now() - lockChallenge.lockedAt < 5 * 60 * 1000));
+        const shouldUnlockMealtime = lockChallenge.lockType === 'mealtime' && !inMealtime && !isRecentlyLocked;
+        const shouldUnlockBedtime = lockChallenge.lockType === 'bedtime' && !inBedtime && !isRecentlyLocked;
 
         if (shouldUnlockMealtime || shouldUnlockBedtime) {
           const totalLimit = targetSettingsRef.current.screenTimeLimitMinutes || 135;
           const currentUsed = targetSettingsRef.current.screenTime?.todayTotalMinutes || 0;
           
           if (currentUsed >= totalLimit) {
-            setLockChallenge(
+            setLockChallengeRef.current(
               'instant',
               'Đã hết thời gian dùng máy hôm nay!',
               `Bé đã dùng đủ ${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p giới hạn được bố mẹ đặt.`
             );
           } else {
-            unlockDevice();
+            unlockDeviceRef.current();
             showToast('🔓 Đã hết giờ hạn chế sinh hoạt. Thiết bị đã được mở khóa!');
           }
         }
@@ -2000,7 +2625,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
     checkRoutines();
     const interval = setInterval(checkRoutines, 30000);
     return () => clearInterval(interval);
-  }, [smartRoutines, lockChallenge.isLocked, lockChallenge.lockType, setLockChallenge, unlockDevice]);
+  }, [smartRoutines, lockChallenge.isLocked, lockChallenge.lockType]);
 
   // 3. Voice readout for activeReminder
   useEffect(() => {
@@ -2188,9 +2813,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         artUrl: nativeMedia.albumArt || curTargetSettings.mediaPlayback?.artUrl || '',
       } : undefined;
 
-      const isDeviceLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked);
+      const curUsedMins = curScreenTime?.todayTotalMinutes || curTargetSettings.screenTime?.todayTotalMinutes || 0;
+      const curLimitMins = curTargetSettings.screenTimeLimitMinutes || 135;
+      const isScreenTimeExpired = curLimitMins > 0 && curUsedMins >= curLimitMins && !bypassedRoutinesRef.current.screentime;
+
+      const isDeviceLocked = Boolean(lockChallengeRef.current?.isLocked || targetSettingsRef.current?.isLocked || isScreenTimeExpired);
       const effectiveLockType = lockChallengeRef.current?.lockType || targetSettingsRef.current?.lockType || (isDeviceLocked ? 'instant' : undefined);
-      const effectiveLockTitle = lockChallengeRef.current?.title || targetSettingsRef.current?.lockTitle || (isDeviceLocked ? 'Thiết bị đang bị khóa' : undefined);
+      const effectiveLockTitle = lockChallengeRef.current?.title || targetSettingsRef.current?.lockTitle || (isDeviceLocked ? (isScreenTimeExpired ? 'Đã hết thời gian dùng máy hôm nay!' : 'Thiết bị đang bị khóa') : undefined);
       const effectiveLockedAt = lockChallengeRef.current?.lockedAt || (isDeviceLocked ? Date.now() : undefined);
 
       try {
@@ -2636,31 +3265,37 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   };
 
   const handleTaskCheck = (taskId: string) => {
-    const task = kidTasks.find((t) => t.id === taskId);
-    const willComplete = !task?.completed;
-    toggleTaskCompleted(taskId, child.id);
-    if (willComplete) {
+    const res = toggleTaskCompleted(taskId, child.id, 'child');
+    if (res.status === 'completed') {
       haptics.success();
       fireSafeConfetti({
         particleCount: 60,
         spread: 70,
         origin: { y: 0.7 },
       });
-      showToast(`🎉 Giỏi quá! Nhận ngay +${task?.stars || 5} Sao!`);
+      showToast(res.message);
+    } else if (res.status === 'pending_approval') {
+      haptics.selection();
+      showToast(res.message);
     } else {
       haptics.light();
+      showToast(res.message);
     }
   };
 
   const handleRedeemReward = (rewardId: string) => {
     const res = redeemRewardOnKid(child.id, rewardId);
     if (res.success) {
-      haptics.success();
-      fireSafeConfetti({
-        particleCount: 110,
-        spread: 120,
-        origin: { y: 0.5 },
-      });
+      if (!res.pendingApproval) {
+        haptics.success();
+        fireSafeConfetti({
+          particleCount: 110,
+          spread: 120,
+          origin: { y: 0.5 },
+        });
+      } else {
+        haptics.selection();
+      }
       showToast(res.message);
     } else {
       haptics.warning();
@@ -2743,6 +3378,13 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
   }
 
   if (showPermissionsScreen) {
+    if (showDisclosureModal) {
+      return (
+        <PermissionDisclosureModal 
+          onAccept={() => setShowDisclosureModal(false)} 
+        />
+      );
+    }
     return (
       <KidPermissionsScreen
         onBack={() => {
@@ -2750,6 +3392,18 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           const oneMonthLater = Date.now() + 30 * 24 * 60 * 60 * 1000;
           localStorage.setItem('kidcare_permissions_dismissed_until', oneMonthLater.toString());
           setShowPermissionsScreen(false);
+        }}
+      />
+    );
+  }
+
+  if (showOnboarding) {
+    return (
+      <KidOnboardingSlides
+        childName={pairedInfo?.childName || child.name || 'Bé'}
+        onComplete={() => {
+          localStorage.setItem('kidcare_onboarding_done_v1', 'true');
+          setShowOnboarding(false);
         }}
       />
     );
@@ -2850,8 +3504,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-white shadow-xs animate-subtle-pulse"></span>
             </div>
             <div className="min-w-0 flex-1">
-              <h2 className="text-xs sm:text-sm font-black text-white leading-tight truncate">
-                Chào {pairedInfo?.childName || child.name}! 🌈
+              <h2 className="text-xs sm:text-sm font-black text-white leading-tight truncate flex items-center gap-1">
+                <span>Chào {pairedInfo?.childName || child.name}!</span>
+                <span className="text-sm animate-bounce inline-block" style={{ animationDuration: '2s' }}>🐻</span>
               </h2>
               <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
                 {/* Star Bank Counter Pill (Click to switch to rewards tab) */}
@@ -2866,7 +3521,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 </button>
 
                 {/* Device Name Pill */}
-                <span className="text-[9px] sm:text-[10px] bg-white/20 backdrop-blur-md text-white font-medium px-1.5 py-0.5 rounded-lg truncate max-w-[80px] sm:max-w-[120px] flex items-center gap-0.5 shrink">
+                <span className="text-[11px] sm:text-xs bg-white/20 backdrop-blur-md text-white font-medium px-1.5 py-0.5 rounded-lg truncate max-w-[90px] sm:max-w-[130px] flex items-center gap-0.5 shrink">
                   <Smartphone size={9} className="shrink-0" />
                   <span className="truncate">{pairedInfo?.deviceName || 'Thiết bị'}</span>
                 </span>
@@ -2876,7 +3531,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   <button
                     type="button"
                     onClick={() => setShowKidControlPanel(true)}
-                    className="inline-flex items-center gap-1 bg-emerald-500 hover:bg-emerald-400 text-white px-1.5 py-0.5 rounded-lg text-[9.5px] font-black shadow-xs cursor-pointer border border-emerald-400/80 animate-subtle-pulse shrink-0"
+                    className="inline-flex items-center gap-1 bg-emerald-500 hover:bg-emerald-400 text-white px-1.5 py-0.5 rounded-lg text-[11px] font-black shadow-xs cursor-pointer border border-emerald-400/80 animate-subtle-pulse shrink-0"
                     title="Chế độ tiết kiệm pin đang Bật"
                   >
                     <Leaf size={10} className="fill-white" />
@@ -2886,7 +3541,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   <button
                     type="button"
                     onClick={() => setShowKidControlPanel(true)}
-                    className="inline-flex items-center gap-1 bg-slate-600/80 text-white px-1.5 py-0.5 rounded-lg text-[9.5px] font-black shadow-xs cursor-pointer border border-slate-500 shrink-0"
+                    className="inline-flex items-center gap-1 bg-slate-600/80 text-white px-1.5 py-0.5 rounded-lg text-[11px] font-black shadow-xs cursor-pointer border border-slate-500 shrink-0"
                     title="Đang tạm dừng giám sát ngầm"
                   >
                     <Power size={10} />
@@ -2906,8 +3561,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 setUnreadChatCount(0);
                 setShowChatModal(true);
               }}
-              className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0"
+              className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0"
               title="Nhắn tin với Bố Mẹ"
+              aria-label="Mở tin nhắn trò chuyện với Bố Mẹ"
             >
               <MessageCircle size={16} strokeWidth={2.2} />
               {unreadChatCount > 0 && (
@@ -2923,6 +3579,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
               onClick={() => handleKidTriggerSOS('header')}
               className="h-8 sm:h-9 px-2 sm:px-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-400/80 shadow-xs flex items-center gap-1 font-black text-xs active:scale-90 transition-all cursor-pointer animate-subtle-pulse shrink-0"
               title="Báo động cứu hộ khẩn cấp cho Bố Mẹ"
+              aria-label="Bấm để gửi tín hiệu SOS khẩn cấp cho Bố Mẹ"
             >
               <AlertOctagon size={14} className="animate-bounce" />
               <span className="text-[11px] sm:text-xs">SOS</span>
@@ -2932,8 +3589,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             <button
               type="button"
               onClick={() => setShowKidControlPanel(true)}
-              className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0"
+              className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs flex items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0"
               title="Cài đặt máy & Quyền bảo vệ"
+              aria-label="Mở cài đặt máy và quyền hạn bảo vệ"
             >
               <Sliders size={16} strokeWidth={2.2} />
               {hasMissingPermissions && (
@@ -2945,7 +3603,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
             <button
               type="button"
               onClick={() => setShowDebugModal(true)}
-              className={`relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0 ${
+              className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/30 shadow-xs items-center justify-center text-white active:scale-90 transition-all cursor-pointer shrink-0 ${
                 errorCount > 0 ? 'flex' : 'hidden min-[360px]:flex'
               }`}
               title="Nhật ký truyền nhận & Gỡ lỗi đồng bộ"
@@ -2961,40 +3619,87 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
         </div>
       </div>
 
-      {/* SOS Banner if Active */}
+      {/* Interactive Sticky SOS Top Banner */}
       {activeSOS && (
-        <div className="bg-rose-600 text-white px-4 py-2 text-xs font-bold flex items-center justify-between animate-pulse shadow-md">
-          <div className="flex items-center space-x-2">
-            <AlertOctagon size={18} />
-            <span>TÍN HIỆU SOS ĐANG ĐƯỢC PHÁT ĐẾN BỐ MẸ!</span>
+        <div className="sticky top-0 z-40 bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 text-white px-3.5 py-2.5 text-xs font-bold flex items-center justify-between shadow-xl border-b border-rose-400/50">
+          <div
+            onClick={() => setIsSosModalOpen(true)}
+            className="flex items-center space-x-2.5 cursor-pointer flex-1 min-w-0 mr-2"
+          >
+            <AlertOctagon size={20} className="text-white animate-bounce shrink-0" />
+            <div className="truncate">
+              <div className="flex items-center gap-1.5 font-black text-xs">
+                <span>TÍN HIỆU SOS ĐANG BẬT!</span>
+                {sosDeliveryStatus === 'delivered' && (
+                  <span className="bg-emerald-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-black">
+                    Đã báo Bố Mẹ
+                  </span>
+                )}
+                {sosDeliveryStatus === 'failed' && (
+                  <span className="bg-amber-400 text-amber-950 text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
+                    Mất mạng!
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-rose-100 font-medium truncate">
+                {sosDeliveryStatus === 'failed'
+                  ? (autoCallCountdown !== null && autoCallCountdown > 0
+                      ? `Tự động gọi Bố Mẹ sau ${autoCallCountdown}s...`
+                      : 'Đang kết nối cuộc gọi Bố Mẹ...')
+                  : 'Bấm xem chi tiết & vị trí'}
+              </p>
+            </div>
           </div>
-          <span className="text-[10px] underline font-black">Vị trí GPS đang phát</span>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Quick Call Button */}
+            <button
+              type="button"
+              onClick={handleCallParentImmediately}
+              className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black flex items-center gap-1 shadow-sm active:scale-95 transition-all cursor-pointer ring-1 ring-emerald-300"
+              title={`Gọi cho Bố Mẹ (${parentEmergencyPhone})`}
+            >
+              <Phone size={13} className="animate-bounce" />
+              <span>Gọi</span>
+            </button>
+
+            {/* Quick Cancel SOS Button */}
+            <button
+              type="button"
+              onClick={() => setShowCancelSosConfirm(true)}
+              className="px-2.5 py-1.5 bg-white/20 hover:bg-white/30 text-white border border-white/50 rounded-xl text-xs font-black flex items-center gap-1 active:scale-95 transition-all cursor-pointer shadow-sm"
+              title="Hủy báo động SOS nếu đã an toàn"
+            >
+              <ShieldCheck size={13} />
+              <span>Hủy SOS</span>
+            </button>
+          </div>
         </div>
       )}
 
       {/* KIOSK MODE PINNED VIEW (If active) */}
       {kioskMode.isEnabled ? (
-        <div className="flex-1 flex flex-col p-4 bg-slate-900 text-white justify-between relative overflow-y-auto">
-          <div className="p-3.5 bg-amber-500/20 border border-amber-400/40 rounded-3xl flex items-center justify-between">
+        <div className="flex-1 flex flex-col p-4 bg-gradient-to-b from-amber-50 via-white to-sky-50 text-slate-800 justify-between relative overflow-y-auto">
+          <div className="p-3.5 bg-amber-100 border border-amber-200/80 rounded-3xl flex items-center justify-between shadow-xs">
             <div className="flex items-center space-x-2">
-              <Pin size={18} className="text-amber-400 animate-pulse" />
+              <Pin size={18} className="text-amber-600 animate-pulse" />
               <div>
-                <h4 className="text-xs font-bold text-amber-300">Chế độ Ghim Kiosk Cưỡng Chế</h4>
-                <p className="text-[10px] text-amber-200/80">Con đang trong giờ học tập tập trung</p>
+                <h4 className="text-xs font-bold text-amber-900">Chế độ Tập Trung Học Bài 📚</h4>
+                <p className="text-[11px] text-amber-700">Con đang trong giờ học tập tập trung</p>
               </div>
             </div>
-            <span className="px-2 py-0.5 bg-amber-400 text-amber-950 text-[10px] font-black rounded-lg uppercase">
+            <span className="px-2 py-0.5 bg-amber-500 text-white text-[11px] font-black rounded-lg uppercase shadow-xs">
               Đang ghim
             </span>
           </div>
 
           <div className="my-auto py-8 text-center space-y-4">
-            <div className="w-24 h-24 mx-auto bg-blue-600 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-3xl shadow-xl flex items-center justify-center text-4xl shadow-blue-500/30 ring-4 ring-white/10">
+            <div className="w-24 h-24 mx-auto bg-gradient-to-tr from-blue-500 to-indigo-400 rounded-3xl shadow-xl flex items-center justify-center text-4xl shadow-blue-400/25 ring-4 ring-blue-100">
               {kioskMode.pinnedAppName?.charAt(0) || '📱'}
             </div>
             <div>
-              <h2 className="text-xl font-black text-white">{kioskMode.pinnedAppName}</h2>
-              <p className="text-xs text-slate-300 mt-1 max-w-xs mx-auto">
+              <h2 className="text-xl font-black text-slate-900">{kioskMode.pinnedAppName}</h2>
+              <p className="text-xs text-slate-600 mt-1 max-w-xs mx-auto">
                 Bố/Mẹ đã ghim máy vào ứng dụng này để con tập trung học bài.
               </p>
             </div>
@@ -3017,40 +3722,40 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           {activeTab === 'home' && (
             <div className="space-y-4 animate-in fade-in duration-200">
 
-              {/* 🦉 Mascot Companion Card - Emotional & Gamification Polish */}
-              <div className="bg-emerald-50 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border border-emerald-200/80 rounded-3xl p-3.5 shadow-xs flex items-center gap-3.5 relative overflow-hidden">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500 bg-gradient-to-br from-emerald-400 to-teal-500 text-white flex items-center justify-center text-2xl shadow-md shadow-emerald-500/20 shrink-0">
-                  🦉
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] bg-emerald-100/90 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                      Bé Cú Thông Thái
-                    </span>
-                    <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                      Level {Math.floor(kidStars / 10) + 1} ⭐
-                    </span>
+                            {/* 1 & 2. Giao Diện Tươi Sáng & Hệ Thống Ngôi Sao Đổi Quà (Gamified Star Bank) */}
+              <div className="bg-gradient-to-r from-amber-50 via-yellow-50 to-orange-50 border border-amber-200/90 rounded-3xl p-4 shadow-xs flex items-center justify-between gap-3 relative overflow-hidden select-none">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-300 text-white flex items-center justify-center text-2xl shadow-md shadow-amber-400/30 shrink-0">
+                    ⭐
                   </div>
-                  <p className="text-xs font-bold text-slate-800 mt-1 leading-snug">
-                    {kidTasks.filter((t) => !t.completed).length > 0
-                      ? `Bé còn ${kidTasks.filter((t) => !t.completed).length} nhiệm vụ hôm nay để tích thêm sao đổi quà nè!`
-                      : 'Hoan hô! Bé đã hoàn thành xuất sắc các nhiệm vụ hôm nay! 🎉'}
-                  </p>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <div className="flex-1 bg-emerald-200/60 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min(100, ((kidStars % 10) / 10) * 100)}%` }}
-                      />
+                  <div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-black text-amber-950">Kho Sao Tích Lũy</span>
+                      <span className="text-[10px] bg-amber-200/80 text-amber-900 font-extrabold px-2 py-0.5 rounded-full">
+                        Level {Math.floor(kidStars / 10) + 1}
+                      </span>
                     </div>
-                    <span className="text-[9.5px] font-bold text-emerald-700 whitespace-nowrap">
-                      {kidStars % 10}/10 sao thăng cấp
-                    </span>
+                    <div className="flex items-baseline gap-1 mt-0.5">
+                      <span className="text-2xl font-black text-amber-600 tracking-tight">{kidStars}</span>
+                      <span className="text-xs font-bold text-amber-800">Sao thưởng</span>
+                    </div>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.selection();
+                    setActiveTab('rewards');
+                  }}
+                  className="px-3.5 py-2 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-amber-950 font-black text-xs rounded-2xl shadow-xs border border-amber-300/80 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Đổi Quà</span>
+                  <span>🎁</span>
+                </button>
               </div>
 
-              {/* Screen Time Remaining Hero Card - Dynamic Adaptive Gradient */}
+              {/* 3. Đồng Hồ Đếm Ngược Vui Nhộn (Rainbow / Pastel Radial Countdown Hero) */}
               {(() => {
                 const totalLimit = targetSettings.screenTimeLimitMinutes || 135;
                 const usedMins = screenTime.todayTotalMinutes || 0;
@@ -3058,52 +3763,107 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                 const remH = Math.floor(remainingMins / 60);
                 const remM = remainingMins % 60;
                 const remText = remainingMins > 0
-                  ? `${remH > 0 ? `${remH}h ` : ''}${remM} phút`
-                  : '0 phút (Hết giờ)';
-
-                const usedH = Math.floor(usedMins / 60);
-                const usedM = usedMins % 60;
-                const usedText = `${usedH > 0 ? `${usedH}h ` : ''}${usedM}p`;
+                  ? `${remH > 0 ? `${remH}h ` : ''}${remM}p`
+                  : 'Hết giờ';
 
                 const percentLeft = Math.min(100, Math.round((remainingMins / totalLimit) * 100));
                 const isExhausted = remainingMins <= 0;
                 const isWarning = remainingMins > 0 && remainingMins <= 20;
 
-                return (
-                  <div
-                    className={`rounded-3xl p-4 text-white shadow-xl relative overflow-hidden transition-all duration-300 ${
-                      isExhausted
-                        ? 'bg-slate-900 bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-800 shadow-slate-900/30'
-                        : isWarning
-                        ? 'bg-amber-600 bg-gradient-to-tr from-amber-600 via-orange-600 to-amber-500 shadow-amber-600/30'
-                        : 'bg-gradient-to-tr from-indigo-600 via-blue-600 to-sky-500 shadow-blue-500/25'
-                    }`}
-                  >
-                    <div className="absolute right-0 bottom-0 opacity-15 translate-x-3 translate-y-3 pointer-events-none">
-                      <Clock size={130} />
-                    </div>
+                const radius = 54;
+                const circumference = 2 * Math.PI * radius;
+                const strokeDashoffset = circumference - (percentLeft / 100) * circumference;
 
-                    {/* Top Row: Title and Status Badge */}
-                    <div className="flex items-center justify-between relative z-10">
-                      <span className="text-xs font-bold text-blue-100 flex items-center gap-1.5">
-                        <Clock size={15} />
-                        <span>Thời gian giải trí tự do hôm nay</span>
-                      </span>
-                      <span className="text-[10px] bg-white/20 backdrop-blur-md px-2.5 py-0.5 rounded-full font-bold shadow-xs">
+                return (
+                  <div className="bg-gradient-to-b from-sky-50 via-white to-blue-50/60 border border-sky-100/90 rounded-3xl p-5 shadow-xs relative overflow-hidden select-none">
+                    {/* Top Row: Title & Status Badge */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse" />
+                        <span className="text-xs font-black text-slate-800 tracking-tight">
+                          Thời Gian Tự Do Hôm Nay
+                        </span>
+                      </div>
+                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-black ${
+                        isExhausted
+                          ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                          : isWarning
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}>
                         {isExhausted ? '🛑 Đã hết giờ' : isWarning ? '⚠️ Sắp hết giờ' : '✅ Đang mở'}
                       </span>
                     </div>
 
-                    {/* Middle Row: Big Remaining Time & Dual Alli360 Action Buttons */}
-                    <div className="relative z-10 my-3">
-                      <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
-                        <div>
-                          <span className="text-[10.5px] text-blue-100/90 font-medium block">Con còn lại:</span>
-                          <h1 className="text-3xl font-black tracking-tight">{remText}</h1>
+                    {/* Circular Doughnut Gauge with Mascot */}
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-4 py-2">
+                      <div className="relative w-36 h-36 flex items-center justify-center shrink-0">
+                        <svg className="w-full h-full transform -rotate-90" viewBox="0 0 130 130">
+                          <defs>
+                            <linearGradient id="kidRainbowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#38BDF8" />
+                              <stop offset="50%" stopColor="#34D399" />
+                              <stop offset="100%" stopColor="#FBBF24" />
+                            </linearGradient>
+                          </defs>
+                          <circle
+                            cx="65"
+                            cy="65"
+                            r={radius}
+                            stroke="#E0F2FE"
+                            strokeWidth="10"
+                            fill="transparent"
+                          />
+                          <circle
+                            cx="65"
+                            cy="65"
+                            r={radius}
+                            stroke={isExhausted ? '#EF4444' : isWarning ? '#F59E0B' : 'url(#kidRainbowGrad)'}
+                            strokeWidth="10"
+                            fill="transparent"
+                            strokeDasharray={circumference}
+                            strokeDashoffset={strokeDashoffset}
+                            strokeLinecap="round"
+                            className="transition-all duration-700 ease-out"
+                            style={{ filter: 'drop-shadow(0px 2px 6px rgba(56, 189, 248, 0.35))' }}
+                          />
+                        </svg>
+
+                        {/* Center Text inside Donut */}
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-center select-none pointer-events-none">
+                          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                            Còn lại
+                          </span>
+                          <span className="text-2xl font-black text-slate-800 tracking-tight leading-none mt-0.5">
+                            {remText}
+                          </span>
+                          <span className="text-[11px] font-bold text-sky-600 mt-1">
+                            {percentLeft}% giờ
+                          </span>
                         </div>
 
-                        {/* Quick Interactive Alli360 Action Buttons */}
-                        <div className="flex items-center gap-1.5 mt-2 sm:mt-0">
+                        {/* Cheerful Mascot Star on Top Right */}
+                        <div className="absolute -top-1 -right-1 text-2xl animate-bounce pointer-events-none">
+                          🌟
+                        </div>
+                      </div>
+
+                      {/* Right Motivation & Action Buttons */}
+                      <div className="flex-1 text-center sm:text-left space-y-2.5">
+                        <div className="flex items-start gap-2">
+                          <span className="text-2xl shrink-0" style={{ animationDuration: '2.5s' }}>
+                            {isExhausted ? '🐻‍❄️' : isWarning ? '🐻' : '🎉'}
+                          </span>
+                          <p className="text-xs font-bold text-slate-600 leading-relaxed">
+                            {isExhausted
+                              ? 'Đã hết thời gian giải trí hôm nay. Con có thể làm nhiệm vụ để đổi thêm giờ nhé!'
+                              : isWarning
+                              ? 'Sắp hết giờ rồi nè! Hãy lưu bài học hoặc xin thêm giờ nếu cần nhé.'
+                              : 'Bé dùng máy rất khoa học và ngoan ngoãn! Hãy giữ phong độ nhé. 🚀'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
                           <button
                             type="button"
                             onClick={() => {
@@ -3111,7 +3871,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                               setTimeExtensionTarget('Thời gian dùng máy');
                               setShowTimeExtensionModal(true);
                             }}
-                            className="px-3 py-1.5 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-xl text-xs font-bold text-white transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1"
+                            className="px-3.5 py-2 bg-sky-100 hover:bg-sky-200 text-sky-800 font-bold text-xs rounded-xl transition active:scale-95 cursor-pointer shadow-2xs flex items-center gap-1.5"
                           >
                             <span>Xin thêm giờ</span>
                             <span>🙋</span>
@@ -3123,47 +3883,127 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                               haptics.selection();
                               setActiveTab('tasks');
                             }}
-                            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-amber-950 font-black rounded-xl text-xs transition active:scale-95 cursor-pointer shadow-md flex items-center gap-1 border border-amber-300"
+                            className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-amber-950 font-black text-xs rounded-xl transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1.5 border border-amber-300"
                           >
                             <span>Làm việc nhận giờ</span>
                             <span>🎯</span>
                           </button>
                         </div>
                       </div>
-
-                      {/* Visual Progress Bar */}
-                      <div className="w-full bg-black/25 h-3 rounded-full overflow-hidden p-0.5 mt-3 border border-white/10">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            percentLeft > 40 ? 'bg-emerald-400 shadow-sm' : percentLeft > 15 ? 'bg-amber-400' : 'bg-rose-400 animate-pulse'
-                          }`}
-                          style={{ width: `${percentLeft}%` }}
-                        />
-                      </div>
-
-                      {/* Bottom Footer Info */}
-                      <div className="text-[10.5px] text-blue-100 mt-2 font-medium flex items-center justify-between">
-                        <span>Đã dùng {usedText} / Giới hạn {Math.floor(totalLimit / 60)}h {totalLimit % 60}p</span>
-                        <span className="font-bold bg-white/10 px-1.5 py-0.2 rounded-md">{percentLeft}% còn lại</span>
-                      </div>
                     </div>
 
-                    {/* Alli360 Category Transparency Banner */}
-                    <div className="relative z-10 pt-2 border-t border-white/15 flex items-center justify-between text-[10px] text-blue-100/90 font-medium">
-                      <span className="flex items-center gap-1">
-                        <span>📚</span>
-                        <span>Học tập & Gọi điện: Luôn mở</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span>🎮</span>
-                        <span>Game & Video: Đếm giờ</span>
+                    {/* Bottom Screen Time Summary Bar */}
+                    <div className="mt-3 pt-2.5 border-t border-sky-100 flex items-center justify-between text-xs font-bold text-slate-500">
+                      <span>Đã dùng: <strong className="text-slate-800">{usedMins > 60 ? `${Math.floor(usedMins / 60)}h ${usedMins % 60}p` : `${usedMins}p`}</strong> / Giới hạn: <strong className="text-slate-800">{totalLimit > 60 ? `${Math.floor(totalLimit / 60)}h ${totalLimit % 60}p` : `${totalLimit}p`}</strong></span>
+                      <span className={isExhausted ? "text-rose-600 font-black" : isWarning ? "text-amber-600 font-black" : "text-emerald-600 font-black"}>
+                        {isExhausted ? '0% còn lại' : `${percentLeft}% còn lại`}
                       </span>
                     </div>
                   </div>
                 );
               })()}
 
-              {/* Unified Settings & System Controls Shortcut */}
+              {/* 4. Bảng Nhiệm Vụ Hôm Nay (Daily Tasks Interactive Preview) */}
+              <div className="bg-white border border-slate-200/90 rounded-3xl p-4 shadow-xs space-y-3 select-none">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-2xs">
+                      <Sparkles size={16} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 leading-tight">
+                        Nhiệm Vụ Hôm Nay
+                      </h3>
+                      <p className="text-[11px] text-slate-400 font-medium">
+                        Tích vào để nhận sao thưởng ngay
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptics.selection();
+                      setActiveTab('tasks');
+                    }}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition active:scale-95 cursor-pointer"
+                  >
+                    Xem tất cả ({kidTasks.length}) ➔
+                  </button>
+                </div>
+
+                {/* List of 2-3 preview tasks */}
+                <div className="space-y-2">
+                  {kidTasks.slice(0, 3).map((task) => {
+                    const isPending = task.status === 'pending_approval';
+                    return (
+                      <div
+                        key={task.id}
+                        onClick={() => handleTaskCheck(task.id)}
+                        className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer active:scale-[0.98] ${
+                          task.completed
+                            ? 'bg-emerald-50/70 border-emerald-200/70 text-emerald-900'
+                            : isPending
+                            ? 'bg-amber-50/90 border-amber-300 text-amber-950 shadow-2xs'
+                            : 'bg-slate-50/80 hover:bg-slate-100/70 border-slate-200/80 text-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <button
+                            type="button"
+                            className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${
+                              task.completed
+                                ? 'bg-emerald-500 text-white shadow-2xs'
+                                : isPending
+                                ? 'bg-amber-500 text-white shadow-2xs animate-pulse'
+                                : 'bg-white border-2 border-slate-300 text-transparent'
+                            }`}
+                          >
+                            {task.completed ? (
+                              <CheckCircle2 size={15} className="stroke-[3]" />
+                            ) : isPending ? (
+                              <Clock size={13} className="text-white" />
+                            ) : (
+                              <CheckCircle2 size={15} />
+                            )}
+                          </button>
+                          <div className="min-w-0">
+                            <span className={`text-xs font-bold truncate block ${
+                              task.completed ? 'line-through text-slate-400' : 'text-slate-800'
+                            }`}>
+                              {task.title}
+                            </span>
+                            {isPending && (
+                              <span className="text-[10px] text-amber-700 font-semibold block">
+                                ⏳ Đã nộp bài • Chờ bố mẹ duyệt
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isPending ? (
+                            <span className="px-2 py-0.5 rounded-full text-[9.5px] font-black bg-amber-200/80 text-amber-900 border border-amber-300 flex items-center gap-0.5">
+                              Chờ duyệt ⏳
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-0.5">
+                              +{(task as any).starsReward || task.stars} ⭐
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {kidTasks.length === 0 && (
+                    <div className="py-4 text-center text-xs text-slate-400 font-medium">
+                      Chưa có nhiệm vụ nào hôm nay. Bé hãy nghỉ ngơi nhé! 🌈
+                    </div>
+                  )}
+                </div>
+              </div>
+
+{/* Unified Settings & System Controls Shortcut */}
               <button
                 type="button"
                 onClick={() => setShowKidControlPanel(true)}
@@ -3191,7 +4031,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                         </span>
                       )}
                     </h4>
-                    <p className="text-[10.5px] text-slate-500 font-medium mt-0.5">
+                    <p className="text-[11px] text-slate-500 font-medium mt-0.5">
                       Cấp quyền bảo vệ • Đặt làm Launcher • Âm lượng & Độ sáng
                     </p>
                   </div>
@@ -3211,7 +4051,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     </div>
                     <div>
                       <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                        <span>Màn Hình Khởi Chạy (Launcher)</span>
+                        <span>Kho Ứng Dụng An Toàn Của Bé 🚀</span>
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
                           {filteredLauncherApps.length}
                         </span>
@@ -3230,7 +4070,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                       type="button"
                       onClick={() => {
                         haptics.light();
-                        loadInstalledApps();
+                        loadInstalledApps(true);
                         showToast('🔄 Đang quét lại ứng dụng trên máy...');
                       }}
                       disabled={isScanningApps}
@@ -3248,7 +4088,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                           haptics.light();
                           setAppViewMode('grid');
                         }}
-                        className={`p-1 rounded-lg transition-all ${
+                        className={`p-1.5 rounded-lg transition-all ${
                           appViewMode === 'grid'
                             ? 'bg-white text-blue-600 shadow-xs font-bold'
                             : 'text-slate-400 hover:text-slate-600'
@@ -3263,7 +4103,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                           haptics.light();
                           setAppViewMode('list');
                         }}
-                        className={`p-1 rounded-lg transition-all ${
+                        className={`p-1.5 rounded-lg transition-all ${
                           appViewMode === 'list'
                             ? 'bg-white text-blue-600 shadow-xs font-bold'
                             : 'text-slate-400 hover:text-slate-600'
@@ -3331,14 +4171,14 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                   </div>
 
                   {/* Filter Chips */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-[10.5px] font-semibold">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs font-semibold">
                     <button
                       type="button"
                       onClick={() => {
                         haptics.light();
                         setAppCategoryFilter('all');
                       }}
-                      className={`px-2.5 py-1 rounded-full whitespace-nowrap transition-all ${
+                      className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all ${
                         appCategoryFilter === 'all'
                           ? 'bg-blue-600 text-white shadow-xs'
                           : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
@@ -3352,7 +4192,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                         haptics.light();
                         setAppCategoryFilter('allowed');
                       }}
-                      className={`px-2.5 py-1 rounded-full whitespace-nowrap transition-all flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all flex items-center gap-1 ${
                         appCategoryFilter === 'allowed'
                           ? 'bg-emerald-600 text-white shadow-xs'
                           : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
@@ -3367,7 +4207,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                         haptics.light();
                         setAppCategoryFilter('study');
                       }}
-                      className={`px-2.5 py-1 rounded-full whitespace-nowrap transition-all flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all flex items-center gap-1 ${
                         appCategoryFilter === 'study'
                           ? 'bg-amber-600 text-white shadow-xs'
                           : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
@@ -3382,7 +4222,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                         haptics.light();
                         setAppCategoryFilter('blocked');
                       }}
-                      className={`px-2.5 py-1 rounded-full whitespace-nowrap transition-all flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all flex items-center gap-1 ${
                         appCategoryFilter === 'blocked'
                           ? 'bg-rose-600 text-white shadow-xs'
                           : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
@@ -3479,7 +4319,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                             )}
                           </div>
 
-                          <span className="text-[10px] font-bold text-slate-800 mt-1.5 truncate w-full text-center leading-tight">
+                          <span className="text-[11px] font-bold text-slate-800 mt-1.5 truncate w-full text-center leading-tight">
                             {app.name}
                           </span>
                         </button>
@@ -3654,49 +4494,79 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
 
                 {kidTasks.length === 0 ? (
                   <div className="bg-white rounded-3xl p-6 text-center border border-slate-200/80 shadow-xs space-y-2">
-                    <p className="text-3xl">🎉</p>
-                    <h4 className="text-xs font-bold text-slate-700">Hôm nay không có nhiệm vụ nào!</h4>
-                    <p className="text-[11px] text-slate-400">Bố mẹ sẽ giao thêm nhiệm vụ cho con sớm nhé.</p>
+                    <div className="text-4xl animate-bounce" style={{ animationDuration: '2s' }}>🐻</div>
+                    <h4 className="text-xs font-bold text-slate-700">Tuyệt vời! Không có nhiệm vụ nào hôm nay!</h4>
+                    <p className="text-[11px] text-slate-400">Bé được nghỉ ngơi thoải mái nhé! Bố mẹ sẽ giao thêm sớm. 🌈</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {kidTasks.map((task, idx) => (
-                      <div
-                        key={`${task.id}-${idx}`}
-                        onClick={() => handleTaskCheck(task.id)}
-                        className={`p-3.5 rounded-2xl border transition cursor-pointer flex items-center justify-between active:scale-[0.98] ${
-                          task.completed
-                            ? 'bg-emerald-50/70 border-emerald-200 text-slate-600 shadow-2xs'
-                            : 'bg-white border-slate-200/80 shadow-xs hover:border-amber-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3 min-w-0 pr-2">
-                          <div
-                            className={`w-7 h-7 rounded-xl border-2 flex items-center justify-center transition shrink-0 ${
-                              task.completed
-                                ? 'bg-emerald-500 border-emerald-500 text-white shadow-xs'
-                                : 'border-slate-300 bg-white'
-                            }`}
-                          >
-                            {task.completed && <CheckCircle2 size={16} />}
-                          </div>
-                          <div className="min-w-0">
-                            <h4
-                              className={`text-xs font-bold truncate ${
-                                task.completed ? 'line-through text-slate-400' : 'text-slate-800'
+                    {kidTasks.map((task, idx) => {
+                      const isPending = task.status === 'pending_approval';
+                      return (
+                        <div
+                          key={`${task.id}-${idx}`}
+                          onClick={() => handleTaskCheck(task.id)}
+                          className={`p-3.5 rounded-2xl border transition cursor-pointer flex items-center justify-between active:scale-[0.98] ${
+                            task.completed
+                              ? 'bg-emerald-50/70 border-emerald-200 text-slate-600 shadow-2xs'
+                              : isPending
+                              ? 'bg-amber-50/90 border-amber-300 text-amber-950 shadow-xs'
+                              : 'bg-white border-slate-200/80 shadow-xs hover:border-amber-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3 min-w-0 pr-2">
+                            <div
+                              className={`w-7 h-7 rounded-xl border-2 flex items-center justify-center transition shrink-0 ${
+                                task.completed
+                                  ? 'bg-emerald-500 border-emerald-500 text-white shadow-xs'
+                                  : isPending
+                                  ? 'bg-amber-500 border-amber-500 text-white shadow-xs animate-pulse'
+                                  : 'border-slate-300 bg-white'
                               }`}
                             >
-                              {task.title}
-                            </h4>
-                            <span className="text-[10px] text-slate-400 font-medium">{task.subject}</span>
+                              {task.completed ? (
+                                <CheckCircle2 size={16} />
+                              ) : isPending ? (
+                                <Clock size={14} className="text-white" />
+                              ) : null}
+                            </div>
+                            <div className="min-w-0">
+                              <h4
+                                className={`text-xs font-bold truncate ${
+                                  task.completed ? 'line-through text-slate-400' : 'text-slate-800'
+                                }`}
+                              >
+                                {task.title}
+                              </h4>
+                              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                <span className="text-[10px] text-slate-400 font-medium">{task.subject}</span>
+                                {isPending ? (
+                                  <span className="text-[9.5px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded-md border border-amber-200">
+                                    ⏳ Chờ bố mẹ duyệt
+                                  </span>
+                                ) : !task.completed ? (
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md border ${
+                                    task.requiresApproval !== false
+                                      ? 'text-indigo-700 bg-indigo-50 border-indigo-100'
+                                      : 'text-emerald-700 bg-emerald-50 border-emerald-100'
+                                  }`}>
+                                    {task.requiresApproval !== false ? '🛡️ Bố mẹ duyệt' : '⚡ Nhận sao ngay'}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
                           </div>
-                        </div>
 
-                        <span className="text-xs font-black text-amber-500 flex items-center gap-0.5 shrink-0 ml-2 bg-amber-50 px-2 py-1 rounded-xl border border-amber-200">
-                          +{task.stars} <Star size={13} className="fill-amber-500 inline" />
-                        </span>
-                      </div>
-                    ))}
+                          <span className={`text-xs font-black flex items-center gap-0.5 shrink-0 ml-2 px-2 py-1 rounded-xl border ${
+                            isPending
+                              ? 'text-amber-800 bg-amber-100 border-amber-300'
+                              : 'text-amber-500 bg-amber-50 border-amber-200'
+                          }`}>
+                            +{task.stars} <Star size={13} className="fill-amber-500 inline" />
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -3784,15 +4654,22 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                                 <h4 className="text-xs font-bold text-slate-900 leading-tight truncate">{rew.title}</h4>
                                 {isSpecificForMe ? (
                                   <span className="px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 font-bold text-[8.5px] border border-amber-200/80 shrink-0">
-                                    ⭐ Quà riêng của con
+                                    ⭐ Quà riêng
                                   </span>
                                 ) : (
                                   <span className="px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-600 font-medium text-[8.5px] border border-slate-200 shrink-0">
                                     🌐 Kho chung
                                   </span>
                                 )}
+                                <span className={`px-1.5 py-0.2 rounded-md font-bold text-[8.5px] border shrink-0 ${
+                                  rew.requiresApproval !== false
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                }`}>
+                                  {rew.requiresApproval !== false ? '🛡️ Cần duyệt' : '⚡ Đổi ngay'}
+                                </span>
                               </div>
-                              <p className="text-[10px] text-slate-400 truncate mt-0.5">{rew.description}</p>
+                              <p className="text-[11px] text-slate-400 truncate mt-0.5">{rew.description}</p>
                             </div>
                           </div>
                           <button
@@ -3807,7 +4684,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                           >
                             <span>{rew.starsCost}</span>
                             <Star size={11} className={canAfford ? 'fill-white text-white' : 'fill-slate-400 text-slate-400'} />
-                            <span>{canAfford ? 'Đổi' : `Thiếu ${rew.starsCost - kidStars}`}</span>
+                            <span>{canAfford ? (rew.requiresApproval !== false ? 'Xin đổi' : 'Đổi') : `Thiếu ${rew.starsCost - kidStars}`}</span>
                           </button>
                         </div>
                       );
@@ -3825,8 +4702,18 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                             <span>{rd.icon}</span>
                             <span className="font-semibold text-emerald-900">{rd.rewardTitle}</span>
                           </div>
-                          <span className="text-[9.5px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-md">
-                            {rd.status === 'completed' ? 'Đã nhận quà ✅' : 'Chờ bố mẹ trao ⏳'}
+                          <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded-md ${
+                            rd.status === 'completed'
+                              ? 'text-emerald-700 bg-emerald-100'
+                              : rd.status === 'rejected'
+                              ? 'text-rose-700 bg-rose-100'
+                              : 'text-amber-800 bg-amber-100'
+                          }`}>
+                            {rd.status === 'completed'
+                              ? 'Đã nhận quà ✅'
+                              : rd.status === 'rejected'
+                              ? 'Bố mẹ từ chối (Đã hoàn sao) ↩️'
+                              : 'Chờ bố mẹ trao ⏳'}
                           </span>
                         </div>
                       ))}
@@ -3969,6 +4856,9 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
                     haptics.light();
                     setActiveTab(tab.id);
                   }}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-label={`Tab ${tab.label}${tab.badge ? `, ${tab.badge} mục chưa hoàn thành` : ''}`}
                   className={`relative flex flex-col items-center justify-center py-1.5 px-3.5 rounded-full transition-all duration-200 active:scale-90 cursor-pointer ${
                     isActive
                       ? 'text-blue-600 bg-blue-50/80 font-bold'
@@ -4046,7 +4936,7 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
       />
 
       {/* 8. INTERACTIVE LOCK CHALLENGE MODAL (Math, Quiz, Steps, Countdown, Mealtime, Bedtime) */}
-      {(lockChallenge.isLocked || targetSettings.isLocked) && (
+      {(lockChallenge.isLocked || targetSettings.isLocked || ((targetSettings.screenTimeLimitMinutes || 135) > 0 && (targetSettings.screenTime?.todayTotalMinutes || 0) >= (targetSettings.screenTimeLimitMinutes || 135) && !bypassedRoutinesRef.current.screentime)) && (
         <div className="absolute inset-0 z-[100] bg-slate-950/95 backdrop-blur-md text-white p-6 flex flex-col justify-between animate-in fade-in duration-200">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -4887,6 +5777,146 @@ export const KidApp: React.FC<KidAppProps> = ({ simulatedChildId }) => {
           }}
         />
       )}
+
+      {/* ─── FULL-SCREEN / CENTERED EMERGENCY SOS MODAL ─── */}
+      {activeSOS && isSosModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-sm bg-gradient-to-b from-slate-900 via-rose-950/90 to-slate-900 border-2 border-rose-500/80 rounded-3xl p-5 shadow-2xl text-white relative space-y-4">
+            
+            {/* Pulsing Siren Icon Header */}
+            <div className="text-center space-y-2">
+              <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full bg-rose-500/30 animate-ping duration-1000" />
+                <div className="absolute inset-1 rounded-full bg-rose-600/40 animate-pulse" />
+                <div className="relative w-16 h-16 rounded-full bg-rose-600 flex items-center justify-center shadow-lg shadow-rose-600/50">
+                  <AlertOctagon size={36} className="text-white animate-bounce" />
+                </div>
+              </div>
+              <h2 className="text-lg font-black text-white tracking-wide uppercase">
+                Báo Động Cứu Hộ Khẩn Cấp (SOS)
+              </h2>
+              <p className="text-xs text-rose-200">
+                Tín hiệu đang được truyền đi để Bố Mẹ và người thân biết vị trí của con.
+              </p>
+            </div>
+
+            {/* Delivery Status Card */}
+            <div className="p-3.5 bg-slate-800/90 border border-slate-700/80 rounded-2xl space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-bold text-[11px]">Trạng thái truyền tin:</span>
+                {sosDeliveryStatus === 'sending' && (
+                  <span className="text-amber-400 font-black flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    Đang gửi qua mạng...
+                  </span>
+                )}
+                {sosDeliveryStatus === 'delivered' && (
+                  <span className="text-emerald-400 font-black flex items-center gap-1">
+                    <CheckCircle2 size={13} />
+                    Bố Mẹ đã nhận tín hiệu
+                  </span>
+                )}
+                {sosDeliveryStatus === 'failed' && (
+                  <span className="text-rose-400 font-black flex items-center gap-1">
+                    <AlertOctagon size={13} />
+                    Mất mạng / Không gửi được
+                  </span>
+                )}
+              </div>
+
+              {/* GPS Address */}
+              <div className="flex items-start gap-1.5 text-slate-300 text-[11px] pt-1 border-t border-slate-700/50">
+                <MapPin size={13} className="text-rose-400 shrink-0 mt-0.5" />
+                <span className="line-clamp-2">{child.currentAddress || 'Đang cập nhật tọa độ GPS...'}</span>
+              </div>
+
+              {/* Auto Call Countdown Alert Banner */}
+              {sosDeliveryStatus === 'failed' && (
+                <div className="mt-2 p-2.5 bg-amber-500/20 border border-amber-500/50 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between text-amber-300 font-black text-[11px]">
+                    <span className="flex items-center gap-1">
+                      <PhoneCall size={13} className="animate-bounce" />
+                      Tự động gọi Bố Mẹ:
+                    </span>
+                    <span className="text-sm font-extrabold text-white bg-amber-600 px-2 py-0.5 rounded-lg animate-pulse">
+                      {autoCallCountdown !== null ? `${autoCallCountdown}s` : 'Đang quay số...'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-amber-200/90 leading-tight">
+                    Do máy con đang mất mạng hoặc kết nối chập chờn, máy sẽ tự động quay số gọi trực tiếp cho Bố Mẹ ({parentEmergencyPhone}).
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-1">
+              {/* Primary Green Call Button */}
+              <button
+                type="button"
+                onClick={handleCallParentImmediately}
+                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all cursor-pointer ring-2 ring-emerald-400/40"
+              >
+                <Phone size={18} className="animate-bounce" />
+                <span>GỌI CHO BỐ MẸ NGAY ({parentEmergencyPhone})</span>
+              </button>
+
+              {/* Cancel SOS Button */}
+              <button
+                type="button"
+                onClick={() => setShowCancelSosConfirm(true)}
+                className="w-full py-2.5 bg-slate-800/90 hover:bg-slate-700 text-rose-300 hover:text-white border border-rose-500/50 hover:border-rose-400 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+              >
+                <ShieldCheck size={16} />
+                <span>HỦY BÁO ĐỘNG SOS (TÔI ĐÃ AN TOÀN)</span>
+              </button>
+
+              {/* Minimize Modal Button */}
+              <button
+                type="button"
+                onClick={() => setIsSosModalOpen(false)}
+                className="w-full py-1.5 text-slate-400 hover:text-slate-200 text-[11px] font-bold transition text-center cursor-pointer"
+              >
+                Thu nhỏ cửa sổ (vẫn giữ báo động)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── CANCEL SOS CONFIRMATION MODAL ─── */}
+      {showCancelSosConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-xs bg-slate-900 border border-slate-700 rounded-3xl p-5 shadow-2xl text-white space-y-3.5 text-center">
+            <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
+              <ShieldCheck size={26} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-white">Xác nhận hủy báo động SOS?</h3>
+              <p className="text-xs text-slate-300 mt-1">
+                Bố Mẹ sẽ nhận được thông báo rằng con đã an toàn. Còi báo động và cuộc gọi khẩn cấp sẽ dừng lại.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCancelSosConfirm(false)}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Tiếp tục báo động
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelKidSOS}
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-600/30 transition cursor-pointer active:scale-95"
+              >
+                Hủy SOS ngay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

@@ -1001,9 +1001,18 @@ const server = http.createServer(async (req, res) => {
             const cur = settingsDb[data.childId] || {};
             // BUG-01 FIX: Bảo vệ isLocked khỏi bị telemetry cũ ghi đè sau khi ACK vừa cập nhật
             // Chỉ nhận isLocked từ telemetry nếu telemetry mới hơn lần ACK/settings update gần nhất
-            const telemetryTime = typeof data.timestamp === 'number' ? data.timestamp : Date.now();
+            const usedMinutes = data.screenTimeUsedMinutes != null ? data.screenTimeUsedMinutes : (cur.screenTimeUsedMinutes || (cur.screenTime && cur.screenTime.todayTotalMinutes) || 0);
+            const limitMinutes = cur.screenTimeLimitMinutes || 135;
+            const isScreenTimeExpired = limitMinutes > 0 && usedMinutes >= limitMinutes;
+
+            const telemetryTime = typeof data.timestamp === 'number' ? data.timestamp : (data.savedAt ? Date.parse(data.savedAt) : Date.now());
             const settingsLastUpdate = cur.updatedAt || 0;
-            const isLockSafeToUpdate = !cur.updatedAt || telemetryTime > settingsLastUpdate;
+            const isLockSafeToUpdate = !cur.updatedAt || telemetryTime >= settingsLastUpdate;
+
+            const updatedIsLocked = isScreenTimeExpired || (isLockSafeToUpdate ? (data.isLocked != null ? Boolean(data.isLocked) : cur.isLocked) : cur.isLocked);
+            const updatedLockType = isScreenTimeExpired ? 'instant' : (isLockSafeToUpdate ? (data.lockType != null ? data.lockType : cur.lockType) : cur.lockType);
+            const updatedLockTitle = isScreenTimeExpired ? 'Đã hết thời gian dùng máy hôm nay!' : (isLockSafeToUpdate ? (data.lockTitle != null ? data.lockTitle : cur.lockTitle) : cur.lockTitle);
+
             settingsDb[data.childId] = {
               ...cur,
               childId: data.childId,
@@ -1014,11 +1023,18 @@ const server = http.createServer(async (req, res) => {
               isScreenOn: data.isScreenOn != null ? data.isScreenOn : cur.isScreenOn,
               screenState: data.screenState || cur.screenState,
               activeOpenedApp: data.activeOpenedApp || cur.activeOpenedApp,
-              screenTimeUsedMinutes: data.screenTimeUsedMinutes != null ? data.screenTimeUsedMinutes : cur.screenTimeUsedMinutes,
+              screenTimeUsedMinutes: usedMinutes,
               hasUsageAccessPermission: data.hasUsageAccessPermission != null ? data.hasUsageAccessPermission : cur.hasUsageAccessPermission,
-              isLocked: isLockSafeToUpdate ? (data.isLocked != null ? data.isLocked : cur.isLocked) : cur.isLocked,
-              lockType: isLockSafeToUpdate ? (data.lockType != null ? data.lockType : cur.lockType) : cur.lockType,
-              lockTitle: isLockSafeToUpdate ? (data.lockTitle != null ? data.lockTitle : cur.lockTitle) : cur.lockTitle,
+              isLocked: updatedIsLocked,
+              lockType: updatedLockType,
+              lockTitle: updatedLockTitle,
+              lockChallenge: {
+                ...(cur.lockChallenge || {}),
+                isLocked: updatedIsLocked,
+                lockType: updatedLockType || (updatedIsLocked ? 'instant' : 'none'),
+                title: updatedLockTitle || (updatedIsLocked ? 'Thiết bị đang bị khóa' : ''),
+                description: updatedIsLocked ? (cur.lockChallenge?.description || `Bé đã dùng đủ ${Math.floor(limitMinutes / 60)}h ${limitMinutes % 60}p giới hạn được bố mẹ đặt.`) : '',
+              },
               sensorValues: data.sensors ? { ...(cur.sensorValues || {}), ...data.sensors } : cur.sensorValues,
               networkInfo: data.network ? { ...(cur.networkInfo || {}), ...data.network } : cur.networkInfo,
               updatedAt: Date.now(),
@@ -1042,8 +1058,8 @@ const server = http.createServer(async (req, res) => {
                   if (data.deviceName) ch.deviceName = data.deviceName;
                   if (data.model) ch.model = data.model;
                   // BUG-12 FIX: Đồng bộ isLocked vào children.json để khớp với child_settings.json
-                  if (data.isLocked != null) ch.isLocked = data.isLocked;
-                  if (data.lockType != null) ch.lockType = data.lockType;
+                  ch.isLocked = updatedIsLocked;
+                  ch.lockType = updatedLockType;
                   matched = true;
                 }
               }
@@ -1146,12 +1162,13 @@ const server = http.createServer(async (req, res) => {
       const status = parsedUrl.searchParams.get('status');
       const commands = readDb('commands');
 
-      // BUG-11 FIX: Auto-expire lệnh pending quá 5 phút để tránh thực thi lệnh cũ
-      const CMD_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút
+      const CMD_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút cho các lệnh thông thường (buzz_siren, sync_request)
       const now = Date.now();
       let expiredAny = false;
       for (const cmd of commands) {
-        if (cmd.status === 'pending' && cmd.timestamp && (now - cmd.timestamp > CMD_TIMEOUT_MS)) {
+        const isUnlockOrUnpair = cmd.command === 'unlock_now' || cmd.type === 'unlock_now' || cmd.command === 'unpair_device' || cmd.type === 'unpair_device';
+        const timeoutThreshold = isUnlockOrUnpair ? (24 * 60 * 60 * 1000) : CMD_TIMEOUT_MS;
+        if (cmd.status === 'pending' && cmd.timestamp && (now - cmd.timestamp > timeoutThreshold)) {
           cmd.status = 'timeout';
           cmd.expiredAt = new Date().toISOString();
           expiredAny = true;
@@ -1172,7 +1189,32 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 4.1 Remote Command ACK API (Kid sends execution feedback back to Parent)
-  if (pathname === '/api/command/ack') {
+  if (pathname === '/api/command/ack' || pathname === '/api/command/lastack') {
+    if (req.method === 'GET') {
+      const childId = parsedUrl.searchParams.get('childId');
+      const commands = readDb('commands');
+      const matches = commands.filter(c => (!childId || c.childId === childId) && (c.status === 'executed' || c.status === 'received' || c.acknowledgedAt));
+      const last = matches.length > 0 ? matches[matches.length - 1] : null;
+      if (last) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          id: last.id,
+          commandId: last.id,
+          command: last.type || last.command,
+          status: last.status || 'executed',
+          childId: last.childId,
+          childName: last.childName,
+          deviceName: last.deviceName,
+          detail: last.detail,
+          executedAt: last.acknowledgedAt ? new Date(last.acknowledgedAt).getTime() : Date.now(),
+        }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(null));
+      }
+      return;
+    }
+
     if (req.method === 'POST') {
       const ack = await parseJsonBody(req);
       const cmdId = ack && (ack.commandId || ack.id);
@@ -1231,11 +1273,20 @@ const server = http.createServer(async (req, res) => {
               settingsModified = true;
             } else if (cmdType === 'extend_time') {
               const extra = ((targetCmd && targetCmd.payload) || ack.payload)?.minutes || 15;
-              childSet.screenTimeLimitMinutes = (childSet.screenTimeLimitMinutes || 135) + extra;
+              const usedMins = (childSet.screenTime && childSet.screenTime.todayTotalMinutes) || 0;
+              const limitMins = childSet.screenTimeLimitMinutes || 135;
+              const baseLimit = Math.max(limitMins, usedMins);
+              childSet.screenTimeLimitMinutes = extra === -1 ? Math.max(baseLimit, 1440) : (baseLimit + extra);
               childSet.isLocked = false;
               if (childSet.lockChallenge) {
                 childSet.lockChallenge.isLocked = false;
                 childSet.lockChallenge.lockType = 'none';
+                childSet.lockChallenge.title = '';
+                childSet.lockChallenge.description = '';
+              }
+              if (childSet.smartRoutines) {
+                childSet.smartRoutines.mealtimeLock = false;
+                childSet.smartRoutines.bedtimeLock = false;
               }
               settingsModified = true;
             }
@@ -1247,7 +1298,7 @@ const server = http.createServer(async (req, res) => {
             }
 
             // Synchronize children.json lock state
-            if (cmdType === 'lock_now' || cmdType === 'unlock_now') {
+            if (cmdType === 'lock_now' || cmdType === 'unlock_now' || cmdType === 'extend_time') {
               try {
                 const childrenDb = readDb('children');
                 let cModified = false;
@@ -1585,6 +1636,7 @@ Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
         }
       }
       writeDb('sos', allSos);
+      sosRateLimitMap.delete(childId);
 
       broadcastRealtime('sos', { childId, active: false, resolvedAt: Date.now() });
 
@@ -1661,6 +1713,90 @@ Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
         target.approvedMinutes = body.approvedMinutes !== undefined ? Number(body.approvedMinutes) : target.requestedMinutes;
         target.resolvedAt = Date.now();
         writeDb('time_requests', allRequests);
+
+        if (target.status === 'approved') {
+          const approvedMins = target.approvedMinutes !== undefined ? Number(target.approvedMinutes) : (target.requestedMinutes || 15);
+          const effectiveChildId = target.childId;
+
+          // 1. Cập nhật settings.json: mở khóa máy và gia hạn thời gian sử dụng
+          try {
+            const settings = readDb('settings');
+            const childSet = settings[effectiveChildId] || {};
+            childSet.isLocked = false;
+            childSet.lockChallenge = {
+              ...(childSet.lockChallenge || {}),
+              isLocked: false,
+              lockType: 'none',
+              title: '',
+              description: '',
+            };
+            if (childSet.smartRoutines) {
+              childSet.smartRoutines.mealtimeLock = false;
+              childSet.smartRoutines.bedtimeLock = false;
+            }
+            const usedMins = (childSet.screenTime && childSet.screenTime.todayTotalMinutes) || 0;
+            const curLimit = childSet.screenTimeLimitMinutes || 135;
+            const baseLimit = Math.max(curLimit, usedMins);
+            childSet.screenTimeLimitMinutes = approvedMins === -1 ? Math.max(baseLimit, 1440) : (baseLimit + approvedMins);
+            settings[effectiveChildId] = childSet;
+            writeDb('settings', settings);
+            broadcastRealtime('settings', { childId: effectiveChildId, settings: childSet });
+          } catch (e) {
+            console.error('[server] Error updating settings on resolve time request:', e.message);
+          }
+
+          // 2. Cập nhật children.json: isLocked = false
+          try {
+            const childrenDb = readDb('children');
+            let cModified = false;
+            for (const pId of Object.keys(childrenDb)) {
+              if (Array.isArray(childrenDb[pId])) {
+                for (const ch of childrenDb[pId]) {
+                  if (ch.id === effectiveChildId) {
+                    ch.isLocked = false;
+                    ch.updatedAt = Date.now();
+                    cModified = true;
+                  }
+                }
+              }
+            }
+            if (cModified) {
+              writeDb('children', childrenDb);
+              broadcastRealtime('children_updated', { children: childrenDb });
+            }
+          } catch (_) {}
+
+          // 3. Đẩy Remote Command 'unlock_now' vào queue và broadcast để máy con nhận ngay lập tức qua SSE hoặc active polling
+          try {
+            const nowCmdId = 'cmd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+            const unlockCmd = {
+              id: nowCmdId,
+              command: 'unlock_now',
+              type: 'unlock_now',
+              status: 'pending',
+              payload: {
+                minutes: approvedMins,
+                extraMinutes: approvedMins,
+                screentimeBypass: true,
+                unlockedAt: Date.now(),
+                source: 'time_request_approved',
+              },
+              childId: effectiveChildId,
+              childName: target.childName || '',
+              timestamp: Date.now(),
+              createdAt: new Date().toISOString(),
+              title: approvedMins === -1 ? 'Mở khóa dùng tự do 🔓' : `Mở khóa + Gia hạn ${approvedMins}p 🔓`,
+            };
+            const allCommands = readDb('commands');
+            allCommands.unshift(unlockCmd);
+            if (allCommands.length > 500) allCommands.pop();
+            writeDb('commands', allCommands);
+            broadcastRealtime('command', unlockCmd);
+            broadcastRealtime('remote_command', unlockCmd);
+          } catch (e) {
+            console.error('[server] Error queueing unlock command on resolve time request:', e.message);
+          }
+        }
 
         broadcastRealtime('time_request_resolved', target);
 
@@ -2047,6 +2183,46 @@ Thông tin bé hiện tại: ${JSON.stringify(childContext || {})}`;
           childrenDb[parentId].push(childRecord);
         }
         writeDb('children', childrenDb);
+
+        // Synchronize updated profile to pairings.json
+        try {
+          const pairingsDb = readDb('pairings') || {};
+          let pMod = false;
+          for (const code of Object.keys(pairingsDb)) {
+            const p = pairingsDb[code];
+            if (p && (p.childId === child.id || (p.parentId === parentId && p.childName === 'Bé yêu'))) {
+              if (child.name) p.childName = child.name;
+              if (child.avatar) p.childAvatar = child.avatar;
+              if (child.age) p.childAge = child.age;
+              pMod = true;
+            }
+          }
+          if (pMod) writeDb('pairings', pairingsDb);
+        } catch (_) {}
+
+        // Synchronize name to child_settings.json
+        try {
+          const settingsDb = readDb('settings') || {};
+          if (settingsDb[child.id]) {
+            if (child.name) settingsDb[child.id].childName = child.name;
+            writeDb('settings', settingsDb);
+          }
+        } catch (_) {}
+
+        // Broadcast profile update command to kid device
+        broadcastRealtime('command', {
+          id: `cmd_prof_${Date.now()}`,
+          command: 'update_profile',
+          type: 'update_profile',
+          childId: child.id,
+          parentId,
+          payload: {
+            childName: child.name,
+            avatar: child.avatar,
+            age: child.age,
+          },
+          timestamp: Date.now(),
+        });
 
         const enrichedList = childrenDb[parentId].map(enrichChildWithLiveStatus);
         broadcastRealtime('children_updated', { parentId, children: enrichedList });

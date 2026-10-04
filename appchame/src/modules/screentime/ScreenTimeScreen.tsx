@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, TrendingDown, Clock, Sliders, Check, Sparkles, Hourglass } from 'lucide-react';
 import { useAppState } from '@shared/store';
-import { ChildSwitcherBar } from '../../components/ChildSwitcherBar';
 import { Kids360ScreenTimeGauge } from '../../components/Kids360ScreenTimeGauge';
 import { Kids360DayTimeline } from '../../components/Kids360DayTimeline';
 import { UsageAccessPermissionAlert } from '../../components/UsageAccessPermissionAlert';
@@ -93,11 +92,6 @@ export const ScreenTimeScreen: React.FC<ScreenTimeScreenProps> = ({ onBack, onNa
             <p className="text-[10px] text-slate-500 font-medium">Cài đặt giới hạn độc lập cho từng bé</p>
           </div>
         </div>
-      </div>
-
-      {/* Multi-Child Selector */}
-      <div className="px-4 pt-3">
-        <ChildSwitcherBar />
       </div>
 
       {/* Usage Permission Prompt: Warns parent if kid hasn't granted PACKAGE_USAGE_STATS */}

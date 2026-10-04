@@ -1,4 +1,4 @@
-﻿import { safeCopyToClipboard } from './clipboard';
+import { safeCopyToClipboard } from './clipboard';
 
 /**
  * Safe Phone Call Utility
@@ -15,7 +15,16 @@ export function makePhoneCall(phoneNumber: string): boolean {
 
   const telUri = `tel:${cleanNumber}`;
 
-  // 1. On Native Capacitor: open system dialer without unloading WebView
+  // 1. On Native Capacitor with KidPermissionsPlugin: use direct intent call/dial
+  try {
+    const plugin = (window as any).Capacitor?.Plugins?.KidPermissionsPlugin;
+    if (plugin && typeof plugin.makeEmergencyPhoneCall === 'function') {
+      plugin.makeEmergencyPhoneCall({ phoneNumber: cleanNumber }).catch(() => {});
+      return true;
+    }
+  } catch (e) {}
+
+  // 2. On Native Capacitor: open system dialer without unloading WebView
   try {
     if ((window as any).Capacitor?.isNativePlatform?.()) {
       window.open(telUri, '_system');
