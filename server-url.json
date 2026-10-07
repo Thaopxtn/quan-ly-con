@@ -1,11 +1,11 @@
 {
-  "url": "https://diesel-dictionary-sydney-experiencing.trycloudflare.com",
+  "url": "https://council-biol-wyoming-sleeping.trycloudflare.com",
   "localIps": [
+    "http://172.23.128.1:3000",
     "http://192.168.1.4:3000",
     "http://192.168.235.1:3000",
-    "http://192.168.18.1:3000",
-    "http://172.31.144.1:3000"
+    "http://192.168.18.1:3000"
   ],
-  "updatedAt": 1791217821054,
-  "dateStr": "2026-10-05T16:30:21.054Z"
+  "updatedAt": 1791345941802,
+  "dateStr": "2026-10-07T04:05:41.802Z"
 }
