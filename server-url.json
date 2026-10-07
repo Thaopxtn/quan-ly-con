@@ -1,11 +1,11 @@
 {
-  "url": "https://council-biol-wyoming-sleeping.trycloudflare.com",
+  "url": "https://mhz-delicious-depend-cut.trycloudflare.com",
   "localIps": [
-    "http://172.23.128.1:3000",
+    "http://172.23.80.1:3000",
     "http://192.168.1.4:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000"
   ],
-  "updatedAt": 1791345941802,
-  "dateStr": "2026-10-07T04:05:41.802Z"
+  "updatedAt": 1791348248188,
+  "dateStr": "2026-10-07T04:44:08.188Z"
 }
