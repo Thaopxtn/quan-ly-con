@@ -1,12 +1,12 @@
 {
-  "url": "https://relating-london-meter-bookmarks.trycloudflare.com",
+  "url": "https://inter-parks-oak-happening.trycloudflare.com",
   "localIps": [
     "http://192.168.1.4:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.29.96.1:3000"
+    "http://172.31.0.1:3000"
   ],
-  "updatedAt": 1791940369687,
-  "dateStr": "2026-10-14T01:12:49.687Z"
+  "updatedAt": 1792057402561,
+  "dateStr": "2026-10-15T09:43:22.561Z"
 }
