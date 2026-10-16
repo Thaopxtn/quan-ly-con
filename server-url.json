@@ -1,12 +1,12 @@
 {
-  "url": "https://inter-parks-oak-happening.trycloudflare.com",
+  "url": "https://mug-candidates-journals-heather.trycloudflare.com",
   "localIps": [
     "http://192.168.1.4:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.31.0.1:3000"
+    "http://172.17.240.1:3000"
   ],
-  "updatedAt": 1792057402561,
-  "dateStr": "2026-10-15T09:43:22.561Z"
+  "updatedAt": 1792134391096,
+  "dateStr": "2026-10-16T07:06:31.096Z"
 }
