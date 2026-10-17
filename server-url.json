@@ -1,12 +1,11 @@
 {
-  "url": "https://mug-candidates-journals-heather.trycloudflare.com",
+  "url": "https://api.trycloudflare.com",
   "localIps": [
-    "http://192.168.1.4:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.17.240.1:3000"
+    "http://172.28.80.1:3000"
   ],
-  "updatedAt": 1792134391096,
-  "dateStr": "2026-10-16T07:06:31.096Z"
+  "updatedAt": 1792251254880,
+  "dateStr": "2026-10-17T15:34:14.880Z"
 }

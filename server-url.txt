@@ -1,1 +1,1 @@
-https://mug-candidates-journals-heather.trycloudflare.com
+https://api.trycloudflare.com
