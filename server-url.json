@@ -1,11 +1,12 @@
 {
-  "url": "https://api.trycloudflare.com",
+  "url": "https://quantitative-link-machinery-heads.trycloudflare.com",
   "localIps": [
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
+    "http://192.168.1.20:3000",
     "http://172.28.80.1:3000"
   ],
-  "updatedAt": 1792251554283,
-  "dateStr": "2026-10-17T15:39:14.283Z"
+  "updatedAt": 1792251565569,
+  "dateStr": "2026-10-17T15:39:25.569Z"
 }
