@@ -1,12 +1,12 @@
 {
-  "url": "https://counter-shore-aud-worldcat.trycloudflare.com",
+  "url": "https://ricky-gender-reports-newspapers.trycloudflare.com",
   "localIps": [
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://192.168.1.11:3000",
-    "http://172.31.64.1:3000"
+    "http://192.168.1.7:3000",
+    "http://172.18.112.1:3000"
   ],
-  "updatedAt": 1792291725951,
-  "dateStr": "2026-10-18T02:48:45.951Z"
+  "updatedAt": 1792317142359,
+  "dateStr": "2026-10-18T09:52:22.359Z"
 }
