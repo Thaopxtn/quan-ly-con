@@ -1,12 +1,12 @@
 {
-  "url": "https://ricky-gender-reports-newspapers.trycloudflare.com",
+  "url": "https://cleaning-popular-constraint-prior.trycloudflare.com",
   "localIps": [
+    "http://192.168.1.42:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://192.168.1.7:3000",
-    "http://172.18.112.1:3000"
+    "http://172.19.32.1:3000"
   ],
-  "updatedAt": 1792317142359,
-  "dateStr": "2026-10-18T09:52:22.359Z"
+  "updatedAt": 1792377084688,
+  "dateStr": "2026-10-19T02:31:24.688Z"
 }
