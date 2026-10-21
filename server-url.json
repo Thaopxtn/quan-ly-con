@@ -1,12 +1,12 @@
 {
-  "url": "https://banners-matthew-contents-termination.trycloudflare.com",
+  "url": "https://icon-contribute-mitchell-gst.trycloudflare.com",
   "localIps": [
-    "http://192.168.1.42:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.21.80.1:3000"
+    "http://192.168.1.58:3000",
+    "http://172.31.128.1:3000"
   ],
-  "updatedAt": 1792517708682,
-  "dateStr": "2026-10-20T17:35:08.682Z"
+  "updatedAt": 1792554047157,
+  "dateStr": "2026-10-21T03:40:47.157Z"
 }
