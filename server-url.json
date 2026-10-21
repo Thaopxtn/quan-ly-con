@@ -1,5 +1,5 @@
 {
-  "url": "https://api.trycloudflare.com",
+  "url": "https://serum-week-personality-atmospheric.trycloudflare.com",
   "localIps": [
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
@@ -7,6 +7,6 @@
     "http://192.168.2.117:3000",
     "http://172.31.128.1:3000"
   ],
-  "updatedAt": 1792569598717,
-  "dateStr": "2026-10-21T07:59:58.717Z"
+  "updatedAt": 1792569612574,
+  "dateStr": "2026-10-21T08:00:12.574Z"
 }
