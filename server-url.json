@@ -1,12 +1,12 @@
 {
-  "url": "https://icon-contribute-mitchell-gst.trycloudflare.com",
+  "url": "https://api.trycloudflare.com",
   "localIps": [
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://192.168.1.58:3000",
+    "http://169.254.166.255:3000",
     "http://172.31.128.1:3000"
   ],
-  "updatedAt": 1792554047157,
-  "dateStr": "2026-10-21T03:40:47.157Z"
+  "updatedAt": 1792560137268,
+  "dateStr": "2026-10-21T05:22:17.268Z"
 }

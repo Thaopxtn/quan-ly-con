@@ -1,1 +1,1 @@
-https://icon-contribute-mitchell-gst.trycloudflare.com
+https://api.trycloudflare.com
