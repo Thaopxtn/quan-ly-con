@@ -1,12 +1,12 @@
 {
-  "url": "https://additions-judicial-prayer-feature.trycloudflare.com",
+  "url": "https://api.trycloudflare.com",
   "localIps": [
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://192.168.1.58:3000",
+    "http://192.168.2.117:3000",
     "http://172.31.128.1:3000"
   ],
-  "updatedAt": 1792561870637,
-  "dateStr": "2026-10-21T05:51:10.637Z"
+  "updatedAt": 1792569538343,
+  "dateStr": "2026-10-21T07:58:58.343Z"
 }
