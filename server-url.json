@@ -1,12 +1,12 @@
 {
-  "url": "https://serum-week-personality-atmospheric.trycloudflare.com",
+  "url": "https://signing-appropriations-indicates-ctrl.trycloudflare.com",
   "localIps": [
+    "http://192.168.1.29:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://192.168.2.117:3000",
-    "http://172.31.128.1:3000"
+    "http://172.28.64.1:3000"
   ],
-  "updatedAt": 1792569612574,
-  "dateStr": "2026-10-21T08:00:12.574Z"
+  "updatedAt": 1792737389157,
+  "dateStr": "2026-10-23T06:36:29.157Z"
 }
