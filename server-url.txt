@@ -1,1 +1,1 @@
-https://ladder-ask-paid-pursuit.trycloudflare.com
+https://api.trycloudflare.com
