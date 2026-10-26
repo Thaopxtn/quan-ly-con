@@ -1,12 +1,12 @@
 {
-  "url": "https://scheduled-shoot-adjustments-thumbnails.trycloudflare.com",
+  "url": "https://ladder-ask-paid-pursuit.trycloudflare.com",
   "localIps": [
-    "http://192.168.1.29:3000",
+    "http://192.168.2.61:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.28.208.1:3000"
+    "http://172.17.240.1:3000"
   ],
-  "updatedAt": 1792832809931,
-  "dateStr": "2026-10-24T09:06:49.931Z"
+  "updatedAt": 1793037258892,
+  "dateStr": "2026-10-26T17:54:18.892Z"
 }
