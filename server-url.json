@@ -1,12 +1,12 @@
 {
-  "url": "https://beverly-assumptions-charts-jade.trycloudflare.com",
+  "url": "https://distributed-introduce-allocated-workshop.trycloudflare.com",
   "localIps": [
     "http://192.168.1.6:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.17.240.1:3000"
+    "http://172.19.112.1:3000"
   ],
-  "updatedAt": 1793074808976,
-  "dateStr": "2026-10-27T04:20:08.976Z"
+  "updatedAt": 1793159533984,
+  "dateStr": "2026-10-28T03:52:13.984Z"
 }
