@@ -1,12 +1,12 @@
 {
-  "url": "https://mills-mercury-advantage-meals.trycloudflare.com",
+  "url": "https://described-effectively-lime-conservative.trycloudflare.com",
   "localIps": [
-    "http://192.168.1.6:3000",
+    "http://192.168.2.220:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
     "http://172.17.128.1:3000"
   ],
-  "updatedAt": 1793806551963,
-  "dateStr": "2026-11-04T15:35:51.963Z"
+  "updatedAt": 1793964719384,
+  "dateStr": "2026-11-06T11:31:59.384Z"
 }
