@@ -1,13 +1,13 @@
 {
-  "url": "https://themselves-star-capability-runner.trycloudflare.com",
+  "url": "https://marc-knit-collections-lunch.trycloudflare.com",
   "localIps": [
     "http://172.16.0.2:3000",
-    "http://172.17.128.1:3000",
-    "http://192.168.1.30:3000",
+    "http://192.168.2.123:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
-    "http://192.168.18.1:3000"
+    "http://192.168.18.1:3000",
+    "http://172.17.240.1:3000"
   ],
-  "updatedAt": 1794315422439,
-  "dateStr": "2026-11-10T12:57:02.439Z"
+  "updatedAt": 1794321754746,
+  "dateStr": "2026-11-10T14:42:34.746Z"
 }
