@@ -1,5 +1,5 @@
 {
-  "url": "https://nvidia-pilot-noted-vienna.trycloudflare.com",
+  "url": "https://api.trycloudflare.com",
   "localIps": [
     "http://172.16.0.2:3000",
     "http://172.17.128.1:3000",
@@ -8,6 +8,6 @@
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000"
   ],
-  "updatedAt": 1794314554339,
-  "dateStr": "2026-11-10T12:42:34.339Z"
+  "updatedAt": 1794315339818,
+  "dateStr": "2026-11-10T12:55:39.818Z"
 }
