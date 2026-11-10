@@ -1,1 +1,1 @@
-https://described-effectively-lime-conservative.trycloudflare.com
+https://api.trycloudflare.com

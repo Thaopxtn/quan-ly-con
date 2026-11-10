@@ -1,12 +1,13 @@
 {
-  "url": "https://described-effectively-lime-conservative.trycloudflare.com",
+  "url": "https://api.trycloudflare.com",
   "localIps": [
-    "http://192.168.2.220:3000",
+    "http://172.16.0.2:3000",
+    "http://172.17.128.1:3000",
+    "http://192.168.1.30:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
-    "http://192.168.18.1:3000",
-    "http://172.17.128.1:3000"
+    "http://192.168.18.1:3000"
   ],
-  "updatedAt": 1793964719384,
-  "dateStr": "2026-11-06T11:31:59.384Z"
+  "updatedAt": 1794314532895,
+  "dateStr": "2026-11-10T12:42:12.895Z"
 }
