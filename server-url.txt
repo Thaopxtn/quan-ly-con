@@ -1,1 +1,1 @@
-https://api.trycloudflare.com
+https://nvidia-pilot-noted-vienna.trycloudflare.com
