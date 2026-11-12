@@ -1,14 +1,13 @@
 {
-  "url": "https://prime-anybody-handled-eat.trycloudflare.com",
+  "url": "https://api.trycloudflare.com",
   "localIps": [
     "http://172.16.0.2:3000",
-    "http://192.168.2.123:3000",
+    "http://192.168.1.5:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
     "http://192.168.18.1:3000",
-    "http://172.17.240.1:3000",
-    "http://172.18.48.1:3000"
+    "http://172.29.0.1:3000"
   ],
-  "updatedAt": 1794452547689,
-  "dateStr": "2026-11-12T03:02:27.689Z"
+  "updatedAt": 1794457150030,
+  "dateStr": "2026-11-12T04:19:10.030Z"
 }
