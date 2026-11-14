@@ -1,13 +1,13 @@
 {
-  "url": "https://twelve-specially-quilt-constitutional.trycloudflare.com",
+  "url": "https://personal-waiver-southampton-consumption.trycloudflare.com",
   "localIps": [
     "http://172.16.0.2:3000",
-    "http://192.168.1.5:3000",
+    "http://172.29.0.1:3000",
+    "http://192.168.2.125:3000",
     "http://192.168.56.1:3000",
     "http://192.168.235.1:3000",
-    "http://192.168.18.1:3000",
-    "http://172.29.0.1:3000"
+    "http://192.168.18.1:3000"
   ],
-  "updatedAt": 1794458996831,
-  "dateStr": "2026-11-12T04:49:56.831Z"
+  "updatedAt": 1794634409702,
+  "dateStr": "2026-11-14T05:33:29.702Z"
 }
